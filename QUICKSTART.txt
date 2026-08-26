@@ -1,0 +1,37 @@
+ATS QUICKSTART
+==============
+
+SETUP
+  cd ATS
+  py -3 -m pip install -r requirements.txt
+  py -3 create_rl.py
+
+RUN SIM (terminal-look WINDOW)
+  py -3 main.py --episodes 2
+  # Opens pygame CRT-style GUI. ESC / window X to quit.
+
+RUN SIM (headless, no window)
+  py -3 main.py --no-gui --episodes 1
+
+TRAIN RL POLICY
+  py -3 train_rl.py
+
+VIRUS ATS PROFILE
+  cd ..\Virus
+  py -3 auto_train.py --profile ats --epochs 30 --lr 0.0001
+  py -3 generate_v3.py --profile ats --prompt "### INPUT: hello`n### OUTPUT:"
+  py -3 scripts\create_v3.py --profile ats
+
+VIRUS GENERAL PROFILE (default)
+  py -3 auto_train.py --profile general
+
+EXPORT ATS LINES INTO VIRUS ATS CORPUS
+  cd ..\ATS
+  py -3 export_virus_corpus.py data\runtime_log.txt
+
+MOD NEW ITEMS / ENTITIES
+  Edit ATS\assets\items.json or entities.json
+  Restart main.py — registry reloads on start
+
+DOCS
+  README.md — full Phase 1 guide

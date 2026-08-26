@@ -1,0 +1,6 @@
+{
+  "profile": "ats",
+  "model": "C:\\Users\\Bob\\Documents\\github\\Virus\\model_ats_v3.pt",
+  "vocab": "C:\\Users\\Bob\\Documents\\github\\Virus\\vocab_ats.json",
+  "data_dir": "C:\\Users\\Bob\\Documents\\github\\Virus\\data_ats"
+}
