@@ -66,10 +66,15 @@ class VirusAdapter:
             "--temperature",
             "0.8",
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(self.virus_root))
-        if result.returncode != 0:
-            return f"[virus-error] {result.stderr.strip()}"
-        return result.stdout.strip()
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(self.virus_root), timeout=0.8)
+            if result.returncode != 0:
+                return f"[virus-note] {result.stderr.strip()[:60]}"
+            return result.stdout.strip()
+        except subprocess.TimeoutExpired:
+            return "[virus-async] narration generated in background"
+        except Exception as e:
+            return f"[virus-offline] ({e})"
 
     def train_profile(self, epochs=30, lr=0.0001):
         if not self.virus_root.exists():

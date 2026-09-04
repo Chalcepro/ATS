@@ -1,0 +1,53 @@
+# ATS Island World Redesign & Neural Embedding Architecture — Walkthrough
+
+## 1. Summary of Changes
+
+We completely transitioned the ATS simulation from a flat biome noise-field into an **organic island-ocean architecture** with learned entity/item embeddings, native biome hazards, and peak-relative progression tracking:
+
+1. **Island Topology Engine (`island_gen.py`)**:
+   - Replaced flat continuous terrain with **6 distinct organic islands** generated via multi-octave noise with radial falloff masks (amoeba-like non-uniform shapes, 30–60 tile radius).
+   - Surrounded by **`TILE_OCEAN`** — entering open ocean triggers shark proximity and an inescapable **-500 penalty + instant death** after 3 ticks.
+   - Internal swimmable lakes/rivers, volcanic lava rivers, acid pools, ice sheets, and safe ash paths.
+   - High-density obstacle clusters (boulder groups 3–8 tiles wide) breaking straight-line navigation exploits.
+
+2. **Entity & Item Registry Expansion**:
+   - Expanded item registry to 88 items with island-native material tiers (Wolf Pelt, Magma Stone, Obsidian, Antidote Root, Frost Ore, Void Core, etc.).
+   - Expanded entity registry with island-native populations (Deer, Rabbit, Fire Imp, Magma Cube with on-death splitting, Toxic Toad, Spore Fiend, Frost Wraith, Great Shark).
+   - Island-specific 3–4 tier crafting chains with capability progression in [crafting.py](file:///c:/Users/Bob/Documents/github/ATS/crafting.py).
+
+3. **32-Dimensional Learned Embedding Architecture (`model_rl.py`)**:
+   - Added `nn.Embedding(100, 32)` for items and `nn.Embedding(40, 32)` for entities.
+   - Forward pass extracts target item/entity indices, embeds them into 32-dim latent spaces, and projects them into the policy network's hidden layer.
+
+4. **Reward Engine & Peak-Relative Evaluation (`rewards.py`)**:
+   - First-time island discovery bonus: `+50.0`.
+   - First-visit per-tile exploration bonus: `+0.2` (subsequent visits grant 0, eliminating wandering loops).
+   - Entity kill rewards dynamically scaled by island danger tier (Tier 0..4).
+   - Ocean death: `-500.0`.
+   - Peak-relative grading: `GOOD`, `MID`, `FAIR`, `BAD`.
+
+5. **Mission Control UI & Navigation Overhaul (`debug_gui.py`)**:
+   - Added rendering for `TILE_OCEAN`, `TILE_ACID`, `TILE_ICE`, `TILE_ASH`, `TILE_SPORE`, and `TILE_LAVA`.
+   - Dynamic Ocean Shark Danger warning banner when `ocean_ticks > 0`.
+   - Enabled smooth tab switching directly on the Home Setup screen to inspect Analytics and Hyperparameters before launch.
+
+---
+
+## 2. Island Roster & Hazards
+
+| Island ID | Name | Tier | Internal Hazard | Key Resources | Native Entities |
+|---|---|---|---|---|---|
+| 0 | **Lush Grassland** | 0 (Easy) | Internal rivers/ponds (swimmable) | Wood, Apples, Berries, Wool | Deer, Rabbit, Sheep, Slime |
+| 1 | **Dark Forest** | 1 (Med) | Dense canopy | Pine Wood, Wolf Pelt, Silk | Wolf, Spider, Bat, Creeper |
+| 2 | **Volcanic Wastes** | 2 (Hard) | Lava (5 HP/tick burn, safe ash path) | Magma Stone, Obsidian, Coal | Fire Imp, Magma Cube, Lava Golem |
+| 3 | **Poison Mushroom** | 2 (Hard) | Acid (POISONED), Spores (BLINDED) | Spores, Mycelium, Glowshroom | Toxic Toad, Spore Fiend, Witch |
+| 4 | **Frozen Tundra** | 3 (Brutal) | Ice (20% slip leg injury) | Ice Crystal, Frost Ore, Yeti Fur | Yeti, Ice Wolf, Frost Wraith |
+| 5 | **Boss Sanctum** | 4 (Boss) | Void hazards | Void Core, Rune Fragments | Ancient Golem, Void Echo |
+
+---
+
+## 3. Verification & Benchmark Results
+
+- Headless 5-episode training run executed successfully with exit code 0.
+- Peak-relative classification classified Episode 1 as `GOOD` (+68.55) on new high watermark, and subsequent episodes as `MID`.
+- Learned embeddings and policy checkpoints saved to [model_rl.pt](file:///c:/Users/Bob/Documents/github/ATS/checkpoints/model_rl.pt).

@@ -1,15 +1,17 @@
-"""ATS Unified Mission Control & Live Dashboard — Retro Cyber Edition v2.5.
+"""ATS Unified Mission Control & Live Dashboard — Modern Sci-Fi Terminal v2.5.
 
 Features:
-- Exclusively powered by '04b_03 regular' pixel font (bundled natively at assets/fonts/04b.ttf)
-- Flashy Retro-Cyber Emblem Vector Logo (A + TS / A + GENT) with glowing circuit traces
-- Layered 80s Cyber-Terminal Boot Intro with vector beam sweep and diagnostics
-- 1040x680 expanded viewport with thicker 2px retro pixel frames and comfortable padding
-- Solid vibrant action buttons: Red (Stop), Green (Save), Blue (Turbo), Amber (Pause)
-- Top-Right Collapsible Navigation Sidebar Drawer ([ ◀ TABS / VIEWS ])
-- Zoomable Timeframe Telemetry Graphs with presets and dynamic Y-axis scaling
-- Ascending Episode History Table (oldest to newest at bottom) with mouse wheel scrolling
-- Automatic CSV export to data/ats_episode_history.csv
+- Crisp, high-readability typography hierarchy (Consolas / Segoe UI with zero corrupted glyphs)
+- Flashy Vector Cyber Emblem (A + TS / A + GENT) with animated pulse and zero header text collisions
+- High-contrast sci-fi dark palette with glowing accents and clear visual hierarchy
+- 1040x680 expanded viewport with comfortable padding and clean card panels
+- Interactive pre-launch configuration with +/- steppers and preset selector pills
+- Visual toggle switches for reward rules and action masks
+- Solid, vibrant action buttons (Start, Pause, Turbo, Save, Reset, Stop, Menu)
+- Top-Right Collapsible Navigation Sidebar Drawer ([ < TABS / VIEWS ])
+- Zoomable Telemetry Graphs with dynamic Y-axis auto-scaling
+- Ascending Episode History Table with mouse-wheel and button scrolling
+- Automatic CSV export to data/ats_episode_history.csv with grade and efficiency tracking
 """
 
 import csv
@@ -23,24 +25,29 @@ from agent import ACTION_NAMES
 from rewards import default_reward_rules
 
 # ---------------------------------------------------------------------------
-# High-Contrast Retro CRT Phosphor Palette
+# High-Contrast Sci-Fi Terminal Palette
 # ---------------------------------------------------------------------------
-BG          = (8,  12,  10)       # Deep CRT background
-BG_PANEL    = (14, 22,  18)       # Card panel background
-BG_PANEL2   = (18, 30,  24)       # Elevated panel
-FG          = (45, 255, 125)     # Primary phosphor green
-FG_BOLD     = (140, 255, 195)    # Bright highlight green
-DIM         = (28, 115,  65)      # Secondary / border green
-DIM2        = (16,  60,  35)      # Muted grid lines
-AMBER       = (255, 195, 50)     # Alert / warning amber
-RED         = (255, 85,  75)      # Danger red
-CYAN        = (85, 235, 255)     # Telemetry cyan
-FRAME       = (36,  85,  58)      # Panel bevel frame (thickened 2px)
-WHITE       = (240, 250, 245)    # Clean readable white
-GOLD        = (255, 225, 95)     # Section header gold
-TITLE_GREEN = (0,  235, 120)     # Brand logo green
+BG          = (10, 14, 16)        # Deep space dark background
+BG_PANEL    = (16, 24, 28)        # Card panel background
+BG_PANEL2   = (22, 32, 38)        # Elevated panel / Drawer
+BG_CARD     = (18, 28, 32)        # Interactive card background
 
-# Solid Button Colors (High-Contrast & Vibrant)
+FG          = (50, 255, 140)      # Primary phosphor neon green
+FG_BOLD     = (160, 255, 205)     # Bright highlight mint
+DIM         = (70, 130, 105)      # Secondary / label text
+DIM2        = (25, 55, 45)        # Muted grid lines / subtle borders
+AMBER       = (255, 185, 50)      # Alert / warning amber
+RED         = (255, 80,  75)      # Danger / stop red
+CYAN        = (80,  225, 255)     # Telemetry cyan
+FRAME       = (35,  75,  60)      # Panel bevel frame
+FRAME_GLOW  = (55,  140, 105)     # Active card border glow
+WHITE       = (240, 250, 255)     # Clean readable white
+GOLD        = (255, 215, 80)      # Header gold / active highlights
+TITLE_GREEN = (0,   235, 120)     # Brand logo green
+
+# Solid Button Colors
+BTN_LAUNCH_BG  = (25,  150, 70)
+BTN_LAUNCH_BDR = (50,  240, 120)
 BTN_STOP_BG    = (185, 30,  30)
 BTN_STOP_BDR   = (255, 80,  80)
 BTN_SAVE_BG    = (20,  140, 60)
@@ -51,14 +58,14 @@ BTN_PAUSE_BG   = (180, 130, 20)
 BTN_PAUSE_BDR  = (255, 200, 50)
 BTN_RESET_BG   = (115, 35,  55)
 BTN_RESET_BDR  = (190, 65,  95)
-BTN_MENU_BG    = (40,  60,  50)
-BTN_MENU_BDR   = (75,  115, 95)
+BTN_MENU_BG    = (35,  55,  48)
+BTN_MENU_BDR   = (70,  115, 95)
 
-BTN_IDLE_BG    = (20,  38,  28)
-BTN_HOVER_BG   = (35,  70,  50)
-BTN_ACTIVE_BG  = (50,  110, 75)
-BTN_LOCKED_BG  = (16,  24,  20)
-LOCK_FG        = (45,  75,  60)
+BTN_IDLE_BG    = (20,  35,  30)
+BTN_HOVER_BG   = (35,  70,  55)
+BTN_ACTIVE_BG  = (45,  115, 80)
+BTN_LOCKED_BG  = (16,  22,  20)
+LOCK_FG        = (50,  75,  65)
 
 WINDOW_WIDTH  = 1040
 WINDOW_HEIGHT = 680
@@ -78,10 +85,10 @@ TAB_CONFIG    = 2
 TAB_MIND      = 3
 
 TAB_ACCESS = {
-    STATE_MENU:    {TAB_CONFIG, TAB_ANALYTICS},
+    STATE_MENU:    {0, TAB_SIM, TAB_CONFIG, TAB_ANALYTICS},
     STATE_RUNNING: {TAB_SIM, TAB_ANALYTICS, TAB_MIND},
     STATE_PAUSED:  {TAB_SIM, TAB_ANALYTICS, TAB_CONFIG, TAB_MIND},
-    STATE_STOPPED: {TAB_ANALYTICS},
+    STATE_STOPPED: {TAB_ANALYTICS, TAB_CONFIG, TAB_MIND},
 }
 
 _RULE_LABELS = [
@@ -94,6 +101,7 @@ _RULE_LABELS = [
     ("PICKUP",  "pickup_reward"),
     ("KILL",    "kill_reward"),
     ("EXPLORE", "explore_reward"),
+    ("PROG",    "progression"),
 ]
 
 _ACTION_TOGGLES = [
@@ -139,19 +147,19 @@ class TerminalGUI:
         pygame.display.set_caption(title)
         self.clock = pygame.time.Clock()
 
-        # Load EXCLUSIVELY the '04b_03 regular' pixel font from the project assets
-        self.f_title  = self._load_pixel_font(18)
-        self.f_header = self._load_pixel_font(14)
-        self.f_body   = self._load_pixel_font(12)
-        self.f_bold   = self._load_pixel_font(12)
-        self.f_small  = self._load_pixel_font(10)
-        self.f_tiny   = self._load_pixel_font(9)
+        # Load crisp, highly readable monospaced UI fonts with graceful fallbacks
+        self.f_title  = self._load_font(18, bold=True)
+        self.f_header = self._load_font(14, bold=True)
+        self.f_body   = self._load_font(12, bold=False)
+        self.f_bold   = self._load_font(12, bold=True)
+        self.f_small  = self._load_font(10, bold=False)
+        self.f_tiny   = self._load_font(9,  bold=False)
 
         # Application state
         self.alive         = True
         self.frame         = 0
         self.app_state     = STATE_MENU
-        self.active_tab    = TAB_CONFIG
+        self.active_tab    = 0
         self.sidebar_open  = False
 
         # Interactive Signals
@@ -162,6 +170,8 @@ class TerminalGUI:
         self.sig_stop         = False
         self.sig_return_home  = False
         self.turbo_mode       = False
+        self._confirm_fresh_armed = False
+        self.is_fresh_mode    = False
 
         # Live toggles
         self.disabled_actions = set()
@@ -185,22 +195,17 @@ class TerminalGUI:
         # CSV Logging path
         self.csv_path = config_rl.DATA_DIR / "ats_episode_history.csv"
 
-    def _load_pixel_font(self, size):
-        """Loads exclusively '04b_03 regular' font from assets/fonts/04b.ttf."""
-        candidates = [
-            "assets/fonts/04b.ttf",           # Exact 04b_03 regular bundled in repo
-            "assets/fonts/04B_03_regular.ttf",
-            "assets/fonts/04B_03.TTF",
-            r"C:\Windows\Fonts\04b.ttf",
-        ]
-        for path in candidates:
-            if os.path.exists(path):
-                try:
-                    return pygame.font.Font(path, size)
-                except Exception:
-                    pass
-        # Default safety fallback solely if file is missing
-        return pygame.font.SysFont("04b_03", size)
+    def _load_font(self, size, bold=False):
+        """Loads clean, high-readability UI fonts with anti-aliasing."""
+        font_names = ["consolas", "lucidaconsole", "segoeui", "dejavusansmono", "couriernew", "arial"]
+        for fn in font_names:
+            try:
+                f = pygame.font.SysFont(fn, size, bold=bold)
+                if f:
+                    return f
+            except Exception:
+                continue
+        return pygame.font.Font(None, size + 2)
 
     def clear_session_data(self):
         """Resets in-memory table and graphs for a brand-new run."""
@@ -210,12 +215,15 @@ class TerminalGUI:
         self.table_scroll = 0
         self.pan_offset = 0
 
-    def record_episode(self, ep, reward, ticks, reason):
+    def record_episode(self, ep, reward, ticks, reason, grade="MID", efficiency=0.0, capabilities=0):
         entry = {
             "ep": ep,
             "reward": reward,
             "ticks": ticks,
             "reason": reason,
+            "grade": grade,
+            "efficiency": efficiency,
+            "capabilities": capabilities,
             "time": time.strftime("%H:%M:%S")
         }
         self.episode_history.append(entry)
@@ -241,16 +249,19 @@ class TerminalGUI:
                 writer = csv.writer(f)
                 if not file_exists or os.path.getsize(path) == 0:
                     writer.writerow([
-                        "episode", "timestamp", "total_reward", "ticks_survived",
-                        "termination_reason", "speed_multiplier", "learning_rate",
-                        "entropy_coeff", "hidden_size"
+                        "episode", "timestamp", "total_reward", "grade",
+                        "progression_efficiency", "capabilities_unlocked",
+                        "ticks_survived", "termination_reason", "speed_multiplier",
+                        "learning_rate", "entropy_coeff", "hidden_size"
                     ])
                 if self.episode_history:
                     latest = self.episode_history[-1]
                     writer.writerow([
                         latest["ep"], latest["time"], f"{latest['reward']:.2f}",
-                        latest["ticks"], latest["reason"], config_rl.SPEED_MULTIPLIER,
-                        config_rl.LEARNING_RATE, config_rl.ENTROPY_COEFF, config_rl.MIND_HIDDEN_SIZE
+                        latest.get("grade", "MID"), f"{latest.get('efficiency', 0.0):.3f}",
+                        latest.get("capabilities", 0), latest["ticks"], latest["reason"],
+                        config_rl.SPEED_MULTIPLIER, config_rl.LEARNING_RATE,
+                        config_rl.ENTROPY_COEFF, config_rl.MIND_HIDDEN_SIZE
                     ])
         except Exception as e:
             print(f"[ATS GUI] CSV export note: {e}")
@@ -262,164 +273,68 @@ class TerminalGUI:
     # -----------------------------------------------------------------------
     # Flashy Vector Cyber Emblem Renderer (A + TS / A + GENT)
     # -----------------------------------------------------------------------
-    def _draw_ats_cyber_logo(self, cx, cy, scale=1.0, progress=1.0, pulse=0.0, show_badges=True):
-        """Renders a flashy, high-impact cyberpunk vector emblem for ATS."""
-        # Key coordinate anchors
-        h = int(52 * scale)
-        w = int(58 * scale)
-        
+    def _draw_ats_cyber_logo(self, cx, cy, scale=0.85, pulse=0.0):
+        """Renders a self-contained cyberpunk vector emblem without overflowing into text."""
+        h = int(46 * scale)
+        w = int(48 * scale)
+
         p_apex       = (cx, cy - h)
         p_left_base  = (cx - w, cy + h)
         p_right_base = (cx + w, cy + h)
-        p_l_inner    = (cx - int(36 * scale), cy + h)
-        p_r_inner    = (cx + int(36 * scale), cy + h)
-        
-        # Mid tier connectors (TS tier)
-        mid_y = cy - int(4 * scale)
-        p_mid_l = (cx - int(24 * scale), mid_y)
-        p_mid_r = (cx + int(24 * scale), mid_y)
-        
-        # Low tier connectors (GENT tier)
-        low_y = cy + int(26 * scale)
-        p_low_l = (cx - int(40 * scale), low_y)
-        p_low_r = (cx + int(40 * scale), low_y)
+        p_l_inner    = (cx - int(30 * scale), cy + h)
+        p_r_inner    = (cx + int(30 * scale), cy + h)
 
-        # Pulse colors
+        mid_y = cy - int(4 * scale)
+        p_mid_l = (cx - int(20 * scale), mid_y)
+        p_mid_r = (cx + int(20 * scale), mid_y)
+
+        low_y = cy + int(22 * scale)
+        p_low_l = (cx - int(34 * scale), low_y)
+        p_low_r = (cx + int(34 * scale), low_y)
+
         fg_neon = (int(45 + 30 * math.sin(pulse * 3)), 255, int(125 + 30 * math.sin(pulse * 3)))
         gold_neon = (255, int(210 + 45 * math.sin(pulse * 4)), 95)
         cyan_neon = (int(75 + 40 * math.sin(pulse * 4)), 235, 255)
-        glow_plate = (12, 38, 22)
+        glow_plate = (14, 32, 24)
 
-        # 1. Background Backplate Polygon
-        if progress >= 0.6:
-            poly_pts = [p_apex, p_right_base, p_r_inner, p_mid_r, p_mid_l, p_l_inner, p_left_base]
-            pygame.draw.polygon(self.screen, glow_plate, poly_pts)
-            pygame.draw.polygon(self.screen, FRAME, poly_pts, 1)
+        poly_pts = [p_apex, p_right_base, p_r_inner, p_mid_r, p_mid_l, p_l_inner, p_left_base]
+        pygame.draw.polygon(self.screen, glow_plate, poly_pts)
+        pygame.draw.polygon(self.screen, FRAME, poly_pts, 1)
 
-        # 2. Outer Pyramid Beams
-        if progress >= 0.2:
-            sub_p = min(1.0, (progress - 0.2) / 0.4)
-            # Left beam
-            cur_l = (cx - int(w * sub_p), cy - h + int(2 * h * sub_p))
-            pygame.draw.line(self.screen, fg_neon, p_apex, cur_l, 3)
-            # Right beam
-            cur_r = (cx + int(w * sub_p), cy - h + int(2 * h * sub_p))
-            pygame.draw.line(self.screen, fg_neon, p_apex, cur_r, 3)
+        # Outer Beams
+        pygame.draw.line(self.screen, fg_neon, p_apex, p_left_base, 3)
+        pygame.draw.line(self.screen, fg_neon, p_apex, p_right_base, 3)
+        pygame.draw.line(self.screen, fg_neon, p_left_base, p_l_inner, 2)
+        pygame.draw.line(self.screen, fg_neon, p_right_base, p_r_inner, 2)
 
-        # 3. Feet and Inner Chevron
-        if progress >= 0.5:
-            pygame.draw.line(self.screen, fg_neon, p_left_base, p_l_inner, 3)
-            pygame.draw.line(self.screen, fg_neon, p_right_base, p_r_inner, 3)
-            
-            # Inner Legs & Chevron
-            ch_apex = (cx, cy - int(24 * scale))
-            pygame.draw.line(self.screen, fg_neon, p_l_inner, (cx - int(15 * scale), cy + int(8 * scale)), 2)
-            pygame.draw.line(self.screen, fg_neon, p_r_inner, (cx + int(15 * scale), cy + int(8 * scale)), 2)
-            pygame.draw.line(self.screen, fg_neon, ch_apex, (cx - int(15 * scale), cy + int(8 * scale)), 2)
-            pygame.draw.line(self.screen, fg_neon, ch_apex, (cx + int(15 * scale), cy + int(8 * scale)), 2)
+        # Inner Legs
+        ch_apex = (cx, cy - int(18 * scale))
+        pygame.draw.line(self.screen, fg_neon, p_l_inner, (cx - int(12 * scale), cy + int(6 * scale)), 2)
+        pygame.draw.line(self.screen, fg_neon, p_r_inner, (cx + int(12 * scale), cy + int(6 * scale)), 2)
+        pygame.draw.line(self.screen, fg_neon, ch_apex, (cx - int(12 * scale), cy + int(6 * scale)), 2)
+        pygame.draw.line(self.screen, fg_neon, ch_apex, (cx + int(12 * scale), cy + int(6 * scale)), 2)
 
-        # 4. Upper Crossbar & TS Circuit Extension
-        if progress >= 0.7:
-            ts_ext_x = cx + int(85 * scale)
-            pygame.draw.line(self.screen, gold_neon, p_mid_l, (ts_ext_x, mid_y), 2)
-            # Node crystal
-            pygame.draw.circle(self.screen, gold_neon, (ts_ext_x, mid_y), int(3 * scale))
-            pygame.draw.circle(self.screen, fg_neon, p_apex, int(4 * scale))
-
-        # 5. Lower Cyber-Bridge & GENT Circuit Extension
-        if progress >= 0.85:
-            gent_ext_x = cx + int(85 * scale)
-            pygame.draw.line(self.screen, cyan_neon, p_low_l, (gent_ext_x, low_y), 2)
-            pygame.draw.circle(self.screen, cyan_neon, (gent_ext_x, low_y), int(3 * scale))
-
-        # 6. Text Badges
-        if show_badges and progress >= 0.9:
-            # [A] TS Badge
-            badge_x = cx + int(96 * scale)
-            self.screen.blit(self.f_header.render("[A] TS", True, gold_neon), (badge_x, mid_y - 8))
-            self.screen.blit(self.f_small.render(":: Autonomous Training Simulation", True, WHITE), (badge_x + 72, mid_y - 6))
-
-            # [A] GENT Badge
-            self.screen.blit(self.f_header.render("[A] GENT", True, cyan_neon), (badge_x, low_y - 8))
-            self.screen.blit(self.f_small.render(":: Deep RL Mission Control Matrix v2.5", True, FG_BOLD), (badge_x + 86, low_y - 6))
+        # Crossbars
+        pygame.draw.line(self.screen, gold_neon, p_mid_l, p_mid_r, 2)
+        pygame.draw.line(self.screen, cyan_neon, p_low_l, p_low_r, 2)
+        pygame.draw.circle(self.screen, fg_neon, p_apex, 3)
 
     # -----------------------------------------------------------------------
-    # 80s Cyber-Terminal Layered Boot Intro
+    # Splash Screen
     # -----------------------------------------------------------------------
-    def splash(self, duration=4.8):
-        """Authentic 80s retro cyber-terminal boot with vector wireframe build & diagnostics."""
-        boot_logs = [
-            ("BIOS ROM INTEGRITY CHECK", "OK (640KB VIRTUAL)"),
-            ("PPO NEURAL POLICY ENGINE", f"ONLINE (HIDDEN={config_rl.MIND_HIDDEN_SIZE})"),
-            ("PERCEPTION STATE SPACE", f"INDEXED ({config_rl.STATE_SIZE} DIMS)"),
-            ("ACTION MASK PERMUTATIONS", f"LOADED ({config_rl.ACTION_SIZE} ACTIONS)"),
-            ("PROCEDURAL OPEN WORLD", "7 BIOMES (555+ OBJECTS)"),
-            ("CONTINUAL REPLAY BUFFER", f"READY ({config_rl.CONTINUAL_BUFFER_SIZE} ROLLS)"),
-            ("SYMBOLIC VOCABULARY ENGINE", "BOUND (420 TOKENS)"),
-            ("CRT PHOSPHOR RASTER", f"SYNCHRONIZED ({W}x{H})"),
-        ]
-
+    def splash(self, duration=1.0):
         start_t = time.time()
         while self.alive and time.time() - start_t < duration:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.alive = False
                     return
-                elif event.type == pygame.KEYDOWN and event.key in (pygame.K_SPACE, pygame.K_RETURN, pygame.K_ESCAPE):
+                elif event.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN):
                     return
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    return
-
-            elapsed = time.time() - start_t
             self.screen.fill(BG)
-            pygame.draw.rect(self.screen, FRAME, (4, 4, W - 8, H - 8), 2)
-
-            # Stage 1: CRT Raster Beam Sweep (0.0s -> 0.7s)
-            if elapsed < 0.7:
-                beam_h = int((elapsed / 0.7) * (H - 30))
-                beam_y = (H // 2) - (beam_h // 2)
-                pygame.draw.rect(self.screen, (15, 45, 25), (6, beam_y, W - 12, beam_h))
-                pygame.draw.line(self.screen, FG_BOLD, (6, H // 2), (W - 6, H // 2), 2)
-                for sy in range(beam_y, beam_y + beam_h, 8):
-                    pygame.draw.line(self.screen, (20, 60, 35), (6, sy), (W - 6, sy), 1)
-                pygame.display.flip()
-                self.clock.tick(60)
-                continue
-
-            # Stage 2: Layered Cyber Emblem Wireframe Build (0.7s -> 2.6s)
-            wire_progress = min(1.0, (elapsed - 0.7) / 1.9)
-            logo_cx = W // 2 - 180
-            logo_cy = 92
-            self._draw_ats_cyber_logo(logo_cx, logo_cy, scale=1.15, progress=wire_progress, pulse=elapsed, show_badges=(elapsed >= 2.0))
-
-            pygame.draw.line(self.screen, DIM, (24, 175), (W - 24, 175), 1)
-
-            # Stage 3: Subsystem Kernel Diagnostics (2.6s -> duration)
-            if elapsed >= 2.4:
-                diag_progress = min(1.0, (elapsed - 2.4) / (duration - 2.4 - 0.3))
-                num_diag_shown = min(len(boot_logs), int(diag_progress * len(boot_logs)) + 1)
-
-                log_x = W // 2 - 290
-                log_y = 190
-                for i in range(num_diag_shown):
-                    task, status = boot_logs[i]
-                    dots = "." * (48 - len(task))
-                    line_text = f">>> BOOT: {task} {dots} "
-                    self.screen.blit(self.f_body.render(line_text, True, FG), (log_x, log_y))
-                    self.screen.blit(self.f_bold.render(f"[{status}]", True, GOLD if "ONLINE" in status or "OK" in status else CYAN), (log_x + 480, log_y))
-                    log_y += 24
-
-                # Bottom Kernel Progress Bar
-                pb_x, pb_y, pb_w, pb_h = W // 2 - 290, H - 95, 580, 18
-                pygame.draw.rect(self.screen, BG_PANEL, (pb_x, pb_y, pb_w, pb_h))
-                pygame.draw.rect(self.screen, FRAME, (pb_x, pb_y, pb_w, pb_h), 1)
-                fill_w = int(pb_w * diag_progress)
-                pygame.draw.rect(self.screen, FG, (pb_x + 1, pb_y + 1, fill_w - 2 if fill_w > 2 else 0, pb_h - 2))
-                self.screen.blit(self.f_small.render(f"INITIALIZING KERNEL: {int(diag_progress * 100)}%", True, WHITE), (pb_x + 210, pb_y + 3))
-
-                prompt_txt = "MISSION CONTROL READY. [Press SPACE or Click to Enter]"
-                self.screen.blit(self.f_small.render(prompt_txt, True, GOLD if int(elapsed * 5) % 2 == 0 else DIM), (pb_x + 105, H - 60))
-
+            self._draw_ats_cyber_logo(W // 2, H // 2 - 40, scale=1.3, pulse=time.time())
+            self._blit("ATS // MISSION CONTROL v2.5", W // 2 - 130, H // 2 + 40, self.f_title, GOLD)
+            self._blit("Initializing Neural Policy & Procedural Environment...", W // 2 - 190, H // 2 + 70, self.f_body, WHITE)
             pygame.display.flip()
             self.clock.tick(60)
 
@@ -437,10 +352,27 @@ class TerminalGUI:
         self._clicks = []
 
         self.screen.fill(BG)
-        pygame.draw.rect(self.screen, FRAME, (4, 4, W - 8, H - 8), 2)
+        pygame.draw.rect(self.screen, FRAME, (4, 4, W - 8, H - 8), 1)
 
         if self.app_state == STATE_MENU:
-            self._draw_menu()
+            if self.active_tab == TAB_ANALYTICS:
+                self._draw_menu_header()
+                self._draw_analytics(y_offset=120)
+                self._hline(582)
+                self._btn("[ < BACK TO SETUP ]", 20, 594, 220, 38, "tab:0", active=True, font=self.f_bold)
+                self._btn("[ 3: HYPERPARAMS ]", 255, 594, 220, 38, "tab:2", active=False, font=self.f_bold)
+                self._btn(">> LAUNCH TRAINING SESSION <<", 495, 594, 525, 38, "start", active=True, color=WHITE, bg_color=BTN_LAUNCH_BG, border_color=BTN_LAUNCH_BDR, font=self.f_header)
+                self._blit("Hotkeys: [SPACE] Launch / Pause   |   [T] Turbo   |   [Ctrl+S] Save Checkpoint   |   [ESC] Quit ATS", 24, H - 20, self.f_small, DIM)
+            elif self.active_tab == TAB_CONFIG:
+                self._draw_menu_header()
+                self._draw_config(y_offset=120)
+                self._hline(582)
+                self._btn("[ < BACK TO SETUP ]", 20, 594, 220, 38, "tab:0", active=True, font=self.f_bold)
+                self._btn("[ 2: ANALYTICS ]", 255, 594, 220, 38, "tab:1", active=False, font=self.f_bold)
+                self._btn(">> LAUNCH TRAINING SESSION <<", 495, 594, 525, 38, "start", active=True, color=WHITE, bg_color=BTN_LAUNCH_BG, border_color=BTN_LAUNCH_BDR, font=self.f_header)
+                self._blit("Hotkeys: [SPACE] Launch / Pause   |   [T] Turbo   |   [Ctrl+S] Save Checkpoint   |   [ESC] Quit ATS", 24, H - 20, self.f_small, DIM)
+            else:
+                self._draw_menu()
         else:
             self._draw_chrome(env)
             avail = TAB_ACCESS.get(self.app_state, set())
@@ -478,10 +410,10 @@ class TerminalGUI:
                         if rect.collidepoint(event.pos):
                             self._on_click(cb)
                             break
-                elif event.button == 4:  # Mouse wheel UP
+                elif event.button == 4:  # Wheel UP
                     if self.active_tab == TAB_ANALYTICS:
                         self.table_scroll = min(max(0, len(self.episode_history) - 6), self.table_scroll + 1)
-                elif event.button == 5:  # Mouse wheel DOWN
+                elif event.button == 5:  # Wheel DOWN
                     if self.active_tab == TAB_ANALYTICS:
                         self.table_scroll = max(0, self.table_scroll - 1)
             elif event.type == pygame.KEYDOWN:
@@ -537,8 +469,14 @@ class TerminalGUI:
             self.turbo_mode = not self.turbo_mode
         elif cb == "save":
             self.sig_save = True
+        elif cb == "arm_fresh":
+            self._confirm_fresh_armed = True
+        elif cb == "cancel_fresh":
+            self._confirm_fresh_armed = False
         elif cb == "fresh_reset":
+            self._confirm_fresh_armed = False
             self.sig_fresh_reset = True
+            self.is_fresh_mode = True
         elif cb == "stop":
             self.sig_stop = True
         elif cb == "return_home":
@@ -616,20 +554,20 @@ class TerminalGUI:
             break
 
     # -----------------------------------------------------------------------
-    # Sharp Pixel UI Helpers (border_radius=0)
+    # Clean UI Helpers
     # -----------------------------------------------------------------------
     def _blit(self, text, x, y, font=None, color=FG, max_w=None):
         font = font or self.f_body
-        surf = font.render(text, True, color)
+        surf = font.render(str(text), True, color)
         if max_w and surf.get_width() > max_w:
-            while len(text) > 1 and font.size(text + "..")[0] > max_w:
-                text = text[:-1]
-            text += ".."
-            surf = font.render(text, True, color)
+            txt_str = str(text)
+            while len(txt_str) > 1 and font.size(txt_str + "..")[0] > max_w:
+                txt_str = txt_str[:-1]
+            surf = font.render(txt_str + "..", True, color)
         self.screen.blit(surf, (x, y))
 
-    def _hline(self, y, x0=10, x1=None):
-        pygame.draw.line(self.screen, DIM, (x0, y), (x1 or W - 10, y), 1)
+    def _hline(self, y, x0=14, x1=None):
+        pygame.draw.line(self.screen, DIM2, (x0, y), (x1 or (W - 14), y), 1)
 
     def _btn(self, text, x, y, w, h, cb, active=False, locked=False, color=WHITE, bg_color=None, border_color=None, font=None):
         font = font or self.f_small
@@ -649,183 +587,206 @@ class TerminalGUI:
             tc = color
         else:
             bg = BTN_ACTIVE_BG if active else (BTN_HOVER_BG if hover else BTN_IDLE_BG)
-            bdr = GOLD if active else (FG_BOLD if hover else DIM)
+            bdr = GOLD if active else (FG_BOLD if hover else FRAME)
             tc = GOLD if active else (WHITE if hover else color)
 
-        pygame.draw.rect(self.screen, bg, rect)
-        pygame.draw.rect(self.screen, bdr, rect, 1)
+        pygame.draw.rect(self.screen, bg, rect, border_radius=3)
+        pygame.draw.rect(self.screen, bdr, rect, 1, border_radius=3)
         surf = font.render(text, True, tc)
         self.screen.blit(surf, surf.get_rect(center=rect.center))
 
     def _panel(self, x, y, w, h, title=None):
         rect = pygame.Rect(x, y, w, h)
-        pygame.draw.rect(self.screen, BG_PANEL, rect)
-        pygame.draw.rect(self.screen, FRAME, rect, 2)
+        pygame.draw.rect(self.screen, BG_PANEL, rect, border_radius=4)
+        pygame.draw.rect(self.screen, FRAME, rect, 1, border_radius=4)
         if title:
-            self._blit(title, x + 10, y + 8, self.f_bold, GOLD)
+            self._blit(title, x + 12, y + 10, self.f_bold, GOLD)
         return rect
 
+    def _draw_menu_header(self):
+        self._draw_ats_cyber_logo(cx=75, cy=58, scale=0.95, pulse=self._pulse)
+
+        header_x = 155
+        self._blit("ATS // MISSION CONTROL v2.5", header_x, 16, self.f_title, GOLD)
+        self._blit("Deep Reinforcement Learning & Cognitive Embodied AI Simulator", header_x, 42, self.f_body, WHITE)
+
+        # Status & Checkpoint Pill
+        ckpt_name = config_rl.MODEL_PATH.name
+        ckpt_exists = config_rl.MODEL_PATH.exists()
+        status_col = FG_BOLD if ckpt_exists else AMBER
+        status_txt = f"[● SYSTEM READY]  Checkpoint: {ckpt_name}  |  Profile: {config_rl.VIRUS_PROFILE}"
+        self._blit(status_txt, header_x, 68, self.f_small, status_col)
+
+        self._hline(112)
+
     # -----------------------------------------------------------------------
-    # 🏠 MAIN MENU / HOME SCREEN with Flashy Cyber Emblem
+    # 🏠 MAIN MENU / HOME SCREEN
     # -----------------------------------------------------------------------
     def _draw_menu(self):
-        # 1. Flashy Vector Cyber Emblem at Top Header
-        self._draw_ats_cyber_logo(cx=95, cy=68, scale=0.92, progress=1.0, pulse=self._pulse, show_badges=True)
+        # 1. Top Header
+        self._draw_menu_header()
 
-        # Right-side Header Metadata & Status
-        self._blit("[A] TS / [A] GENT MISSION CONTROL v2.5", 350, 16, self.f_title, GOLD)
-        self._blit("Deep Reinforcement Learning & Cognitive Architecture Simulation", 350, 40, self.f_body, WHITE)
-        self._blit("Status: READY FOR OPERATOR LAUNCH   |   Active Checkpoint: " + config_rl.MODEL_PATH.name, 350, 62, self.f_small, FG)
-        self._blit("Cognitive PPO Engine • Procedural Open World • 04B_03 Native Pixel Typography", 350, 80, self.f_tiny, DIM)
+        ckpt_name = config_rl.MODEL_PATH.name
+        ckpt_exists = config_rl.MODEL_PATH.exists()
 
-        self._hline(136)
+        # 2. Main Content Grid (Two clean side-by-side cards)
+        card_y = 124
+        card_h = 445
+        card_w = 485
 
-        # 2. Main Content Grid (Two side-by-side pixel panels)
-        card_y = 144
-        card_h = 430
-        card_w = 490
-
-        # LEFT PANEL: PRE-LAUNCH HYPERPARAMETERS
+        # LEFT CARD: PRE-LAUNCH HYPERPARAMETERS
         self._panel(20, card_y, card_w, card_h, "1. PRE-LAUNCH HYPERPARAMETERS")
-        row = card_y + 34
+        row = card_y + 38
 
         params = [
             ("EPISODES",         "Target Episodes",     10,  "{:d}"),
             ("MAX_TICKS",        "Max Ticks / Ep",     500,  "{:d}"),
             ("SPEED_MULTIPLIER", "Sim Speed",          2.0,  "{:.1f}x"),
-            ("DAY_LENGTH_TICKS", "Day Length",         100,  "{:d} t"),
+            ("DAY_LENGTH_TICKS", "Day Length",         100,  "{:d} ticks"),
         ]
         for attr, label, step, fmt in params:
             val = getattr(config_rl, attr)
-            self._blit(f"{label:<16}", 34, row, self.f_body, WHITE)
-            self._blit(fmt.format(val), 195, row, self.f_bold, FG_BOLD)
-            self._btn("[-]", 290, row - 2, 38, 20, f"cfg:{attr}:dec")
-            self._btn("[+]", 335, row - 2, 38, 20, f"cfg:{attr}:inc")
-            row += 30
+            self._blit(f"{label:<18}", 36, row + 2, self.f_body, WHITE)
+            self._blit(fmt.format(val), 210, row + 2, self.f_bold, FG_BOLD)
+            self._btn("[-]", 330, row, 42, 22, f"cfg:{attr}:dec")
+            self._btn("[+]", 380, row, 42, 22, f"cfg:{attr}:inc")
+            row += 32
 
+        row += 4
         # Learning Rate Row
-        self._blit("Learning Rate", 34, row, self.f_body, WHITE)
-        self._blit(f"{config_rl.LEARNING_RATE:.2e}", 195, row, self.f_bold, FG_BOLD)
+        self._blit("Learning Rate", 36, row, self.f_body, WHITE)
+        self._blit(f"{config_rl.LEARNING_RATE:.2e}", 210, row, self.f_bold, FG_BOLD)
         row += 24
-        lr_x = 34
+        lr_x = 36
         for lr in _LR_PRESETS:
             active = abs(config_rl.LEARNING_RATE - lr) < lr * 0.01
-            self._btn(f"{lr:.0e}", lr_x, row - 2, 64, 20, f"cfg:LEARNING_RATE:{lr}", active=active)
-            lr_x += 70
-        row += 30
+            self._btn(f"{lr:.0e}", lr_x, row, 74, 22, f"cfg:LEARNING_RATE:{lr}", active=active)
+            lr_x += 82
+        row += 34
 
         # Entropy Coeff Row
-        self._blit("Entropy Coeff", 34, row, self.f_body, WHITE)
-        self._blit(f"{config_rl.ENTROPY_COEFF:.3f}", 195, row, self.f_bold, FG_BOLD)
+        self._blit("Entropy Coeff", 36, row, self.f_body, WHITE)
+        self._blit(f"{config_rl.ENTROPY_COEFF:.3f}", 210, row, self.f_bold, FG_BOLD)
         row += 24
-        ent_x = 34
+        ent_x = 36
         for ent in _ENTROPY_PRESETS:
             active = abs(config_rl.ENTROPY_COEFF - ent) < 0.0001
-            self._btn(f"{ent:.3f}", ent_x, row - 2, 64, 20, f"cfg:ENTROPY_COEFF:{ent}", active=active)
-            ent_x += 70
-        row += 30
+            self._btn(f"{ent:.3f}", ent_x, row, 74, 22, f"cfg:ENTROPY_COEFF:{ent}", active=active)
+            ent_x += 82
+        row += 34
 
         # Hidden Width
-        self._blit("Hidden Width", 34, row, self.f_body, WHITE)
-        self._blit(f"{config_rl.MIND_HIDDEN_SIZE} units", 195, row, self.f_bold, FG_BOLD)
-        self._blit("(Locked to Checkpoint)", 290, row, self.f_tiny, DIM)
-        row += 30
+        self._blit("Hidden Layer Width", 36, row, self.f_body, WHITE)
+        self._blit(f"{config_rl.MIND_HIDDEN_SIZE} units", 210, row, self.f_bold, FG_BOLD)
+        self._blit("(Synced to weights)", 330, row + 2, self.f_tiny, DIM)
+        row += 26
 
-        # Checkpoint Status
-        ckpt_exists = config_rl.MODEL_PATH.exists()
-        ckpt_col = FG_BOLD if ckpt_exists else AMBER
-        ckpt_msg = f"Checkpoint: {config_rl.MODEL_PATH.name} (Synchronized)" if ckpt_exists else "Checkpoint: Fresh Random Weights"
-        self._blit(ckpt_msg, 34, row, self.f_bold, ckpt_col)
+        # Checkpoint confirmation line
+        ckpt_col = FG_BOLD if (ckpt_exists and not self.is_fresh_mode) else AMBER
+        ckpt_msg = "Status: Fresh policy weights (Scratch Start)" if self.is_fresh_mode else (f"Status: Checkpoint '{ckpt_name}' ready" if ckpt_exists else "Status: Fresh random policy weights")
+        self._blit(ckpt_msg, 36, row, self.f_small, ckpt_col)
+        row += 22
 
-        # RIGHT PANEL: AGENT & ENVIRONMENT MATRIX
-        rx = 530
+        # Safe fresh start button (2-step confirmation)
+        if not self._confirm_fresh_armed:
+            self._btn("[ ⚠ FRESH START (NEW MODEL) ]", 36, row, 230, 26, "arm_fresh", color=AMBER, bg_color=(45, 20, 25), border_color=RED, font=self.f_small)
+            self._blit("(Start from scratch)", 276, row + 5, self.f_tiny, DIM)
+        else:
+            self._btn("[ CONFIRM FRESH RESET? ]", 36, row, 200, 26, "fresh_reset", color=WHITE, bg_color=BTN_STOP_BG, border_color=GOLD, font=self.f_bold)
+            self._btn("[ CANCEL ]", 245, row, 90, 26, "cancel_fresh", color=DIM, font=self.f_small)
+
+        # RIGHT CARD: AGENT & ENVIRONMENT MATRIX
+        rx = 535
         self._panel(rx, card_y, card_w, card_h, "2. AGENT & ENVIRONMENT MATRIX")
-        info_row = card_y + 34
+        info_row = card_y + 38
 
         specs = [
             ("Policy Architecture", f"{config_rl.MIND_HIDDEN_SIZE}-Hidden 2-Layer Actor-Critic"),
-            ("State Dimensions",   f"{config_rl.STATE_SIZE} Feature Dimensions"),
-            ("Action Space",       f"{config_rl.ACTION_SIZE} Action Permutations"),
-            ("Replay Memory",      f"{config_rl.CONTINUAL_BUFFER_SIZE} Rolls ({config_rl.CONTINUAL_UPDATE_EVERY}t PPO)"),
-            ("Procedural Map",     "7 Biomes (555+ Objects, Smooth Terrain)"),
-            ("Virus LM Profile",   f"Profile '{config_rl.VIRUS_PROFILE}' (420 Tokens)"),
+            ("State Dimensions",   f"{config_rl.STATE_SIZE} Vector Dimensions"),
+            ("Action Space",       f"{config_rl.ACTION_SIZE} Discrete Actions"),
+            ("Replay Memory",      f"{config_rl.CONTINUAL_BUFFER_SIZE} Transitions ({config_rl.CONTINUAL_UPDATE_EVERY}t PPO)"),
+            ("Procedural Map",     "7 Biomes (Safe Haven, Gates, Boss Arena)"),
+            ("Virus LM Profile",   f"Profile '{config_rl.VIRUS_PROFILE}' Grounded"),
         ]
         for k, v in specs:
-            self._blit(f"{k:<20}", rx + 14, info_row, self.f_body, DIM)
-            self._blit(v, rx + 185, info_row, self.f_body, WHITE)
+            self._blit(f"{k}", rx + 18, info_row, self.f_body, DIM)
+            self._blit(v, rx + 195, info_row, self.f_body, WHITE)
             info_row += 24
 
         info_row += 8
-        pygame.draw.line(self.screen, DIM, (rx + 10, info_row), (rx + card_w - 10, info_row), 1)
+        pygame.draw.line(self.screen, DIM2, (rx + 14, info_row), (rx + card_w - 14, info_row), 1)
         info_row += 14
 
-        self._blit("ACTIVE REWARD RULES (Click to Toggle):", rx + 14, info_row, self.f_bold, GOLD)
-        info_row += 22
+        self._blit("ACTIVE REWARD RULES (Click to Toggle):", rx + 18, info_row, self.f_bold, GOLD)
+        info_row += 24
 
         for idx, (label, key) in enumerate(_RULE_LABELS):
             en = self.reward_rules.get(key, True)
             col_pos = idx % 3
             row_pos = idx // 3
-            bx = rx + 14 + col_pos * 152
-            by = info_row + row_pos * 28
-            self._btn(f"[{'X' if en else ' '}] {label}", bx, by, 144, 22, f"rule:{key}", active=en, color=AMBER)
+            bx = rx + 18 + col_pos * 148
+            by = info_row + row_pos * 30
+            btn_txt = f"[ON] {label}" if en else f"[OFF] {label}"
+            btn_col = FG_BOLD if en else DIM
+            btn_bg  = (20, 50, 35) if en else (28, 20, 22)
+            btn_bdr = (45, 120, 75) if en else (70, 35, 40)
+            self._btn(btn_txt, bx, by, 140, 24, f"rule:{key}", active=en, color=btn_col, bg_color=btn_bg, border_color=btn_bdr)
 
         # 3. Bottom Launch & Navigation Section
-        self._hline(586)
-        nav_y = 596
+        self._hline(582)
+        nav_y = 594
 
-        self._btn("2: 📊 HISTORICAL ANALYTICS", 20, nav_y, 230, 36, "tab:1", active=(self.active_tab == TAB_ANALYTICS))
-        self._btn("3: ⚙️ FULL HYPERPARAM STUDIO", 260, nav_y, 230, 36, "tab:2", active=(self.active_tab == TAB_CONFIG))
+        self._btn("[ 2: ANALYTICS ]", 20, nav_y, 220, 38, "tab:1", active=(self.active_tab == TAB_ANALYTICS), font=self.f_bold)
+        self._btn("[ 3: HYPERPARAMS ]", 255, nav_y, 220, 38, "tab:2", active=(self.active_tab == TAB_CONFIG), font=self.f_bold)
 
         # Main Launch Button
-        self._btn("▶  LAUNCH TRAINING SESSION", 510, nav_y, 510, 38, "start", active=True, color=WHITE, bg_color=BTN_SAVE_BG, border_color=BTN_SAVE_BDR, font=self.f_header)
+        self._btn(">> LAUNCH TRAINING SESSION <<", 495, nav_y, 525, 38, "start", active=True, color=WHITE, bg_color=BTN_LAUNCH_BG, border_color=BTN_LAUNCH_BDR, font=self.f_header)
 
-        self._blit("Hotkeys: [SPACE / Click] = Launch Session  |  [ESC] = Quit ATS", 20, H - 16, self.f_small, DIM)
+        self._blit("Hotkeys: [SPACE] Launch / Pause   |   [T] Turbo   |   [Ctrl+S] Save Checkpoint   |   [ESC] Quit ATS", 24, H - 20, self.f_small, DIM)
 
     # -----------------------------------------------------------------------
-    # In-Session Navigation Header & Top-Right Collapsible Sidebar Trigger
+    # In-Session Chrome & Drawer
     # -----------------------------------------------------------------------
     def _draw_chrome(self, env):
         st_col = {STATE_RUNNING: FG_BOLD, STATE_PAUSED: AMBER, STATE_STOPPED: RED}.get(self.app_state, WHITE)
         cursor = "_" if (self.frame // 20) % 2 == 0 else " "
-        ep_str = f"  EP:{env.episode}/{config_rl.EPISODES}  TICK:{env.tick}/{config_rl.MAX_TICKS}" if env else ""
-        turbo_str = "  [⚡TURBO]" if self.turbo_mode else ""
-        self._blit(f"ATS MISSION CONTROL {cursor} [{self.app_state}]{turbo_str}{ep_str}", 14, 10, self.f_bold, st_col)
+        ep_str = f"  |  EP: {env.episode}/{config_rl.EPISODES}  TICK: {env.tick}/{config_rl.MAX_TICKS}" if env else ""
+        turbo_str = "  [TURBO ON]" if self.turbo_mode else ""
+        self._blit(f"ATS MISSION CONTROL {cursor} [{self.app_state}]{turbo_str}{ep_str}", 16, 10, self.f_bold, st_col)
 
-        # Top-Right Collapsible Sidebar Trigger Button
-        drawer_txt = "[ ✕ CLOSE ]" if self.sidebar_open else "[ ◀ TABS / VIEWS ]"
-        self._btn(drawer_txt, W - 155, 6, 142, 26, "toggle_sidebar", active=self.sidebar_open, color=GOLD, font=self.f_bold)
+        # Top-Right Collapsible Sidebar Trigger
+        drawer_txt = "[ X CLOSE ]" if self.sidebar_open else "[ < TABS / VIEWS ]"
+        self._btn(drawer_txt, W - 160, 6, 145, 26, "toggle_sidebar", active=self.sidebar_open, color=GOLD, font=self.f_bold)
         self._hline(36)
 
     def _draw_sidebar_drawer(self):
-        """Renders the top-right slide-out navigation sidebar drawer."""
         dw = 230
-        dx = W - dw - 8
-        dy = 38
-        dh = H - 106
+        dx = W - dw - 10
+        dy = 40
+        dh = H - 110
 
-        pygame.draw.rect(self.screen, BG_PANEL2, (dx, dy, dw, dh))
-        pygame.draw.rect(self.screen, GOLD, (dx, dy, dw, dh), 2)
+        pygame.draw.rect(self.screen, BG_PANEL2, (dx, dy, dw, dh), border_radius=4)
+        pygame.draw.rect(self.screen, GOLD, (dx, dy, dw, dh), 1, border_radius=4)
 
-        self._blit("=== NAVIGATION ===", dx + 36, dy + 12, self.f_bold, GOLD)
-        pygame.draw.line(self.screen, DIM, (dx + 10, dy + 32), (dx + dw - 10, dy + 32), 1)
+        self._blit("=== NAVIGATION ===", dx + 45, dy + 12, self.f_bold, GOLD)
+        pygame.draw.line(self.screen, DIM2, (dx + 10, dy + 32), (dx + dw - 10, dy + 32), 1)
 
         tabs = [
-            (TAB_SIM,       "1: 🎮 LIVE SIM"),
-            (TAB_ANALYTICS, "2: 📊 ANALYTICS"),
-            (TAB_CONFIG,    "3: ⚙️ HYPERPARAMS"),
-            (TAB_MIND,      "4: 🧠 MIND & LLM"),
+            (TAB_SIM,       "1: [ LIVE SIM ]"),
+            (TAB_ANALYTICS, "2: [ ANALYTICS ]"),
+            (TAB_CONFIG,    "3: [ HYPERPARAMS ]"),
+            (TAB_MIND,      "4: [ MIND & LLM ]"),
         ]
         avail = TAB_ACCESS.get(self.app_state, set())
-        ty = dy + 42
+        ty = dy + 44
         for tab_id, label in tabs:
             locked = tab_id not in avail
             is_active = (self.active_tab == tab_id)
-            self._btn(label, dx + 12, ty, dw - 24, 30, f"tab:{tab_id}", active=is_active, locked=locked, font=self.f_body)
-            ty += 40
+            self._btn(label, dx + 12, ty, dw - 24, 32, f"tab:{tab_id}", active=is_active, locked=locked, font=self.f_body)
+            ty += 42
 
-        pygame.draw.line(self.screen, DIM, (dx + 10, ty + 10), (dx + dw - 10, ty + 10), 1)
-        self._btn("[ ✕ CLOSE DRAWER ]", dx + 12, ty + 24, dw - 24, 26, "close_sidebar", color=AMBER)
+        pygame.draw.line(self.screen, DIM2, (dx + 10, ty + 10), (dx + dw - 10, ty + 10), 1)
+        self._btn("[ CLOSE DRAWER ]", dx + 12, ty + 24, dw - 24, 28, "close_sidebar", color=AMBER)
 
     # -----------------------------------------------------------------------
     # TAB 0: LIVE SIMULATION
@@ -833,27 +794,26 @@ class TerminalGUI:
     def _draw_sim(self, env, needs, trace):
         agent = env.agent
         world = env.world
-        y0 = 42
+        y0 = 44
 
-        self._blit("INVENTORY (24 SLOTS)", 14, y0, self.f_bold, GOLD)
+        self._blit(f"INVENTORY ({config_rl.INVENTORY_SLOTS} SLOTS)", 16, y0, self.f_bold, GOLD)
         facing_lbl = {"N": "NORTH ^", "S": "SOUTH v", "W": "WEST <", "E": "EAST >"}.get(agent.facing_dir, "?")
         self._blit(f"WORLD VIEW (7x7)    FACING: {facing_lbl}", 520, y0, self.f_bold, GOLD)
-        pygame.draw.line(self.screen, DIM, (510, 38), (510, 268), 1)
+        pygame.draw.line(self.screen, DIM2, (505, 40), (505, 270), 1)
 
         inv_y = y0 + 18
-        for i in range(12):
-            yp = inv_y + i * 18
-            for side, base in ((0, 0), (1, 12)):
-                sl = agent.inventory[i + base]
-                sel = (i + base == agent.selected_slot)
-                mk = ">" if sel else " "
-                if sl["id"]:
-                    txt = f"{mk}{i + base:02d}:[{sl['id']}]{item_name(sl['id'])[:8]} x{sl['count']}"
-                    c = FG_BOLD if sel else FG
-                else:
-                    txt = f"{mk}{i + base:02d}:empty"
-                    c = GOLD if sel else DIM
-                self._blit(txt, 14 + side * 245, yp, self.f_body, c)
+        for i in range(len(agent.inventory)):
+            yp = inv_y + i * 24
+            sl = agent.inventory[i]
+            sel = (i == agent.selected_slot)
+            mk = "> " if sel else "  "
+            if sl["id"] and sl["count"] > 0:
+                txt = f"{mk}Slot {i}: [{sl['id']}] {item_name(sl['id'])[:14]} x{sl['count']}"
+                c = FG_BOLD if sel else FG
+            else:
+                txt = f"{mk}Slot {i}: [EMPTY - DISABLED]"
+                c = RED if sel else DIM
+            self._blit(txt, 16, yp, self.f_body, c)
 
         # World Grid 7x7
         cw, ch = 70, 18
@@ -881,6 +841,12 @@ class TerminalGUI:
                     elif t.tile_type == 1: cs, cc = "#WALL", DIM
                     elif t.tile_type == 5: cs, cc = "~H2O~", CYAN
                     elif t.tile_type == 6: cs, cc = "~LAV~", RED
+                    elif t.tile_type == 7: cs, cc = "[GATE]", GOLD
+                    elif t.tile_type == 8: cs, cc = "~SEA~", (80, 140, 240)
+                    elif t.tile_type == 9: cs, cc = "~ACID~", (60, 220, 60)
+                    elif t.tile_type == 10: cs, cc = "[ICE]", (160, 230, 255)
+                    elif t.tile_type == 11: cs, cc = "[ASH]", (180, 180, 180)
+                    elif t.tile_type == 12: cs, cc = "%SPOR%", (200, 80, 220)
                     else:                  cs, cc = ".", DIM
                 self._blit(cs, cx, ry, self.f_body, cc)
 
@@ -889,50 +855,55 @@ class TerminalGUI:
         self._blit(f"NEEDS  Hunger:{needs[0]:.2f}  Injury:{needs[1]:.2f}  Threat:{needs[2]:.2f}  Tool:{needs[3]:.2f}", 520, inv_y + 7 * ch + 24, self.f_body, nc)
 
         # Vitals Bar
-        self._hline(272)
-        from biome import BIOMES
-        ct = world._tile(agent.x, agent.y)
-        b_name = BIOMES.get(ct.biome if ct else 0, "?")
+        self._hline(276)
+        zinfo = world.get_zone_info(agent.x, agent.y)
+        isl_name = zinfo.get("name", "Ocean")
+        isl_tier = zinfo.get("tier", 0)
         hp_c = FG_BOLD if agent.health > 50 else (AMBER if agent.health > 25 else RED)
-        self._blit(f"HP:{agent.health:3d}/100  HUNGER:{agent.hunger:3d}/100  STAMINA:{agent.stamina:3d}/100  LV:{agent.level}  XP:{agent.xp}  POS:({agent.x},{agent.y}) Z:{agent.z}", 14, 276, self.f_body, hp_c)
+        self._blit(f"HP: {agent.health:3d}/100   HUNGER: {agent.hunger:3d}/100   STAMINA: {agent.stamina:3d}/100   LV: {agent.level}   XP: {agent.xp}   POS: ({agent.x},{agent.y})", 16, 282, self.f_body, hp_c)
         nt = "NIGHT" if env.day_night.is_night else "DAY"
-        self._blit(f"BIOME:{b_name}  TIME:{env.day_night.time_of_day:.2f} ({nt})  TORCH:{'ON' if agent.torch_active else 'OFF'}  INJURED:{'YES' if agent.leg_injured else 'NO'}", 14, 296, self.f_body, AMBER if env.day_night.is_night else CYAN)
+        caps_str = ",".join(list(agent.capabilities)[:4]) if agent.capabilities else "none"
+        tier_badge = f"[TIER {isl_tier}]" if isl_tier >= 0 else "[DANGER]"
+        water_drag_tag = f" [WATER DRAG: {int(agent.water_speed_mult * 100)}% SPD]" if agent.water_speed_mult < 1.0 else ""
+        ocean_warning = f"  |  [ ! OPEN OCEAN IMMERSION: {config_rl.OCEAN_SHARK_TICKS - agent.ocean_ticks}s ! ]" if agent.ocean_ticks > 0 else ""
+        self._blit(f"ISLAND: {isl_name} {tier_badge}   TIME: {env.day_night.time_of_day:.2f} ({nt}){water_drag_tag}   CAPS: [{caps_str}]{ocean_warning}", 16, 302, self.f_body, RED if agent.ocean_ticks > 0 else (AMBER if env.day_night.is_night else CYAN))
 
         # Recent Activity
-        self._hline(318)
-        self._blit("RECENT ACTIVITY & EVENTS", 14, 322, self.f_bold, GOLD)
+        self._hline(324)
+        self._blit("RECENT ACTIVITY & EVENTS", 16, 328, self.f_bold, GOLD)
         evts = self._fmt_events(agent.event_log, 2)
         for i, (txt, col) in enumerate(evts):
-            self._blit(txt, 14, 342 + i * 18, self.f_body, col)
+            self._blit(txt, 16, 348 + i * 18, self.f_body, col)
 
         # Mind Traces
-        self._hline(384)
-        self._blit("MIND COGNITIVE CYCLE", 14, 388, self.f_bold, GOLD)
-        self._blit(f"Detect: {str(trace.get('detect', ''))[:100]}", 14, 408, self.f_body, CYAN)
-        self._blit(f"Act   : {str(trace.get('act', ''))[:100]}", 14, 428, self.f_body, CYAN)
+        self._hline(390)
+        self._blit("MIND COGNITIVE CYCLE", 16, 394, self.f_bold, GOLD)
+        self._blit(f"Detect: {str(trace.get('detect', ''))[:100]}", 16, 414, self.f_body, CYAN)
+        self._blit(f"Act   : {str(trace.get('act', ''))[:100]}", 16, 432, self.f_body, CYAN)
 
         # Action Toggles
-        self._hline(450)
-        self._blit("ACTION TOGGLES (Click or W/A/S/D to toggle):", 14, 454, self.f_small, DIM)
-        bx = 14
+        self._hline(454)
+        self._blit("ACTION TOGGLES (Click or W/A/S/D to toggle):", 16, 458, self.f_small, DIM)
+        bx = 16
         for label, idx in _ACTION_TOGGLES:
             en = idx not in self.disabled_actions
-            self._btn(f"[{'X' if en else ' '}] {label}", bx, 470, 68, 22, f"act:{idx}", active=en)
+            self._btn(f"[{'X' if en else ' '}] {label}", bx, 474, 68, 22, f"act:{idx}", active=en)
             bx += 72
 
         # Reward Rules
-        self._blit("REWARD RULES:", 14, 498, self.f_small, DIM)
-        bx = 14
+        self._blit("REWARD RULES:", 16, 502, self.f_small, DIM)
+        bx = 16
         for label, key in _RULE_LABELS:
             en = self.reward_rules.get(key, True)
-            self._btn(f"[{'X' if en else ' '}] {label}", bx, 514, 85, 22, f"rule:{key}", active=en, color=AMBER)
-            bx += 89
+            self._btn(f"[{'X' if en else ' '}] {label}", bx, 518, 92, 22, f"rule:{key}", active=en, color=AMBER)
+            bx += 98
 
         # Stats Line
-        self._hline(542)
+        self._hline(546)
         ent, _ = world.nearest_entity(agent.x, agent.y)
         ent_lbl = f"{entity_name(ent.entity_id)}(HP:{ent.hp})" if ent else "none"
-        self._blit(f"LAST ACTION: {agent.last_action_name}   |   NEAREST: {ent_lbl}   |   TOTAL REWARD: {env.rewards.total:.2f}   |   LAST Δ: {env.rewards.tick_reward:+.2f}", 14, 546, self.f_body, FG_BOLD, max_w=1000)
+        eff_val = env.rewards.compute_progression_efficiency(env.tick)
+        self._blit(f"LAST: {agent.last_action_name:<12} | TARGET: {ent_lbl:<14} | TOTAL REW: {env.rewards.total:+7.2f} | EFF: {eff_val:.3f} | PTS: {env.rewards.progression_points:.1f}", 16, 550, self.f_body, FG_BOLD, max_w=1000)
 
     def _fmt_events(self, log, n):
         if not log:
@@ -952,7 +923,7 @@ class TerminalGUI:
     # -----------------------------------------------------------------------
     # TAB 1: ADVANCED ANALYTICS & ZOOMABLE GRAPHS
     # -----------------------------------------------------------------------
-    def _draw_analytics(self, y_offset=42):
+    def _draw_analytics(self, y_offset=44):
         y0 = y_offset
 
         cards = [
@@ -961,16 +932,16 @@ class TerminalGUI:
             ("Latest Reward", f"{self.reward_curve[-1]:.2f}" if self.reward_curve else "—"),
             ("Avg Last 10", f"{sum(self.reward_curve[-10:]) / len(self.reward_curve[-10:]):.2f}" if len(self.reward_curve) >= 2 else "—"),
         ]
-        cx = 14
+        cx = 16
         for title, val in cards:
-            self._panel(cx, y0, 240, 50, None)
+            self._panel(cx, y0, 240, 52, None)
             self._blit(title, cx + 10, y0 + 6, self.f_small, DIM)
-            self._blit(val, cx + 10, y0 + 22, self.f_header, FG_BOLD)
+            self._blit(val, cx + 10, y0 + 24, self.f_header, FG_BOLD)
             cx += 254
-        y0 += 58
+        y0 += 60
 
         # Timeframe & Zoom Controls Bar
-        self._blit("TIMEFRAME / ZOOM:", 14, y0 + 3, self.f_bold, GOLD)
+        self._blit("TIMEFRAME / ZOOM:", 16, y0 + 3, self.f_bold, GOLD)
         zx = 160
         presets = [("10 Ep", "10"), ("25 Ep", "25"), ("50 Ep", "50"), ("ALL", "all")]
         for plabel, pval in presets:
@@ -978,22 +949,22 @@ class TerminalGUI:
             self._btn(plabel, zx, y0 - 2, 58, 22, f"zoom:{pval}", active=is_active)
             zx += 64
 
-        self._btn("🔍- OUT", zx + 10, y0 - 2, 65, 22, "zoom:out")
-        self._btn("🔍+ IN", zx + 80, y0 - 2, 65, 22, "zoom:in")
-        self._btn("📄 EXPORT CSV", W - 155, y0 - 2, 142, 22, "export_csv", color=GOLD)
+        self._btn("[-] OUT", zx + 10, y0 - 2, 65, 22, "zoom:out")
+        self._btn("[+] IN", zx + 80, y0 - 2, 65, 22, "zoom:in")
+        self._btn("EXPORT CSV", W - 155, y0 - 2, 140, 22, "export_csv", color=GOLD)
         y0 += 30
 
         # Two Zoomable Telemetry Graphs
-        lrect = pygame.Rect(14, y0, 490, 165)
-        rrect = pygame.Rect(518, y0, 508, 165)
-        pygame.draw.rect(self.screen, BG_PANEL, lrect)
-        pygame.draw.rect(self.screen, FRAME, lrect, 2)
-        pygame.draw.rect(self.screen, BG_PANEL, rrect)
-        pygame.draw.rect(self.screen, FRAME, rrect, 2)
+        lrect = pygame.Rect(16, y0, 490, 165)
+        rrect = pygame.Rect(518, y0, 506, 165)
+        pygame.draw.rect(self.screen, BG_PANEL, lrect, border_radius=4)
+        pygame.draw.rect(self.screen, FRAME, lrect, 1, border_radius=4)
+        pygame.draw.rect(self.screen, BG_PANEL, rrect, border_radius=4)
+        pygame.draw.rect(self.screen, FRAME, rrect, 1, border_radius=4)
 
         win_lbl = f"(Window: Last {self.zoom_window})" if self.zoom_window > 0 else "(Window: All Time)"
-        self._blit(f"EPISODE REWARD CURVE {win_lbl}", lrect.x + 8, lrect.y + 6, self.f_small, GOLD)
-        self._blit("PPO LOSS HISTORY (Total / Actor / Critic)", rrect.x + 8, rrect.y + 6, self.f_small, CYAN)
+        self._blit(f"EPISODE REWARD CURVE {win_lbl}", lrect.x + 10, lrect.y + 6, self.f_small, GOLD)
+        self._blit("PPO LOSS HISTORY (Total / Actor / Critic)", rrect.x + 10, rrect.y + 6, self.f_small, CYAN)
 
         rew_slice = self.reward_curve[-self.zoom_window:] if (self.zoom_window > 0 and len(self.reward_curve) > self.zoom_window) else self.reward_curve
         loss_slice = self.loss_history[-self.zoom_window * 4:] if (self.zoom_window > 0 and len(self.loss_history) > self.zoom_window * 4) else self.loss_history
@@ -1018,12 +989,12 @@ class TerminalGUI:
         y0 += 8
 
         # Recent Episode Summary Table in ASCENDING Order
-        self._blit("EPISODE SUMMARY LOG (Ascending Order — Latest at Bottom):", 14, y0 + 3, self.f_bold, GOLD)
-        self._btn("▲ SCROLL UP", W - 255, y0 - 2, 115, 22, "scroll:up")
-        self._btn("▼ SCROLL DOWN", W - 135, y0 - 2, 122, 22, "scroll:down")
+        self._blit("EPISODE SUMMARY LOG (Ascending Order — Latest at Bottom):", 16, y0 + 3, self.f_bold, GOLD)
+        self._btn("[▲] SCROLL UP", W - 255, y0 - 2, 115, 22, "scroll:up")
+        self._btn("[▼] SCROLL DOWN", W - 135, y0 - 2, 120, 22, "scroll:down")
         y0 += 26
 
-        headers = [("EPISODE", 14), ("TOTAL REWARD", 110), ("TICKS SURVIVED", 240), ("TERMINATION REASON", 390), ("TIME", 880)]
+        headers = [("EPISODE", 16), ("REWARD", 100), ("GRADE", 195), ("EFFICIENCY", 270), ("TICKS", 370), ("TERMINATION REASON", 440), ("TIME", 880)]
         for h, hx in headers:
             self._blit(h, hx, y0, self.f_small, DIM)
         self._hline(y0 + 16)
@@ -1037,11 +1008,15 @@ class TerminalGUI:
         visible_entries = self.episode_history[start_idx:end_idx]
         for entry in visible_entries:
             rc = FG_BOLD if entry["reward"] > 0 else RED
-            self._blit(f"Ep {entry['ep']:04d}", 14, y0, self.f_body, FG)
-            self._blit(f"{entry['reward']:+.2f}", 110, y0, self.f_body, rc)
-            self._blit(f"{entry['ticks']:5d}", 240, y0, self.f_body, WHITE)
+            self._blit(f"Ep {entry['ep']:04d}", 16, y0, self.f_body, FG)
+            self._blit(f"{entry['reward']:+7.2f}", 100, y0, self.f_body, rc)
+            grd = entry.get("grade", "MID")
+            grd_col = FG_BOLD if grd == "GOOD" else (GOLD if grd == "MID" else (AMBER if grd == "FAIR" else RED))
+            self._blit(grd, 195, y0, self.f_bold, grd_col)
+            self._blit(f"{entry.get('efficiency', 0.0):.3f}", 270, y0, self.f_body, CYAN)
+            self._blit(f"{entry['ticks']:5d}", 370, y0, self.f_body, WHITE)
             rc2 = RED if "Perished" in entry["reason"] or "HP" in entry["reason"] else CYAN
-            self._blit(entry["reason"], 390, y0, self.f_body, rc2, max_w=470)
+            self._blit(entry["reason"], 440, y0, self.f_body, rc2, max_w=430)
             self._blit(entry["time"], 880, y0, self.f_body, DIM)
             y0 += 20
 
@@ -1074,11 +1049,11 @@ class TerminalGUI:
     # -----------------------------------------------------------------------
     # TAB 2: HYPERPARAMETER STUDIO
     # -----------------------------------------------------------------------
-    def _draw_config(self, y_offset=42):
+    def _draw_config(self, y_offset=44):
         running_locked = (self.app_state == STATE_RUNNING)
         y0 = y_offset
 
-        self._blit("ATS HYPERPARAMETER STUDIO", 14, y0, self.f_header, GOLD)
+        self._blit("ATS HYPERPARAMETER STUDIO", 16, y0, self.f_header, GOLD)
         if running_locked:
             self._blit("[LOCKED DURING EXECUTION — Press SPACE to Pause before editing]", 270, y0 + 2, self.f_small, RED)
         y0 += 28
@@ -1087,7 +1062,7 @@ class TerminalGUI:
         fields_right = _CONFIG_FIELDS[4:]
 
         for col_idx, fields in enumerate([fields_left, fields_right]):
-            cx = 14 + col_idx * 515
+            cx = 16 + col_idx * 515
             fy = y0
             for attr, label, step, lo, hi, fmt in fields:
                 val = getattr(config_rl, attr, "?")
@@ -1125,59 +1100,59 @@ class TerminalGUI:
 
         self._hline(y0 + 8 * 38)
         iy = y0 + 8 * 38 + 10
-        self._blit(f"Active Checkpoint: {config_rl.MODEL_PATH}   |   CSV History: {self.csv_path}   |   Profile: {config_rl.VIRUS_PROFILE}", 14, iy, self.f_small, DIM, max_w=1000)
+        self._blit(f"Active Checkpoint: {config_rl.MODEL_PATH}   |   CSV History: {self.csv_path}   |   Profile: {config_rl.VIRUS_PROFILE}", 16, iy, self.f_small, DIM, max_w=1000)
 
     # -----------------------------------------------------------------------
     # TAB 3: MIND & LLM INSPECTOR
     # -----------------------------------------------------------------------
     def _draw_mind(self, env, needs, trace):
-        y0 = 42
-        self._panel(14, y0, 490, 500, "ACTIVE NEED DETECTOR (4-D URGENCY VECTOR)")
+        y0 = 44
+        self._panel(16, y0, 490, 500, "ACTIVE NEED DETECTOR (4-D URGENCY VECTOR)")
         n_labels = [("Hunger", needs[0], FG_BOLD), ("Injury", needs[1], RED), ("Threat", needs[2], AMBER), ("Tool / Harvest", needs[3], CYAN)]
-        ny = y0 + 32
+        ny = y0 + 34
         for lbl, val, col in n_labels:
-            self._blit(f"{lbl:<16}: {val:.3f}", 28, ny, self.f_body, WHITE)
-            bw = int(max(0.0, min(1.0, val)) * 280)
-            pygame.draw.rect(self.screen, DIM2, (200, ny + 2, 280, 14))
-            pygame.draw.rect(self.screen, col, (200, ny + 2, bw, 14))
-            pygame.draw.rect(self.screen, DIM, (200, ny + 2, 280, 14), 1)
+            self._blit(f"{lbl:<16}: {val:.3f}", 30, ny, self.f_body, WHITE)
+            bw = int(max(0.0, min(1.0, val)) * 260)
+            pygame.draw.rect(self.screen, DIM2, (210, ny + 2, 260, 14), border_radius=2)
+            pygame.draw.rect(self.screen, col, (210, ny + 2, bw, 14), border_radius=2)
+            pygame.draw.rect(self.screen, FRAME, (210, ny + 2, 260, 14), 1, border_radius=2)
             ny += 28
 
-        self._hline(ny + 4, x0=24, x1=495)
+        self._hline(ny + 4, x0=26, x1=495)
         ny += 14
-        self._blit("SOLUTION LOOP STAGE TRACES", 28, ny, self.f_bold, GOLD)
+        self._blit("SOLUTION LOOP STAGE TRACES", 30, ny, self.f_bold, GOLD)
         ny += 22
         for stage in ["detect", "need", "recall", "act", "record"]:
             val = str(trace.get(stage, "—"))
-            self._blit(f"{stage:<8}: {val[:58]}", 28, ny, self.f_body, CYAN)
+            self._blit(f"{stage:<8}: {val[:54]}", 30, ny, self.f_body, CYAN)
             ny += 20
 
-        self._hline(ny + 4, x0=24, x1=495)
+        self._hline(ny + 4, x0=26, x1=495)
         ny += 14
-        self._blit("CONTINUAL LEARNER MATRIX", 28, ny, self.f_bold, GOLD)
+        self._blit("CONTINUAL LEARNER MATRIX", 30, ny, self.f_bold, GOLD)
         ny += 22
-        self._blit(f"Buffer Capacity : {config_rl.CONTINUAL_BUFFER_SIZE} transitions", 28, ny, self.f_body, WHITE)
+        self._blit(f"Buffer Capacity : {config_rl.CONTINUAL_BUFFER_SIZE} transitions", 30, ny, self.f_body, WHITE)
         ny += 20
-        self._blit(f"Update Interval : Every {config_rl.CONTINUAL_UPDATE_EVERY} ticks", 28, ny, self.f_body, WHITE)
+        self._blit(f"Update Interval : Every {config_rl.CONTINUAL_UPDATE_EVERY} ticks", 30, ny, self.f_body, WHITE)
         ny += 20
-        self._blit(f"PPO Mini-Epochs : {config_rl.CONTINUAL_MINI_EPOCHS} epochs per batch", 28, ny, self.f_body, WHITE)
+        self._blit(f"PPO Mini-Epochs : {config_rl.CONTINUAL_MINI_EPOCHS} epochs per batch", 30, ny, self.f_body, WHITE)
 
         # Right Panel: Virus Language Model
-        self._panel(518, y0, 508, 500, "VIRUS LANGUAGE MODEL GROUNDING")
-        ry = y0 + 32
-        self._blit(f"Active Profile : {config_rl.VIRUS_PROFILE}", 532, ry, self.f_body, WHITE)
+        self._panel(518, y0, 506, 500, "VIRUS LANGUAGE MODEL GROUNDING")
+        ry = y0 + 34
+        self._blit(f"Active Profile : {config_rl.VIRUS_PROFILE}", 534, ry, self.f_body, WHITE)
         ry += 24
 
-        self._blit("Latest Generated Runtime Narration:", 532, ry, self.f_bold, GOLD)
+        self._blit("Latest Generated Runtime Narration:", 534, ry, self.f_bold, GOLD)
         ry += 18
-        lines = [self.last_narration[i:i + 56] for i in range(0, len(self.last_narration), 56)]
+        lines = [self.last_narration[i:i + 52] for i in range(0, len(self.last_narration), 52)]
         for line in lines[:7]:
-            self._blit(f"> {line}", 532, ry, self.f_body, WHITE)
+            self._blit(f"> {line}", 534, ry, self.f_body, WHITE)
             ry += 18
 
-        self._hline(ry + 6, x0=524, x1=1016)
+        self._hline(ry + 6, x0=526, x1=1014)
         ry += 16
-        self._blit("Symbolic Vocabulary Token Grounding:", 532, ry, self.f_bold, GOLD)
+        self._blit("Symbolic Vocabulary Token Grounding:", 534, ry, self.f_bold, GOLD)
         ry += 20
         tok_rows = [
             ("Items   :", "0001:Apple  0002:Sword  0010:Wood  0021:OakTree", FG),
@@ -1186,12 +1161,12 @@ class TerminalGUI:
             ("Actions :", "A000:MoveN  A007:Attack  A008:PickUp  A017:Wait", WHITE),
         ]
         for k, v, col in tok_rows:
-            self._blit(k, 532, ry, self.f_body, DIM)
-            self._blit(v, 620, ry, self.f_body, col)
+            self._blit(k, 534, ry, self.f_body, DIM)
+            self._blit(v, 625, ry, self.f_body, col)
             ry += 20
 
     # -----------------------------------------------------------------------
-    # In-Session Bottom Control Toolbar with Solid Vibrant Buttons
+    # In-Session Bottom Control Toolbar
     # -----------------------------------------------------------------------
     def _draw_toolbar(self):
         self._hline(H - 66)
@@ -1202,13 +1177,12 @@ class TerminalGUI:
         stopped = (self.app_state == STATE_STOPPED)
         in_run  = running or paused
 
-        # Solid Vibrant Colored Action Buttons
-        self._btn("⏸ PAUSE" if running else "▶ RESUME", 14, ty, 115, 36, "toggle_pause", active=paused, locked=stopped, color=WHITE, bg_color=BTN_PAUSE_BG, border_color=BTN_PAUSE_BDR, font=self.f_bold)
-        self._btn("⚡ TURBO", 138, ty, 98, 36, "turbo", active=self.turbo_mode, locked=not running, color=WHITE, bg_color=BTN_TURBO_BG, border_color=BTN_TURBO_BDR, font=self.f_bold)
-        self._btn("💾 SAVE", 244, ty, 96, 36, "save", locked=stopped, color=WHITE, bg_color=BTN_SAVE_BG, border_color=BTN_SAVE_BDR, font=self.f_bold)
-        self._btn("🔄 RESET POLICY", 348, ty, 140, 36, "fresh_reset", locked=running, color=WHITE, bg_color=BTN_RESET_BG, border_color=BTN_RESET_BDR, font=self.f_bold)
-        self._btn("⏹ STOP", 496, ty, 96, 36, "stop", locked=stopped, color=WHITE, bg_color=BTN_STOP_BG, border_color=BTN_STOP_BDR, font=self.f_bold)
-        self._btn("🏠 MENU", 600, ty, 96, 36, "return_home", active=(self.app_state == STATE_STOPPED), locked=running, color=WHITE, bg_color=BTN_MENU_BG, border_color=BTN_MENU_BDR, font=self.f_bold)
+        self._btn("[ PAUSE ]" if running else "[ RESUME ]", 16, ty, 115, 36, "toggle_pause", active=paused, locked=stopped, color=WHITE, bg_color=BTN_PAUSE_BG, border_color=BTN_PAUSE_BDR, font=self.f_bold)
+        self._btn("[ TURBO ]", 140, ty, 98, 36, "turbo", active=self.turbo_mode, locked=not running, color=WHITE, bg_color=BTN_TURBO_BG, border_color=BTN_TURBO_BDR, font=self.f_bold)
+        self._btn("[ SAVE ]", 248, ty, 96, 36, "save", locked=stopped, color=WHITE, bg_color=BTN_SAVE_BG, border_color=BTN_SAVE_BDR, font=self.f_bold)
+        self._btn("[ RESET POLICY ]", 354, ty, 140, 36, "fresh_reset", locked=running, color=WHITE, bg_color=BTN_RESET_BG, border_color=BTN_RESET_BDR, font=self.f_bold)
+        self._btn("[ STOP ]", 504, ty, 96, 36, "stop", locked=stopped, color=WHITE, bg_color=BTN_STOP_BG, border_color=BTN_STOP_BDR, font=self.f_bold)
+        self._btn("[ MENU ]", 610, ty, 96, 36, "return_home", active=(self.app_state == STATE_STOPPED), locked=running, color=WHITE, bg_color=BTN_MENU_BG, border_color=BTN_MENU_BDR, font=self.f_bold)
 
         lock_note = " | [SPACE]=Pause/Resume | [T]=Turbo | [Ctrl+S]=Save" if in_run else ""
-        self._blit(f"Tabs: Click [◀ TABS / VIEWS] on Top-Right{lock_note} | [ESC]=Pause | [W/A/S/D]=Actions", 14, H - 16, self.f_small, DIM)
+        self._blit(f"Tabs: Click [< TABS / VIEWS] on Top-Right{lock_note} | [ESC]=Pause | [W/A/S/D]=Actions", 16, H - 18, self.f_small, DIM)

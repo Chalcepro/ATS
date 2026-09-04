@@ -1,353 +1,300 @@
-"""Tile world, procedural chunk generation, natural objects, and entity placement.
+﻿"""Tile world, island-ocean architecture, and entity placement.
 
-Interactivity guarantee: every tile the agent can reach either
-  (a) has an item/resource object they can PICK_UP or HARVEST,
-  (b) has an entity they can ATTACK or INTERACT with, or
-  (c) is open terrain they can MOVE through.
-Hundreds of trees, bushes, logs, rocks, and wildlife populate the open world.
+World topology is now driven by island_gen.py. All tiles outside island
+land masks are TILE_OCEAN. Ocean has sharks (spawn after OCEAN_SHARK_TICKS).
+Each island type has native entities, resources, and hazard tile types.
 """
-
 from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
+from typing import Optional
 
-import biome as biome_mod
 import config_rl
 from entities import Entity
+from island_gen import (
+    IslandRegistry, IslandDef, build_island_registry,
+    ISLAND_GRASSLAND, ISLAND_DARK_FOREST, ISLAND_VOLCANIC,
+    ISLAND_MUSHROOM, ISLAND_TUNDRA, ISLAND_BOSS,
+)
 from item_ids import REGISTRY
 
-# Chunk configuration – each chunk is a square of tiles generated lazily.
-CHUNK_SIZE = 16  # 16x16 tiles per chunk
-
-TILE_EMPTY = 0
-TILE_WALL = 1
-TILE_HOSTILE = 2
-TILE_OBJECT = 3
-TILE_NPC = 4
-TILE_WATER = 5
-TILE_LAVA = 6
+# ---------------------------------------------------------------------------
+# Tile type constants
+# ---------------------------------------------------------------------------
+TILE_EMPTY   = 0   # Open walkable ground
+TILE_WALL    = 1   # Impassable rock/cliff
+TILE_HOSTILE = 2   # Entity occupying tile (render override)
+TILE_OBJECT  = 3   # Harvestable / item on ground
+TILE_NPC     = 4   # NPC entity
+TILE_WATER   = 5   # Island-internal lake/pond (swimmable, no sharks)
+TILE_LAVA    = 6   # Volcanic floor hazard (5 HP/tick burn)
+TILE_GATE    = 7   # Progression gate (locked)
+TILE_OCEAN   = 8   # Open ocean — sharks spawn after 3 ticks
+TILE_ACID    = 9   # Mushroom island acid pool (applies POISONED)
+TILE_ICE     = 10  # Tundra ice (passable, 20% slip = leg injury)
+TILE_ASH     = 11  # Volcanic safe ash path (no burn damage)
+TILE_SPORE   = 12  # Mushroom spore cloud zone (applies BLINDED)
 
 
 @dataclass
 class Tile:
-    tile_type: int = TILE_EMPTY
-    z: int = 0
-    object_id: str = ""
-    explored: bool = False
-    biome: int = 0
-    flags: str = ""
-    drop_item: str = ""  # item placed here by entity death / chest / harvest
+    tile_type: int  = TILE_EMPTY
+    z: int          = 0
+    object_id: str  = ""
+    explored: bool  = False
+    island_id: int  = -1   # which island this tile belongs to (-1 = ocean)
+    flags: str      = ""
+    drop_item: str  = ""
+
+
+# ---------------------------------------------------------------------------
+# Native entity pools per island
+# ---------------------------------------------------------------------------
+_ISLAND_ENTITY_POOLS = {
+    ISLAND_GRASSLAND:   ["E001", "E015", "E016", "E017", "E018"],
+    ISLAND_DARK_FOREST: ["E004", "E005", "E008", "E011", "E013", "E028"],
+    ISLAND_VOLCANIC:    ["E007", "E022", "E026"],
+    ISLAND_MUSHROOM:    ["E010", "E023", "E024"],
+    ISLAND_TUNDRA:      ["E012", "E021", "E025"],
+    ISLAND_BOSS:        ["E009", "E014", "E020"],
+}
+
+# Objects native to each island type
+# Each entry: (object_id, spawn_chance_threshold)
+_ISLAND_OBJECT_POOLS = {
+    ISLAND_GRASSLAND: [
+        ("0021", 0.09),   # Oak Tree
+        ("0023", 0.16),   # Berry Bush
+        ("0024", 0.22),   # Fallen Log
+        ("0008", 0.27),   # Stick
+        ("0012", 0.31),   # Stone
+        ("0028", 0.35),   # Mushroom
+        ("0029", 0.39),   # Flower
+        ("0001", 0.43),   # Apple
+        ("0025", 0.47),   # Boulder
+    ],
+    ISLAND_DARK_FOREST: [
+        ("0022", 0.10),   # Pine Tree
+        ("0024", 0.18),   # Fallen Log
+        ("0028", 0.26),   # Mushroom (dark)
+        ("0008", 0.31),   # Stick
+        ("0012", 0.36),   # Stone
+        ("0044", 0.39),   # Dark Mushroom
+        ("0025", 0.43),   # Boulder
+    ],
+    ISLAND_VOLCANIC: [
+        ("0082", 0.10),   # Lava Rock -> Magma Stone
+        ("0083", 0.18),   # Obsidian Node -> Obsidian Shard
+        ("0054", 0.26),   # Coal Ore Rich -> Coal
+        ("0086", 0.31),   # Fire Bloom Bush -> Fire Blossom
+        ("0025", 0.35),   # Boulder
+        ("0052", 0.39),   # Volcanic Ash
+    ],
+    ISLAND_MUSHROOM: [
+        ("0080", 0.12),   # Mushroom Grove -> Spore
+        ("0085", 0.20),   # Root Herb -> Antidote Root
+        ("0087", 0.27),   # Glowshroom Cluster -> Glowshroom
+        ("0059", 0.32),   # Mycelium Cap (raw)
+        ("0025", 0.36),   # Boulder
+        ("0028", 0.40),   # Mushroom
+    ],
+    ISLAND_TUNDRA: [
+        ("0070", 0.10),   # Frost Ore node -> Ice Crystal
+        ("0084", 0.18),   # Ice Stalagmite -> Ice Crystal
+        ("0022", 0.25),   # Pine Tree
+        ("0024", 0.31),   # Fallen Log
+        ("0025", 0.36),   # Boulder
+        ("0012", 0.40),   # Stone
+    ],
+    ISLAND_BOSS: [
+        ("0025", 0.10),   # Boulder
+        ("0020", 0.18),   # Void Shard (old)
+        ("0055", 0.22),   # Void Shard Rare
+        ("0012", 0.28),   # Stone
+    ],
+}
 
 
 class World:
+    """Island-ocean tile world. All generation driven by IslandRegistry."""
+
     def __init__(self, seed: int = 1337):
         self.seed = seed
         self.tiles: dict[tuple[int, int], Tile] = {}
         self.entities: list[Entity] = []
-        self.generated_chunks: set[tuple[int, int]] = set()
         self.door_unlocked = True
         self.agent_spawn = (0, 0)
 
-        # Generate initial 3x3 chunk area around spawn (48x48 tiles = 2304 tiles)
-        for c_dy in range(-1, 2):
-            for c_dx in range(-1, 2):
-                self._ensure_chunk_generated(c_dx * CHUNK_SIZE, c_dy * CHUNK_SIZE)
+        # Build island registry (generates all 6 islands)
+        self.island_registry: IslandRegistry = build_island_registry(seed)
+        self.starting_island: IslandDef = self.island_registry.get_starting_island()
+        self.agent_spawn = self.starting_island.spawn_pos
 
-        # Ensure spawn tile (0, 0) is clear and safe
-        spawn_tile = self._tile(0, 0)
+        # Pre-generate all tiles for the starting island only
+        self._generate_island_tiles(self.starting_island)
+
+        # Ensure spawn tile is clear
+        spawn_tile = self._tile(*self.agent_spawn)
         spawn_tile.tile_type = TILE_EMPTY
         spawn_tile.object_id = ""
-        spawn_tile.z = 0
 
-        # Place a few immediate starter harvestables and items nearby for immediate exploration
-        self._ensure_starter_surroundings()
+        # Guarantee starter items around spawn
+        self._place_starter_surroundings()
+
+        # Spawn entities for starting island
+        self._populate_island_entities(self.starting_island)
 
     # ------------------------------------------------------------------
-    # Tile access & Procedural Generation
+    # Island tile generation
     # ------------------------------------------------------------------
-    def _tile(self, x: int, y: int) -> Tile:
-        """Return a Tile, generating its chunk on demand if it does not exist."""
-        self._ensure_chunk_generated(x, y)
-        return self.tiles.get((x, y))
+    def _generate_island_tiles(self, idef: IslandDef) -> None:
+        """Materialise all tiles for a given island definition."""
+        cx, cy = idef.center
 
-    def _ensure_chunk_generated(self, x: int, y: int) -> None:
-        """Generate all tiles and procedural objects/entities for the chunk containing (x, y)."""
-        chunk_x = (x // CHUNK_SIZE) * CHUNK_SIZE
-        chunk_y = (y // CHUNK_SIZE) * CHUNK_SIZE
-        chunk_coord = (chunk_x, chunk_y)
+        for (tx, ty) in idef.land_tiles:
+            tile_type = TILE_EMPTY
 
-        if chunk_coord in self.generated_chunks:
-            return
-
-        self.generated_chunks.add(chunk_coord)
-
-        # Generate 16x16 tiles in chunk
-        for dy in range(CHUNK_SIZE):
-            for dx in range(CHUNK_SIZE):
-                tx = chunk_x + dx
-                ty = chunk_y + dy
-
-                t_biome = biome_mod.biome_at(tx, ty, seed=self.seed)
-                t_elevation = biome_mod.get_elevation(tx, ty, seed=self.seed)
-
-                # Determine base tile type
-                tile_type = TILE_EMPTY
-                flags = ""
-
-                # Mountain wall barriers at very high elevation
-                if t_elevation > 880:
-                    tile_type = TILE_WALL
-                # Water bodies at low elevation
-                elif t_elevation < -420 and t_biome != 2:
-                    tile_type = TILE_WATER
-                # Lava pools in volcanic biome
-                elif t_biome == 2 and t_elevation < -250:
+            if (tx, ty) in idef.internal_hazard:
+                if idef.island_id == ISLAND_VOLCANIC:
+                    tile_type = TILE_LAVA
+                elif idef.island_id == ISLAND_MUSHROOM:
+                    tile_type = TILE_ACID
+                elif idef.island_id == ISLAND_TUNDRA:
+                    tile_type = TILE_ICE
+                else:
                     tile_type = TILE_LAVA
 
-                tile = Tile(
-                    tile_type=tile_type,
-                    z=t_elevation,
-                    biome=t_biome,
-                    flags=flags,
-                )
+            elif (tx, ty) in idef.internal_water:
+                tile_type = TILE_WATER
 
-                # Procedural object placement on empty ground tiles
-                if tile_type == TILE_EMPTY and not (tx == 0 and ty == 0):
-                    self._populate_tile_objects(tile, tx, ty, t_biome)
+            elif (tx, ty) in idef.safe_path:
+                tile_type = TILE_ASH
 
-                self.tiles[(tx, ty)] = tile
+            elif (tx, ty) in idef.spore_zones:
+                tile_type = TILE_SPORE
 
-        # Spawn entities for this chunk
-        self._populate_chunk_entities(chunk_x, chunk_y)
+            elif (tx, ty) in idef.obstacle_tiles:
+                tile_type = TILE_WALL
 
-    def _populate_tile_objects(self, tile: Tile, tx: int, ty: int, biome_id: int):
-        """Deterministically place natural objects (trees, bushes, logs, rocks, ores) on tile."""
-        # 2D coordinate pseudo-random hash
+            t = Tile(tile_type=tile_type, island_id=idef.island_id)
+            self.tiles[(tx, ty)] = t
+
+            # Place objects on empty tiles only (not on hazard/wall/water)
+            if tile_type == TILE_EMPTY and not (tx == cx and ty == cy):
+                dist = abs(tx - cx) + abs(ty - cy)
+                if dist > 3:  # don't clutter spawn center
+                    self._populate_tile_objects(t, tx, ty, idef)
+
+    def _populate_tile_objects(self, tile: Tile, tx: int, ty: int, idef: IslandDef) -> None:
+        """Deterministically place island-native resources on tile."""
         h = (tx * 374761393 + ty * 668265263 + self.seed * 0x9E3779B9) & 0xFFFFFFFF
         h ^= (h >> 13)
         h ^= (h << 7) & 0xFFFFFFFF
         h ^= (h >> 17)
         rand_val = (h % 10000) / 10000.0
 
-        # Density table by biome
-        if biome_id == 0:  # Forest: Lush trees, berry bushes, logs, sticks, mushrooms, flowers
-            if rand_val < 0.09:
-                tile.object_id = "0021"  # Oak Tree
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.16:
-                tile.object_id = "0023"  # Berry Bush
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.22:
-                tile.object_id = "0024"  # Fallen Log
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.27:
-                tile.object_id = "0008"  # Stick
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.31:
-                tile.object_id = "0012"  # Stone
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.35:
-                tile.object_id = "0028"  # Mushroom
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.39:
-                tile.object_id = "0029"  # Flower
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.42:
-                tile.object_id = "0009"  # Coal
-                tile.tile_type = TILE_OBJECT
+        pool = _ISLAND_OBJECT_POOLS.get(idef.island_id, [])
+        cumulative = 0.0
+        for (obj_id, threshold) in pool:
+            if rand_val < threshold:
+                tile.object_id  = obj_id
+                tile.tile_type  = TILE_OBJECT
+                break
 
-        elif biome_id == 3:  # Plains: Open grasslands, scattered bushes, flowers, sticks, stones
-            if rand_val < 0.04:
-                tile.object_id = "0021"  # Oak Tree
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.13:
-                tile.object_id = "0023"  # Berry Bush
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.22:
-                tile.object_id = "0029"  # Flower
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.28:
-                tile.object_id = "0008"  # Stick
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.33:
-                tile.object_id = "0012"  # Stone
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.36:
-                tile.object_id = "0001"  # Apple
-                tile.tile_type = TILE_OBJECT
+    def _populate_island_entities(self, idef: IslandDef) -> None:
+        """Spawn entities strictly native to this island type."""
+        pool = _ISLAND_ENTITY_POOLS.get(idef.island_id, ["E001"])
+        cx, cy = idef.center
+        land_list = list(idef.land_tiles)
+        if not land_list:
+            return
 
-        elif biome_id == 1:  # Desert: Cacti, sandstone boulders, dead shrubs, stones
-            if rand_val < 0.08:
-                tile.object_id = "0027"  # Cactus
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.15:
-                tile.object_id = "0025"  # Boulder
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.22:
-                tile.object_id = "0012"  # Stone
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.26:
-                tile.object_id = "0008"  # Stick (dead shrub)
-                tile.tile_type = TILE_OBJECT
+        # Spawn 1 entity per ~40 land tiles, minimum 3
+        n_entities = max(3, len(land_list) // 40)
+        rng = random.Random(self.seed + idef.island_id * 999983)
 
-        elif biome_id == 2:  # Volcanic: Obsidian boulders, coal ore, ash debris, void shards
-            if rand_val < 0.09:
-                tile.object_id = "0026"  # Coal Ore
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.18:
-                tile.object_id = "0025"  # Boulder
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.25:
-                tile.object_id = "0009"  # Coal
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.29:
-                tile.object_id = "0012"  # Stone
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.31:
-                tile.object_id = "0020"  # Void Shard
-                tile.tile_type = TILE_OBJECT
+        for i in range(n_entities):
+            tx, ty = rng.choice(land_list)
+            dist = abs(tx - cx) + abs(ty - cy)
+            if dist < 8:
+                continue  # no hostile spawn in safe zone
+            tile = self.tiles.get((tx, ty))
+            if not tile or tile.tile_type in (TILE_WALL, TILE_LAVA, TILE_ACID, TILE_WATER):
+                continue
+            ent_id = pool[i % len(pool)]
+            self.entities.append(Entity.from_id(ent_id, tx, ty))
 
-        elif biome_id == 5:  # Tundra: Pine trees, fallen logs, boulders, stones
-            if rand_val < 0.10:
-                tile.object_id = "0022"  # Pine Tree
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.17:
-                tile.object_id = "0024"  # Fallen Log
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.23:
-                tile.object_id = "0025"  # Boulder
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.28:
-                tile.object_id = "0012"  # Stone
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.32:
-                tile.object_id = "0008"  # Stick
-                tile.tile_type = TILE_OBJECT
-
-        elif biome_id == 6:  # Swamp: Swamp trees, mushrooms, murky flora, fallen logs
-            if rand_val < 0.08:
-                tile.object_id = "0021"  # Oak Tree
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.17:
-                tile.object_id = "0028"  # Mushroom
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.23:
-                tile.object_id = "0024"  # Fallen Log
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.28:
-                tile.object_id = "0023"  # Berry Bush
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.32:
-                tile.object_id = "0008"  # Stick
-                tile.tile_type = TILE_OBJECT
-
-        elif biome_id == 4:  # Cave: Stalagmites, coal ore, stone, mushrooms, void shards
-            if rand_val < 0.11:
-                tile.object_id = "0030"  # Stalagmite
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.19:
-                tile.object_id = "0026"  # Coal Ore
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.27:
-                tile.object_id = "0012"  # Stone
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.33:
-                tile.object_id = "0028"  # Mushroom
-                tile.tile_type = TILE_OBJECT
-            elif rand_val < 0.36:
-                tile.object_id = "0020"  # Void Shard
-                tile.tile_type = TILE_OBJECT
-
-    def _populate_chunk_entities(self, chunk_x: int, chunk_y: int):
-        """Spawn 1-3 natural entities per chunk appropriate to the biome."""
-        center_x = chunk_x + CHUNK_SIZE // 2
-        center_y = chunk_y + CHUNK_SIZE // 2
-        biome_id = biome_mod.biome_at(center_x, center_y, seed=self.seed)
-
-        # Entity roster by biome
-        entity_pools = {
-            0: ["E001", "E015", "E005", "E002"],           # Forest: Slime, Sheep, Spider, Zombie
-            3: ["E015", "E016", "E017", "E018", "E001"],   # Plains: Sheep, Pig, Chicken, Villager, Slime
-            1: ["E021", "E006", "E003"],                   # Desert: Scorpion, Husk, Skeleton
-            2: ["E007", "E023"],                           # Volcanic: Fire Imp, Lava Golem
-            5: ["E011", "E022", "E012"],                   # Tundra: Wolf, Ice Wolf, Yeti
-            6: ["E024", "E010", "E001"],                   # Swamp: Toad, Witch, Slime
-            4: ["E013", "E008", "E025", "E009"],           # Cave: Bat, Cave Spider, Queen, Golem
-        }
-
-        pool = entity_pools.get(biome_id, ["E001", "E015"])
-
-        # Determine count (1 to 3 per chunk)
-        h = (chunk_x * 961748941 + chunk_y * 48271) & 0xFFFFFFFF
-        num_spawns = 1 + (h % 3)
-
-        for i in range(num_spawns):
-            ent_id = pool[(h + i * 7) % len(pool)]
-            # Pick a spot in chunk
-            offset_x = 2 + ((h >> (i * 3 + 2)) % (CHUNK_SIZE - 4))
-            offset_y = 2 + ((h >> (i * 3 + 5)) % (CHUNK_SIZE - 4))
-            ex = chunk_x + offset_x
-            ey = chunk_y + offset_y
-
-            # Avoid spawning right on the agent spawn (0, 0)
-            if abs(ex) <= 1 and abs(ey) <= 1:
-                ex += 3
-                ey += 3
-
-            tile = self.tiles.get((ex, ey))
-            if tile and tile.tile_type not in (TILE_WALL, TILE_LAVA, TILE_WATER):
-                self.entities.append(Entity.from_id(ent_id, ex, ey))
-
-    def _ensure_starter_surroundings(self):
-        """Place pleasant initial items/bushes/trees right around spawn."""
+    def _place_starter_surroundings(self) -> None:
+        """Place immediate items around spawn point."""
+        cx, cy = self.agent_spawn
         starters = [
-            (1, 0, "0001"),    # Apple
-            (-1, 0, "0023"),   # Berry Bush
-            (0, 1, "0008"),    # Stick
-            (0, -1, "0010"),   # Wood
-            (1, 1, "0021"),    # Oak Tree
-            (-1, -1, "0012"),  # Stone
-            (2, 0, "0024"),    # Fallen Log
-            (-2, 1, "0023"),   # Berry Bush
-            (1, 2, "0009"),    # Coal
+            (cx+1, cy,   "0001"),   # Apple
+            (cx-1, cy,   "0023"),   # Berry Bush
+            (cx,   cy+1, "0008"),   # Stick
+            (cx,   cy-1, "0010"),   # Wood
+            (cx+1, cy+1, "0021"),   # Oak Tree
+            (cx-1, cy-1, "0012"),   # Stone
+            (cx+2, cy,   "0024"),   # Fallen Log
+            (cx-2, cy+1, "0023"),   # Berry Bush
+            (cx+1, cy+2, "0009"),   # Coal
         ]
         for sx, sy, obj_id in starters:
             t = self.tiles.get((sx, sy))
-            if t and t.tile_type != TILE_WALL:
+            if t and t.tile_type not in (TILE_WALL, TILE_LAVA, TILE_ACID):
                 t.object_id = obj_id
                 t.tile_type = TILE_OBJECT
 
-    def _place_object(self, x: int, y: int, item_id: str):
-        tile = self._tile(x, y)
-        tile.object_id = item_id
-        tile.tile_type = TILE_OBJECT
+    # ------------------------------------------------------------------
+    # Tile access (lazy ocean for ungenerated tiles)
+    # ------------------------------------------------------------------
+    def _tile(self, x: int, y: int) -> Tile:
+        if (x, y) not in self.tiles:
+            # All ungenerated tiles are ocean
+            island_id = self.island_registry.get_island_at(x, y)
+            if island_id is not None:
+                # This tile belongs to an island not yet materialized
+                # Generate it on demand (for future islands)
+                t = Tile(tile_type=TILE_EMPTY, island_id=island_id)
+            else:
+                t = Tile(tile_type=TILE_OCEAN, island_id=-1)
+            self.tiles[(x, y)] = t
+        return self.tiles[(x, y)]
 
     # ------------------------------------------------------------------
-    # Drop spawn: place a loot item on the map when entity dies or object harvested
+    # Island / zone info
     # ------------------------------------------------------------------
-    def spawn_drop(self, x: int, y: int, item_id: str):
-        """Place *item_id* at (x,y). If occupied, scatter to adjacent tile."""
-        if not item_id:
-            return
-        candidates = [(x, y)] + [(x + dx, y + dy) for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]]
-        for cx, cy in candidates:
-            tile = self._tile(cx, cy)
-            if tile and tile.tile_type not in (TILE_WALL, TILE_LAVA) and not tile.object_id:
-                tile.object_id = item_id
-                tile.tile_type = TILE_OBJECT
-                return
-        # Fallback: force-place on coordinate
+    def is_ocean(self, x: int, y: int) -> bool:
         tile = self._tile(x, y)
-        if tile:
-            tile.object_id = item_id
-            tile.tile_type = TILE_OBJECT
+        return tile.tile_type == TILE_OCEAN
 
-    # ------------------------------------------------------------------
-    # Door / progression
-    # ------------------------------------------------------------------
-    def unlock_door_if_ready(self, has_sword: bool, slime_dead: bool):
-        self.door_unlocked = True
+    def is_safe_zone(self, x: int, y: int) -> bool:
+        """Safe haven: within 6 tiles of the starting island spawn."""
+        cx, cy = self.starting_island.spawn_pos
+        return abs(x - cx) + abs(y - cy) <= 6
+
+    def get_zone_info(self, x: int, y: int) -> dict:
+        island_id = self.island_registry.get_island_at(x, y)
+        if island_id is None:
+            return {"id": -1, "tier": -1, "name": "Ocean", "safe": False, "danger": 1.0}
+        idef = self.island_registry.get_island(island_id)
+        return {
+            "id": island_id,
+            "tier": idef.tier,
+            "name": idef.name,
+            "safe": self.is_safe_zone(x, y),
+            "danger": idef.tier / 4.0,
+        }
+
+    def get_island_id_at(self, x: int, y: int) -> int:
+        return self.island_registry.get_island_at(x, y) if not self.is_ocean(x, y) else -1
+
+    def get_island_tier_at(self, x: int, y: int) -> int:
+        island_id = self.island_registry.get_island_at(x, y)
+        if island_id is None:
+            return -1
+        idef = self.island_registry.get_island(island_id)
+        return idef.tier if idef else -1
 
     # ------------------------------------------------------------------
     # Passability
@@ -356,37 +303,65 @@ class World:
         tile = self._tile(x, y)
         if not tile:
             return False
-        if tile.tile_type == TILE_WALL:
+        # Walls, lava, and gates are impassable movement
+        if tile.tile_type in (TILE_WALL, TILE_GATE):
             return False
-        if tile.tile_type == TILE_LAVA:
-            return False
+        # Lava — passable but very damaging (handled in env tick)
+        # Ocean — passable but shark spawns (handled in env tick)
+        # Ice / acid / spore — passable but apply status effects
         # Block movement through alive hostile entities
         for ent in self.entities:
             if ent.alive and ent.x == x and ent.y == y:
-                ent_type = ent.data.get("type", "hostile")
-                if ent_type == "hostile":
+                if ent.data.get("type") == "hostile":
                     return False
         return True
 
     # ------------------------------------------------------------------
-    # Height map helpers
+    # Gate system (kept for Boss Sanctum gate)
     # ------------------------------------------------------------------
-    def get_adjacent_z(self, x: int, y: int) -> dict:
-        t_ahead = self._tile(x, y - 1)
-        t_behind = self._tile(x, y + 1)
-        t_left = self._tile(x - 1, y)
-        t_right = self._tile(x + 1, y)
-        return {
-            "ahead":  t_ahead.z if t_ahead else 0,
-            "behind": t_behind.z if t_behind else 0,
-            "left":   t_left.z if t_left else 0,
-            "right":  t_right.z if t_right else 0,
-        }
+    def try_unlock_gate(self, x: int, y: int, capabilities: set, inventory_item_ids: set) -> Optional[str]:
+        tile = self._tile(x, y)
+        if not tile or tile.tile_type != TILE_GATE:
+            return None
+        for gate_id, gdata in self.gates.items() if hasattr(self, "gates") else []:
+            if gdata["pos"] == (x, y) and not gdata["unlocked"]:
+                req_cap  = gdata.get("req_cap")
+                req_item = gdata.get("req_item")
+                if (req_cap and req_cap in capabilities) or (req_item and req_item in inventory_item_ids):
+                    gdata["unlocked"] = True
+                    tile.tile_type = TILE_EMPTY
+                    tile.flags = f"GATE_UNLOCKED:{gate_id}"
+                    return gate_id
+        return None
+
+    # ------------------------------------------------------------------
+    # Shark spawn (called from ats_env after ocean_ticks threshold)
+    # ------------------------------------------------------------------
+    def spawn_shark(self, x: int, y: int) -> None:
+        self.entities.append(Entity.from_id("E_SHARK", x, y))
+
+    # ------------------------------------------------------------------
+    # Drop spawn
+    # ------------------------------------------------------------------
+    def spawn_drop(self, x: int, y: int, item_id: str) -> None:
+        if not item_id:
+            return
+        candidates = [(x, y)] + [(x+dx, y+dy) for dx, dy in [(0,1),(1,0),(0,-1),(-1,0)]]
+        for cx, cy in candidates:
+            tile = self._tile(cx, cy)
+            if tile and tile.tile_type not in (TILE_WALL, TILE_LAVA, TILE_ACID) and not tile.object_id:
+                tile.object_id = item_id
+                tile.tile_type = TILE_OBJECT
+                return
+        tile = self._tile(x, y)
+        if tile:
+            tile.object_id = item_id
+            tile.tile_type = TILE_OBJECT
 
     # ------------------------------------------------------------------
     # Exploration fog
     # ------------------------------------------------------------------
-    def mark_explored(self, x: int, y: int, radius: int):
+    def mark_explored(self, x: int, y: int, radius: int) -> None:
         for dy in range(-radius, radius + 1):
             for dx in range(-radius, radius + 1):
                 if abs(dx) + abs(dy) <= radius:
@@ -408,7 +383,6 @@ class World:
         return best, best_dist
 
     def nearest_entity_chebyshev(self, x: int, y: int):
-        """Like nearest_entity but returns Chebyshev (max-of-abs) distance."""
         best, best_dist = None, 999
         for ent in self.entities:
             if not ent.alive:
@@ -418,7 +392,7 @@ class World:
                 best, best_dist = ent, d
         return best, best_dist
 
-    def entity_at(self, x: int, y: int) -> Entity | None:
+    def entity_at(self, x: int, y: int) -> Optional[Entity]:
         for ent in self.entities:
             if ent.alive and ent.x == x and ent.y == y:
                 return ent
@@ -429,7 +403,6 @@ class World:
     # ------------------------------------------------------------------
     def nearest_object(self, x: int, y: int):
         best_id, best_dist = "", 999
-        # Check active loaded tiles within perception radius
         for (tx, ty), tile in self.tiles.items():
             if tile.object_id:
                 d = abs(tx - x) + abs(ty - y)
@@ -438,72 +411,67 @@ class World:
         return best_id, best_dist
 
     # ------------------------------------------------------------------
-    # Tile type at position (entity presence overrides tile)
+    # Height map helpers (stub — elevation not tile-based in island arch)
+    # ------------------------------------------------------------------
+    def get_adjacent_z(self, x: int, y: int) -> dict:
+        return {"ahead": 0, "behind": 0, "left": 0, "right": 0}
+
+    # ------------------------------------------------------------------
+    # Tile type at position
     # ------------------------------------------------------------------
     def tile_type_at(self, x: int, y: int) -> int:
         if any(e.alive and e.x == x and e.y == y for e in self.entities):
             return TILE_HOSTILE
         tile = self._tile(x, y)
         if not tile:
-            return TILE_EMPTY
+            return TILE_OCEAN
         if tile.object_id:
             return TILE_OBJECT
         return tile.tile_type
 
     # ------------------------------------------------------------------
-    # Pick up item at position
+    # Pick up
     # ------------------------------------------------------------------
     def pickup_at(self, x: int, y: int) -> str:
         tile = self._tile(x, y)
         if not tile or not tile.object_id:
             return ""
-        item = tile.object_id
-        
-        # Check if it's a world object that yields drops on harvest
+        item    = tile.object_id
         reg_item = REGISTRY.get_item(item)
         drop_yield = item
         if reg_item and reg_item.get("drop"):
-            drop_yield = reg_item.get("drop")
-
+            drop_yield = reg_item["drop"]
         tile.object_id = ""
         if tile.tile_type == TILE_OBJECT:
             tile.tile_type = TILE_EMPTY
         return drop_yield
 
     # ------------------------------------------------------------------
-    # Attack / Harvest — returns (killed_target_id, drop_item_id, is_world_object)
+    # Attack / Harvest
     # ------------------------------------------------------------------
-    def attack_at(self, x: int, y: int, damage: int, attacker_pos: tuple[int, int] | None = None, facing_dx: int = 0, facing_dy: int = -1) -> tuple[str, str, bool]:
-        """Attack entity or harvest world object in front or within 3x3 square.
-
-        Returns (killed_id, drop_id, is_world_object).
-        """
-        # 1. First priority: entity directly in front or within 3x3
-        # Check directly facing entity first
+    def attack_at(self, x: int, y: int, damage: int,
+                  attacker_pos=None, facing_dx: int = 0, facing_dy: int = -1):
         fx, fy = x + facing_dx, y + facing_dy
         ent_facing = self.entity_at(fx, fy)
-        if ent_facing and ent_facing.alive:
+        if ent_facing and ent_facing.alive and ent_facing.data.get("type") != "ocean":
             ent_facing.take_damage(damage, attacker_pos=attacker_pos)
             if not ent_facing.alive:
-                drop = ent_facing.drop_item_id()
-                return ent_facing.entity_id, drop, False
+                return ent_facing.entity_id, ent_facing.drop_item_id(), False
             return "", "", False
 
-        # Any entity within 3x3
         for ent in self.entities:
             if ent.alive and max(abs(ent.x - x), abs(ent.y - y)) <= 1:
+                if ent.data.get("type") == "ocean":
+                    continue
                 ent.take_damage(damage, attacker_pos=attacker_pos)
                 if not ent.alive:
-                    drop = ent.drop_item_id()
-                    return ent.entity_id, drop, False
+                    return ent.entity_id, ent.drop_item_id(), False
                 return "", "", False
 
-        # 2. Second priority: harvest world object directly in front or on current tile
-        target_coords = [(fx, fy), (x, y)]
-        for tx, ty in target_coords:
+        for tx, ty in [(fx, fy), (x, y)]:
             tile = self._tile(tx, ty)
             if tile and tile.object_id:
-                obj_id = tile.object_id
+                obj_id    = tile.object_id
                 item_info = REGISTRY.get_item(obj_id)
                 if item_info and item_info.get("type") == "world_object":
                     drop = item_info.get("drop", obj_id)
@@ -513,8 +481,8 @@ class World:
 
         return "", "", False
 
-    # ------------------------------------------------------------------
-    # Spawn a new entity
-    # ------------------------------------------------------------------
-    def spawn_entity(self, entity_id: str, x: int, y: int):
+    def spawn_entity(self, entity_id: str, x: int, y: int) -> None:
         self.entities.append(Entity.from_id(entity_id, x, y))
+
+    def unlock_door_if_ready(self, has_sword: bool, slime_dead: bool) -> None:
+        self.door_unlocked = True

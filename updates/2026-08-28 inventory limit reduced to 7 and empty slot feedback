@@ -1,0 +1,42 @@
+# ATS Update — 2026-08-28 Inventory Limit 7 & Empty Slot Feedback
+
+## Summary
+Reduced inventory slot capacity from 24 to 7 slots, updated the action space to 25 discrete actions and state vector to 79 dimensions, integrated direct empty/disabled slot selection feedback and secondary key item usage, and updated CRT GUI inventory viewport.
+
+---
+
+## Changes
+
+### 1. Inventory Reduction & Configuration — [`config_rl.py`](file:///c:/Users/Bob/Documents/github/ATS/config_rl.py#L10-L65)
+- `INVENTORY_SLOTS = 7` (reduced from 24).
+- Slot selection actions: `ACT_SELECT_SLOT_BASE = 10` (indices `10..16` for slots 0 to 6).
+- Item use secondary action: `ACT_USE_ITEM = 17`.
+- Inventory & Crafting management actions: `18..22`.
+- Total discrete action size: `ACTION_SIZE = 25` (reduced from 42).
+- State vector size: `STATE_SIZE = 79` (reduced from 130).
+
+### 2. Slot Selection & Disabled Feedback Logic — [`agent.py`](file:///c:/Users/Bob/Documents/github/ATS/agent.py#L340-L365)
+- **Occupied Slot Selection**: When the agent selects slot `i` and it contains an item (`count > 0`), it selects the slot (`selected_slot = i`), clears `last_failed_action = 0`, and logs selection.
+- **Empty Slot Feedback**: If the agent attempts to select an empty slot, `last_failed_action` is flagged with the action index, logs `"Slot {i} is EMPTY [Disabled]"`, and applies a `-1.0` penalty.
+- **Secondary Key Use (`ACT_USE_ITEM`)**: If the currently selected slot is occupied, it uses/consumes the item; if empty, it flags `"Cannot use: Slot {i} is EMPTY [Disabled]"` with `-1.0` penalty.
+- **Action Mask**: Dynamically disables empty slots and masks `ACT_USE_ITEM` if selected slot is empty.
+
+### 3. CRT GUI Inventory Viewport — [`debug_gui.py`](file:///c:/Users/Bob/Documents/github/ATS/debug_gui.py#L795-L820)
+- Updated simulation HUD to render `INVENTORY (7 SLOTS)` vertically with clear indicators:
+  - `> Slot 0: [0002] Sword Basic x1` (Occupied / Selected)
+  - `  Slot 1: [EMPTY - DISABLED]` (Empty / Disabled)
+
+### 4. Cognitive Need Detector & Weapon Recognition — [`mind/need_detector.py`](file:///c:/Users/Bob/Documents/github/ATS/mind/need_detector.py#L60-L72)
+- Updated weapon detection to properly de-normalize item IDs (`round(norm_id * 100)`) and recognize all weapon types (`0002`, `0013`, `0033`, `0034`) within the 7 inventory slots.
+
+### 5. Documentation & AI Onboarding
+- Updated [`AGENTS.md`](file:///c:/Users/Bob/Documents/github/ATS/AGENTS.md) and [`docs/system_overview.md`](file:///c:/Users/Bob/Documents/github/ATS/docs/system_overview.md).
+
+---
+
+## Verified
+- [x] State vector length is exactly 79 (`STATE_SIZE = 79`)
+- [x] Action mask length is exactly 25 (`ACTION_SIZE = 25`)
+- [x] Occupied slot selection activates cleanly and enables `ACT_USE_ITEM`
+- [x] Empty slot selection returns `Slot {i} is EMPTY [Disabled]` feedback with `last_failed_action` flag
+- [x] Automated test suite passed with exit code 0

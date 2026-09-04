@@ -1,0 +1,37 @@
+# ATS Update — 2026-08-28 Inventory Transparency, Action Masking & Starter Gear Overhaul
+
+## Summary
+Fixed model inventory blindness by normalizing inventory item IDs/counts in the state vector, masked out empty inventory slot selections to eliminate random slot checking, removed free starting food/materials, created `AGENTS.md` onboarding guide for AI assistants, and updated system documentation.
+
+---
+
+## Changes
+
+### 1. State Vector Inventory Encoding — [`agent.py`](file:///c:/Users/Bob/Documents/github/ATS/agent.py#L742-L753)
+- **Problem**: Inventory item IDs like `"0001"`, `"0002"` were added directly as raw float integers into the state vector alongside 0..1 normalized features.
+- **Fix**:
+  - `norm_id`: Normalized item ID as `raw_id / config_rl.ITEM_VOCAB_SIZE` (ranges `0.0` for empty to `0.99` for item 99).
+  - `norm_count`: Normalized count as `min(1.0, count / 99.0)`.
+  - Normalized `nearest_object` ID using the same `raw_id / 100` scale so the network can match visual objects to inventory slots.
+
+### 2. Context Action Masking for Inventory — [`agent.py`](file:///c:/Users/Bob/Documents/github/ATS/agent.py#L283-L295)
+- **Problem**: When the inventory was opened, all 24 slot select actions (`ACT_SELECT_SLOT_BASE + i`) were flagged valid even if empty, causing the agent to repeatedly sample empty slots (e.g. slot 06).
+- **Fix**: Mask now checks `self.inventory[i]["count"] > 0` and only enables slot selection for occupied slots.
+
+### 3. Removal of Starter Gear — [`agent.py`](file:///c:/Users/Bob/Documents/github/ATS/agent.py#L106-L118)
+- **Problem**: Spawning with food, sticks, wood, and torches reduced motivation to explore/forage.
+- **Fix**: Removed free apples, wood, sticks, and torch. Agent spawns only with the basic sword (`0002`) in slot 0.
+
+### 4. AI Agent Onboarding & Contribution Guide — [`AGENTS.md`](file:///c:/Users/Bob/Documents/github/ATS/AGENTS.md)
+- Created `AGENTS.md` at root specifying mandatory instructions, state vector specs, action mask rules, known traps/gotchas, and required session update logging.
+
+### 5. System Documentation Updates — [`docs/system_overview.md`](file:///c:/Users/Bob/Documents/github/ATS/docs/system_overview.md)
+- Updated state vector representation layout (130-D) and action space rules in system documentation.
+
+---
+
+## Verified
+- [x] State vector length remains exactly 130 (`STATE_SIZE = 130`)
+- [x] Slot selection actions only enable for occupied slots
+- [x] Inventory normalized state values test cleanly in `[0..1]` range
+- [x] Unit test execution completed with exit code 0

@@ -13,8 +13,11 @@ tracks tile positions and entity locations.  Experience memory tracks
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from dataclasses import dataclass, field
+
+import config_rl
 
 
 @dataclass
@@ -120,6 +123,48 @@ class ExperienceMemory:
         for entry in self.entries:
             entry.confidence *= (1.0 - rate)
         self.entries = [e for e in self.entries if e.confidence >= 0.1]
+
+    # ------------------------------------------------------------------
+    # Persistence — Save & Load from disk
+    # ------------------------------------------------------------------
+    def save(self, path=None):
+        """Save experience memory store to disk."""
+        path = path or (config_rl.DATA_DIR / "experience_memory.json")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = [
+            {
+                "need_fingerprint": e.need_fingerprint,
+                "state_summary": e.state_summary,
+                "action_sequence": e.action_sequence,
+                "cumulative_reward": e.cumulative_reward,
+                "confidence": e.confidence,
+            }
+            for e in self.entries
+        ]
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+    def load(self, path=None):
+        """Load experience memory store from disk."""
+        path = path or (config_rl.DATA_DIR / "experience_memory.json")
+        if not path.exists():
+            return False
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.entries = [
+                SolutionEntry(
+                    need_fingerprint=d["need_fingerprint"],
+                    state_summary=d.get("state_summary", []),
+                    action_sequence=d.get("action_sequence", []),
+                    cumulative_reward=d.get("cumulative_reward", 0.0),
+                    confidence=d.get("confidence", 1.0),
+                )
+                for d in data
+            ]
+            return True
+        except Exception:
+            return False
 
     # ------------------------------------------------------------------
     # Snapshot for GUI

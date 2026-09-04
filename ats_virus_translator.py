@@ -109,23 +109,28 @@ class SymbolicTokenMapper:
 class ExternalTranslatorAgent:
     """External Communication Translator Agent between human feedback, Virus Parent Model, and ATS."""
 
-    # Positive and negative English polarity sets
-    POSITIVE_WORDS = {"yes", "yeah", "yep", "good", "correct", "right", "true", "positive", "great", "excellent"}
-    NEGATIVE_WORDS = {"no", "nope", "bad", "wrong", "false", "negative", "stop", "incorrect", "ruin", "fail"}
+    # Polarity word sets for feedback analysis
+    POSITIVE_WORDS = {"yes", "yeah", "yep", "good", "correct", "right", "true", "positive", "great", "excellent", "best"}
+    MID_WORDS = {"mid", "moderate", "neutral", "average", "steady", "unchanged"}
+    FAIR_WORDS = {"fair", "recovering", "progress", "improving", "rising"}
+    NEGATIVE_WORDS = {"no", "nope", "bad", "wrong", "false", "negative", "stop", "incorrect", "ruin", "fail", "worst"}
 
     def __init__(self, adapter: VirusAdapter = None, dict_path=None):
         self.adapter = adapter or VirusAdapter()
         self.mapper = SymbolicTokenMapper(dict_path=dict_path)
 
     def parse_feedback(self, text: str) -> float:
-        """Parses English feedback into reinforcement signal (+1.0 for Yes/Good, -1.0 for No/Bad, 0.0 neutral)."""
+        """Parses English feedback into reinforcement signal:
+        +1.0 for Good/Positive, +0.2 for Mid, -0.2 for Fair (improving under 0), -1.0 for Bad/Negative, 0.0 neutral.
+        """
         tokens = set(re.findall(r"\b\w+\b", text.lower()))
-        pos_count = len(tokens & self.POSITIVE_WORDS)
-        neg_count = len(tokens & self.NEGATIVE_WORDS)
-
-        if pos_count > neg_count:
+        if "good" in tokens or len(tokens & self.POSITIVE_WORDS) > 0:
             return 1.0
-        elif neg_count > pos_count:
+        elif "mid" in tokens or len(tokens & self.MID_WORDS) > 0:
+            return 0.2
+        elif "fair" in tokens or len(tokens & self.FAIR_WORDS) > 0:
+            return -0.2
+        elif "bad" in tokens or len(tokens & self.NEGATIVE_WORDS) > 0:
             return -1.0
         return 0.0
 
@@ -144,7 +149,7 @@ class ExternalTranslatorAgent:
         }
 
         # Export formatted line to Virus corpus
-        corpus_line = f"TRANSLATOR_MSG|{sentence}|POLARITY:{feedback_val}|TOKENS:{' '.join(encoded_tokens)}"
+        corpus_line = f"TRANSLATOR_MSG|{sentence}|POLARITY:{feedback_val:+0.1f}|TOKENS:{' '.join(encoded_tokens)}"
         self.adapter.export_runtime_corpus([corpus_line])
 
         return packet
@@ -153,10 +158,11 @@ class ExternalTranslatorAgent:
         """Formats string mapping definition for future dataset training."""
         return f"{symbol} = {word}"
 
-    def process_episode_grade(self, episode: int, grade: str, rew_per_tick: float) -> dict:
+    def process_episode_grade(self, episode: int, grade: str, rew_per_tick: float = 0.0, score: float = 0.0) -> dict:
         """Automatically process end-of-episode grade into translator corpus packets."""
         text = f"Automatic evaluation: Episode performance was {grade}."
         return self.parse_external_sentence(text)
+
 
 
 if __name__ == "__main__":

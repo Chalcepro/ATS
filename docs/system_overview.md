@@ -76,30 +76,30 @@ Executes the primary 5-stage cognitive cycle on every simulation tick:
   `episode, timestamp, total_reward, ticks_survived, termination_reason, speed_multiplier, learning_rate, entropy_coeff, hidden_size`
 
 
-### B. Action Space (42 Discrete Actions)
+### B. Action Space (25 Discrete Actions)
 - `0..3`: Movement (Forward/North, Backward/South, Left/West, Right/East)
 - `4..5`: Sprint (Toggle On / Off)
 - `6`: Jump
 - `7`: Attack / Harvest (Attacks entity or harvests object directly in front)
 - `8`: Pick Up (Collects loose resource or harvests bush)
 - `9`: Interact (Interacts with NPC, chest, or water)
-- `10..33`: Select Inventory Slot 0 to 23
-- `34`: Use Selected Item (Eat food, apply bandage, ignite torch)
-- `35..36`: Open / Close Inventory
-- `37..39`: Open / Add / Close Crafting
-- `40`: Sleep (Restores health if in bed at night)
-- `41`: Wait
+- `10..16`: Select Inventory Slot 0 to 6 (Only enabled for occupied slots; empty slots give disabled feedback)
+- `17`: Use Selected Item (Secondary action for selected slot: eat food, apply bandage, ignite torch)
+- `18..19`: Open / Close Inventory
+- `20..22`: Open / Add / Close Crafting
+- `23`: Sleep (Restores health if in bed at night)
+- `24`: Wait
 
-### C. State Vector Layout (126 Dimensions)
+### C. State Vector Layout (79 Dimensions)
 | Feature Index Range | Description |
 | :--- | :--- |
 | `0..4` | Vitals (Health, Hunger, Stamina, XP, Level) |
 | `5..9` | Spatial Position & Elevation Profile ($Z$, $Z_{ahead}$, $Z_{left}$, $Z_{right}$, $Z_{behind}$) |
 | `10..13` | Adjacent Tile Types (North, West, East, South) |
 | `14..17` | Nearest Hostile Features (Distance, Type, State, Incoming Damage) |
-| `18..19` | Nearest Object Features (Distance, Item ID) |
-| `20..67` | 24-Slot Inventory: 24 × (Item ID, Item Count) |
-| `68..73` | Status Effects (Poisoned, Burning, Slowed, Blinded, Speed Boost, Leg Injured) |
-| `74..81` | Environment & Facing: Time of Day, Torch Active, Crafting Open, Inventory Open, Biome, Failed Action, **Facing X**, **Facing Y** |
-| `82..84` | Episode Memory Features |
-| `85..125` | Action Validity Mask (42 binary flags) |
+| `18..19` | Nearest Object Features (Distance, Item ID / 100) |
+| `20..33` | 7-Slot Inventory: 7 × (Normalized Item ID `id/100`, Normalized Count `cnt/99`) |
+| `34..41` | Status Effects (Poisoned, Burning, Slowed, Blinded, Speed Boost, Leg Injured, Cold, Acid Burn) |
+| `42..50` | Environment & Facing: Time of Day, Torch Active, Crafting Open, Inventory Open, Biome, Failed Action, Facing X, Facing Y, Ocean Ticks |
+| `51..53` | Episode Memory Features (3 floats) |
+| `54..78` | Action Validity Mask (25 binary flags — empty inventory slot actions are masked out = 0) |

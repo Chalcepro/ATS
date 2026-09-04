@@ -27,6 +27,8 @@ class ATSEnvironment:
         self.agent = Agent(self.world)
         self.day_night = DayNight()
         self.rewards = RewardEngine()
+        self.rewards.discovered_islands.add(self.world.starting_island.island_id)
+        self.rewards.discovered_tiles.add((self.agent.x, self.agent.y))
         self.memory = EpisodeMemory()
         self.events = EventSystem()
         self.need_detector = NeedDetector()
@@ -49,6 +51,8 @@ class ATSEnvironment:
         self.agent = Agent(self.world)
         self.day_night = DayNight()
         self.rewards = RewardEngine()
+        self.rewards.discovered_islands.add(self.world.starting_island.island_id)
+        self.rewards.discovered_tiles.add((self.agent.x, self.agent.y))
         self.events = EventSystem()
         self.tick = 0
         self.done = False
@@ -121,11 +125,11 @@ class ATSEnvironment:
                 dist = abs(ent.x - self.agent.x) + abs(ent.y - self.agent.y)
                 if dist <= aoe:
                     self.agent.health -= dmg
-                    self.rewards.on_damage()
+                    self.rewards.on_damage(dmg)
                     self.agent.log_event(f"Caught in Creeper Explosion! (-{dmg} HP)")
             elif dmg > 0:
                 self.agent.health -= dmg
-                self.rewards.on_damage()
+                self.rewards.on_damage(dmg)
                 from item_ids import entity_name
                 self.agent.log_event(f"Attacked by {entity_name(ent.entity_id)} (-{dmg} HP)")
                 # Poison / burn status effects from entity
@@ -155,16 +159,41 @@ class ATSEnvironment:
         self.events.tick(self.world)
         self.tick += 1
 
-        # Biome reward
+        # Per-tile exploration reward (first visit only)
+        self.rewards.on_new_tile(self.agent.x, self.agent.y)
+
+        # Island discovery (only for genuinely new islands outside the starting spawn island 0)
         cur_t = self.world._tile(self.agent.x, self.agent.y)
-        biome_id = cur_t.biome if cur_t else 0
-        if biome_id not in self.rewards.discovered_biomes:
-            from biome import BIOMES
-            self.agent.log_event(f"Discovered new Biome: {BIOMES.get(biome_id, 'Unknown')}!")
-        self.rewards.on_biome_enter(biome_id)
+        island_id = cur_t.island_id if cur_t else -1
+        if island_id > 0 and island_id not in self.rewards.discovered_islands:
+            self.rewards.discovered_islands.add(island_id)
+            idef = self.world.island_registry.get_island(island_id)
+            name = idef.name if idef else f"Island {island_id}"
+            self.agent.log_event(f"★ Discovered New Island: {name}! (+50)")
+            self.rewards.on_island_discovery(island_id)
+
+        # Check ocean shark kill condition (3-second ocean immersion countdown)
+        if self.agent.ocean_ticks >= config_rl.OCEAN_SHARK_TICKS:
+            self.rewards.on_ocean_death()  # -500 punishment
+            self.world.spawn_shark(self.agent.x, self.agent.y)
+            if self.agent.health >= 20:
+                # Survived shark strike: respawn on safe land with low health and continue run
+                self.agent.health = 15
+                self.agent.x, self.agent.y = self.world.agent_spawn
+                self.agent.z = 0
+                self.agent.ocean_ticks = 0
+                self.agent.sea_blocks_crossed = 0
+                self.agent._water_move_counter = 0
+                self.agent.log_event("Shark strike in open ocean! Escaped with low HP (-500 rew, HP:15, Respawned on land)")
+            else:
+                # Health is below 20: Harsh stop — terminate episode with BAD result
+                self.agent.health = 0
+                self.agent.log_event("Harsh Stop: Drowned in ocean with critical HP < 20 (-500 rew, Perished)")
+                self.done = True
+                self.memory.decay()
 
         # Death / timeout
-        if self.agent.health <= 0:
+        elif self.agent.health <= 0:
             self.rewards.on_death()
             self.agent.log_event("Agent fell in battle / perished.")
             self.done = True
@@ -186,8 +215,16 @@ class ATSEnvironment:
             "needs": needs,
             "action_name": self.agent.last_action_name,
             "failed_action_flag": failed_action_flag,
+            "progression_efficiency": self.rewards.compute_progression_efficiency(self.tick),
+            "progression_points": self.rewards.progression_points,
+            "capabilities": list(self.agent.capabilities),
+            "damage_taken": self.rewards.damage_taken,
+            "damage_dealt": self.rewards.damage_dealt,
+            "island_id": island_id,
+            "ocean_ticks": self.agent.ocean_ticks,
         }
         return state_vec, self.rewards.tick_reward, self.done, info
+
 
     # ------------------------------------------------------------------
     # Internal: flush pending drops queued by agent.apply_action
@@ -196,8 +233,9 @@ class ATSEnvironment:
         """Agent.apply_action may set agent._pending_kills list."""
         pending = getattr(self.agent, "_pending_kills", [])
         self.agent._pending_kills = []
+        cur_tier = self.world.get_island_tier_at(self.agent.x, self.agent.y)
         for killed_id, drop_id, kill_x, kill_y in pending:
-            self.rewards.on_kill(killed_id)
+            self.rewards.on_kill(killed_id, island_tier=max(0, cur_tier))
             if killed_id == "E001":
                 self.agent.slime_killed = True
             if drop_id:

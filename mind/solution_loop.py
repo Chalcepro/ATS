@@ -72,17 +72,27 @@ class SolutionLoop:
         hint = self.experience.recall(need_vec)
         self._trace['recall'] = f"hint={hint}"
 
-
-
-        # --- 4. Select action via policy (with mask) ---
+        # --- 4. Select action via policy (with mask and optional memory hint boost) ---
         state_t = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
         mask_t = torch.tensor(action_mask, dtype=torch.float32).unsqueeze(0)
 
         with torch.no_grad():
-            action_t, log_prob, value = self.policy.act(state_t, action_mask=mask_t)
+            logits, value = self.policy(state_t, action_mask=mask_t)
+
+            # If a high-confidence past solution was recalled with positive reward, boost its recommended action
+            if hint and hint.action_sequence and hint.cumulative_reward > 0:
+                rec_act = hint.action_sequence[0]
+                if 0 <= rec_act < len(action_mask) and action_mask[rec_act]:
+                    boost = min(3.0, max(0.5, float(hint.confidence) * 2.0))
+                    logits[0, rec_act] += boost
+                    self._trace['recall'] = f"hint={hint} -> BOOST act_{rec_act}(+{boost:.1f})"
+
+            dist = torch.distributions.Categorical(logits=logits)
+            action_t = dist.sample()
+            log_prob = dist.log_prob(action_t)
 
         self.last_log_prob = log_prob
-        self.last_value = value
+        self.last_value = value.squeeze(0)
         action = int(action_t.item())
         self._trace['act'] = f"action={action}"
 

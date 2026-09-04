@@ -71,6 +71,14 @@ class Entity:
             self._wander(world)
             return 0
 
+        # ---- Special: Ocean Shark ------------------------------------
+        if entity_type == "ocean" or self.data.get("ocean_spawn"):
+            if dist <= 1:
+                return 9999
+            # Move towards agent aggressively
+            self._wander(world, flee_from=(self.x + (self.x - agent_x), self.y + (self.y - agent_y)))
+            return 0
+
         # ---- Special: Void -------------------------------------------
         if self.data.get("unkillable"):
             return self._tick_void(agent_x, agent_y, dist)
@@ -162,23 +170,28 @@ class Entity:
         self._wander(world, flee_from=(from_x, from_y))
 
     # ------------------------------------------------------------------
-    # Take damage
+    # Take damage & split mechanics
     # ------------------------------------------------------------------
-    def take_damage(self, amount: int, attacker_pos: tuple[int, int] | None = None):
+    def take_damage(self, amount: int, attacker_pos: tuple[int, int] | None = None, world=None):
         if self.data.get("unkillable"):
-            return  # Void cannot be killed
+            return  # Shark/Void cannot be killed
         self.hp -= amount
         if self.hp <= 0:
             self.alive = False
+            # Check for split behavior (e.g. Magma Cube E026)
+            if self.data.get("splits_on_death") and world is not None:
+                world.spawn_entity("E027", self.x + 1, self.y)
+                world.spawn_entity("E027", self.x - 1, self.y)
         elif self.data.get("flees") and attacker_pos:
             # Passive entities flee when hit
-            self._wander(None, flee_from=attacker_pos)
+            self._wander(world, flee_from=attacker_pos)
 
 
 def _passable(world, x: int, y: int) -> bool:
     """Simple passability check for entity movement."""
     try:
         tile = world._tile(x, y)
-        return tile.tile_type not in (1,)  # not a wall
+        return tile.tile_type not in (1, 7)  # not a wall or gate
     except Exception:
         return True
+

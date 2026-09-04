@@ -1,0 +1,75 @@
+# ATS Mission Control & Simulation Overhaul Walkthrough
+
+## Summary of Changes
+
+### 1. Neural Model Expansion & Checkpoint Loading Bug Fix
+- **Root Cause**: When [ContinualLearner](file:///c:/Users/Bob/Documents/github/ATS/mind/continual_learner.py) detected a learning plateau and expanded the policy hidden width (e.g. from 256 to 512), [`RLPolicy.expand()`](file:///c:/Users/Bob/Documents/github/ATS/model_rl.py#L89-L135) widened `fc1`, `fc2`, `actor`, and `critic`, but forgot to widen `self.embed_proj`. In `forward()`, `self.fc1(state_in)` was shape `[..., 512]` while `emb_feat` from `self.embed_proj` was `[..., 256]`, causing `RuntimeError: The size of tensor a (512) must match the size of tensor b (256) at non-singleton dimension 1`.
+- **Fix**: Updated [`RLPolicy.expand()`](file:///c:/Users/Bob/Documents/github/ATS/model_rl.py#L89-L135) to properly expand `self.embed_proj` to `new_hidden_size` and copy learned weights.
+- **Robust Loading**: Updated [`_load_policy()`](file:///c:/Users/Bob/Documents/github/ATS/main.py#L50-L70) and [`load_checkpoint()`](file:///c:/Users/Bob/Documents/github/ATS/model_rl.py#L150-L166) to dynamically inspect checkpoint `hidden_size` before initializing the network architecture.
+
+---
+
+### 2. Dashboard Starting Buttons & Navigation Fix
+- **Fix**: In [`main.py`](file:///c:/Users/Bob/Documents/github/ATS/main.py#L98-L115) and [`debug_gui.py`](file:///c:/Users/Bob/Documents/github/ATS/debug_gui.py), the GUI now boots into the Home Setup view (`active_tab = 0`) instead of forcing `TAB_CONFIG`.
+- **Bottom Navigation**: All starting buttons (`[ 2: ANALYTICS ]`, `[ 3: HYPERPARAMS ]`, `>> LAUNCH TRAINING SESSION <<`) and interactive steppers/pills now work and route between views cleanly.
+
+---
+
+### 3. Safe `--fresh` (Fresh Start) Dashboard Button
+- Added a discrete **[ ⚠ FRESH START (NEW MODEL) ]** button to the setup card in [`debug_gui.py`](file:///c:/Users/Bob/Documents/github/ATS/debug_gui.py).
+- **Two-Step Safety Safeguard**: Clicking the button arms a confirmation state (`[ CONFIRM FRESH RESET? ]` / `[ CANCEL ]`). Confirming resets policy weights from scratch while preserving current hyperparameter settings (`vocab_size`, `hidden_size`, `embed_dim`, `lr`, `entropy`, etc.).
+
+---
+
+### 4. Water & Sea Overhaul: 3s Countdown, Low-HP Respawn vs Harsh Stop, & Speed Penalty
+- **3-Second Immersion Countdown (`OCEAN_SHARK_TICKS = 3`)**:
+  - When the agent spends 3 ticks/seconds in `TILE_OCEAN`:
+    - Applies the **-500.0** punishment.
+    - **If Health $\ge 20$**: Agent escapes the lethal shark strike with low health (`HP = 15`), respawns at the island safe spawn point on land, and **continues the run** (`done = False`).
+    - **If Health $< 20$**: Triggers a **harsh stop / episode termination** (`done = True`, `HP = 0`), logging `"Harsh Stop: Drowned in deep ocean with critical HP < 20 (-500 rew, Perished)"` and classifying the episode outcome as **"BAD"**.
+- **Movement Speed Reduction**:
+  - **Water / H2O (`TILE_WATER`)**: Speed is reduced to **half** ($0.5\times$).
+  - **Ocean Entrance (`TILE_OCEAN`, $< 3$ blocks crossed)**: Speed is reduced to **half** ($0.5\times$).
+  - **Deep Sea (`TILE_OCEAN`, $\ge 3$ blocks crossed)**: Speed is reduced to **one-third** ($0.33\times$).
+  - **HUD Telemetry**: Live vitals bar prominently displays `[WATER DRAG: 50% SPD]` / `[WATER DRAG: 33% SPD]` and `[ ! OPEN OCEAN IMMERSION: Xs ! ]` countdown.
+- **Simulation Freezing Prevention**:
+  - Added a timeout and non-blocking fallback to [`VirusAdapter.generate_narration`](file:///c:/Users/Bob/Documents/github/ATS/ats_virus_adapter.py#L53-L73) to prevent subprocess calls from freezing GUI frame execution.
+
+---
+
+### 5. Island Spacing ($\ge 100\text{m}$ Ocean Gap)
+- Updated [`ISLAND_CENTERS`](file:///c:/Users/Bob/Documents/github/ATS/island_gen.py#L44-L52) across all 6 procedural biomes to guarantee a minimum ocean gap $>100\text{m}$ (center distances $\ge 206.2\text{m}$) preventing bots from accidentally walking between islands.
+
+---
+
+### 6. Fixed Cheap Island Discovery Glitch
+- **Bug**: On episode spawn, taking a step on the starting island (Island 0: Lush Grassland) was treated as discovering a new island because `discovered_islands` was empty on reset, instantly giving +50 free reward points and unfairly boosting score grades to "MID" or "GOOD".
+- **Fix**:
+  - Pre-registered starting island 0 in `rewards.discovered_islands` upon environment initialization and `reset()` in [`ats_env.py`](file:///c:/Users/Bob/Documents/github/ATS/ats_env.py#L25-L65).
+  - Restricted `on_island_discovery` in [`rewards.py`](file:///c:/Users/Bob/Documents/github/ATS/rewards.py#L190-L205) and [`ats_env.py`](file:///c:/Users/Bob/Documents/github/ATS/ats_env.py#L160-L170) to only trigger for `island_id > 0` and unvisited islands.
+
+---
+
+## Verification Results
+
+The automated test suite in `test_suite.py` verified:
+```
+[TEST 1] Testing model expansion & forward pass...
+  -> Initial forward pass (hidden=256) successful.
+  -> Post-expansion forward pass (hidden=512) successful! Bug fixed.
+
+[TEST 2] Testing ocean shark countdown & respawn vs harsh stop...
+  -> High HP (>= 20) ocean shark attack respawned at 15 HP and continued run successfully!
+  -> Low HP (< 20) ocean shark attack triggered harsh stop (done=True) successfully!
+
+[TEST 3] Testing water speed multipliers...
+  -> Water and sea speed multipliers (0.5x and 0.33x) verified!
+
+[TEST 4] Testing island spacing...
+  -> All island centers properly spaced (min center dist=206.2, min ocean gap > 100m)!
+
+[TEST 5] Testing no cheap spawn island discovery rewards...
+  -> Verified: No cheap +50 island discovery reward on starting island!
+
+ALL VERIFICATION TESTS PASSED SUCCESSFULLY!
+```

@@ -12,13 +12,18 @@ import config_rl
 
 
 class RLPolicy(nn.Module):
-    """Actor-critic with expandable hidden layers."""
+    """Actor-critic with learned entity & item embeddings and expandable hidden layers."""
 
     def __init__(self, state_size=None, action_size=None, hidden_size=None):
         super().__init__()
         self.state_size = state_size or config_rl.STATE_SIZE
         self.action_size = action_size or config_rl.ACTION_SIZE
         self.hidden_size = hidden_size or config_rl.MIND_HIDDEN_SIZE
+
+        # 32-dim learned embedding tables
+        self.item_embed = nn.Embedding(config_rl.ITEM_VOCAB_SIZE, config_rl.ITEM_EMBED_DIM)
+        self.entity_embed = nn.Embedding(config_rl.ENTITY_VOCAB_SIZE, config_rl.ENTITY_EMBED_DIM)
+        self.embed_proj = nn.Linear(config_rl.ITEM_EMBED_DIM + config_rl.ENTITY_EMBED_DIM, self.hidden_size)
 
         self.fc1 = nn.Linear(self.state_size, self.hidden_size)
         self.fc2 = nn.Linear(self.hidden_size, self.hidden_size)
@@ -35,10 +40,29 @@ class RLPolicy(nn.Module):
         masked-out actions are set to -1e8 before sampling so the model
         never selects invalid actions.
         """
-        x = torch.relu(self.fc1(state))
+        # Extract entity and object indices from state vector for embedding lookup
+        # Index 15 = nearest entity type ID, Index 19 = nearest object ID
+        if state.dim() == 1:
+            state_in = state.unsqueeze(0)
+        else:
+            state_in = state
+
+        ent_idx = state_in[..., 15].long().clamp(0, config_rl.ENTITY_VOCAB_SIZE - 1)
+        obj_idx = state_in[..., 19].long().clamp(0, config_rl.ITEM_VOCAB_SIZE - 1)
+
+        ent_vec = self.entity_embed(ent_idx)
+        obj_vec = self.item_embed(obj_idx)
+        emb_feat = self.embed_proj(torch.cat([ent_vec, obj_vec], dim=-1))
+
+        x = torch.relu(self.fc1(state_in) + emb_feat)
         x = torch.relu(self.fc2(x))
         logits = self.actor(x)
         value = self.critic(x).squeeze(-1)
+
+        if state.dim() == 1:
+            logits = logits.squeeze(0)
+            value = value.squeeze(0)
+
         if action_mask is not None:
             logits = logits + (1.0 - action_mask) * (-1e8)
         return logits, value
@@ -74,6 +98,13 @@ class RLPolicy(nn.Module):
 
         old = self.hidden_size
 
+        # --- embed_proj: (64 → old) → (64 → new) ---
+        new_embed_proj = nn.Linear(config_rl.ITEM_EMBED_DIM + config_rl.ENTITY_EMBED_DIM, new_hidden_size)
+        nn.init.zeros_(new_embed_proj.weight)
+        nn.init.zeros_(new_embed_proj.bias)
+        new_embed_proj.weight.data[:old, :] = self.embed_proj.weight.data
+        new_embed_proj.bias.data[:old] = self.embed_proj.bias.data
+
         # --- fc1: (state_size → old) → (state_size → new) ----
         new_fc1 = nn.Linear(self.state_size, new_hidden_size)
         nn.init.zeros_(new_fc1.weight)
@@ -102,6 +133,7 @@ class RLPolicy(nn.Module):
         new_critic.weight.data[:, :old] = self.critic.weight.data
         new_critic.bias.data[:] = self.critic.bias.data
 
+        self.embed_proj = new_embed_proj
         self.fc1 = new_fc1
         self.fc2 = new_fc2
         self.actor = new_actor
@@ -115,6 +147,7 @@ class RLPolicy(nn.Module):
         path = path or config_rl.MODEL_PATH
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
+            "model_state_dict": self.state_dict(),
             "state_dict": self.state_dict(),
             "hidden_size": self.hidden_size,
             "state_size": self.state_size,
@@ -129,11 +162,12 @@ class RLPolicy(nn.Module):
         payload = torch.load(path, map_location=map_location)
         if isinstance(payload, dict) and "hidden_size" in payload:
             model = cls(
-                state_size=payload["state_size"],
-                action_size=payload["action_size"],
-                hidden_size=payload["hidden_size"],
+                state_size=payload.get("state_size", config_rl.STATE_SIZE),
+                action_size=payload.get("action_size", config_rl.ACTION_SIZE),
+                hidden_size=payload.get("hidden_size", config_rl.MIND_HIDDEN_SIZE),
             )
-            model.load_state_dict(payload["state_dict"])
+            sd = payload.get("model_state_dict", payload.get("state_dict", payload))
+            model.load_state_dict(sd)
         else:
             # Legacy checkpoint (plain state_dict)
             model = cls()

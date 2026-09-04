@@ -3,9 +3,9 @@
 Phase 1 baseline: tile-world RL simulator with moddable asset components, linked to Virus dual-model profiles (`general` + `ats`).
 
 ```text
-          _____                _____                    _____
-         /\    \              /\    \                  /\    \
-        /::\    \            /::\    \                /::\    \
+           _____                _____                    _____
+          /\    \              /\    \                  /\    \
+         /::\    \            /::\    \                /::\    \
         /::::\    \           \:::\    \              /::::\    \
        /::::::\    \           \:::\    \            /::::::\    \
       /:::/\:::\    \           \:::\    \          /:::/\:::\    \

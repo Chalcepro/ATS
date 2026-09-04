@@ -1,4 +1,4 @@
-"""Agent stats, 24-slot inventory, action mask, and state vector generation."""
+"""Agent stats, 7-slot inventory, action mask, and state vector generation."""
 
 import time
 import random
@@ -36,7 +36,7 @@ for _i in range(config_rl.INVENTORY_SLOTS):
 
 
 class Agent:
-    """RL agent with 24-slot inventory, context-masked actions, facing tracking, and stat tracking."""
+    """RL agent with 7-slot inventory, context-masked actions, facing tracking, and stat tracking."""
 
     def __init__(self, world):
         self.world = world
@@ -71,7 +71,12 @@ class Agent:
             "slowed": 0,
             "blinded": 0,
             "speed_boost": 0,
+            "cold": 0,
+            "acid_burn": 0,
         }
+        self.ocean_ticks = 0
+        self.sea_blocks_crossed = 0
+        self._water_move_counter = 0
 
         self.crafting = CraftingSystem()
         self.torch_active = False
@@ -83,18 +88,41 @@ class Agent:
         self.last_action_name = "none"
         self.last_failed_action = 0
 
+        # Minecraft-style emergent capability set
+        self.capabilities: set[str] = set()
+        if self.has_sword:
+            self.capabilities.add("CAP_BASIC_WEAPON")
+
+    @property
+    def water_speed_mult(self) -> float:
+        """Water speed penalty: 0.5x in H2O/sea entrance, 0.33x after crossing 3 sea blocks."""
+        cur_t = self.world._tile(self.x, self.y)
+        if cur_t and cur_t.tile_type == 8:  # TILE_OCEAN
+            return 0.33 if self.sea_blocks_crossed >= 3 else 0.50
+        elif cur_t and cur_t.tile_type == 5:  # TILE_WATER
+            return 0.50
+        return 1.0
+
     def _grant_starter_gear(self):
-        """Give the agent low-tier starter items in inventory."""
+        """Give the agent only a basic sword — no free food or resources.
+        The agent must forage for food/materials naturally."""
         starters = [
-            ("0002", 1),  # Sword Basic
-            ("0001", 2),  # Apple x2
-            ("0008", 3),  # Stick x3
-            ("0010", 2),  # Wood x2
-            ("0011", 1),  # Torch x1
+            ("0002", 1),  # Sword Basic (slot 0 only)
         ]
         for slot_idx, (item_id, count) in enumerate(starters):
             if slot_idx < len(self.inventory):
                 self.inventory[slot_idx] = {"id": item_id, "count": count}
+
+    def get_inventory_item_ids(self) -> set[str]:
+        """Return a set of all item IDs present in inventory."""
+        return {s["id"] for s in self.inventory if s["id"] and s["count"] > 0}
+
+    def unlock_capability(self, cap_name: str, rewards):
+        """Unlock an emergent capability and notify reward engine."""
+        if cap_name not in self.capabilities:
+            self.capabilities.add(cap_name)
+            rewards.on_capability_unlocked(cap_name)
+            self.log_event(f"Unlocked Capability: {cap_name}!")
 
     def log_event(self, text: str):
         """Append an event to the human-readable event stream (max 30 kept)."""
@@ -107,6 +135,7 @@ class Agent:
     # ------------------------------------------------------------------
     def _norm(self, value, max_value):
         return max(0.0, min(1.0, value / float(max_value)))
+
 
     def _weapon_damage(self):
         """Return best weapon damage from inventory."""
@@ -184,11 +213,15 @@ class Agent:
     # ------------------------------------------------------------------
     # Action mask — dynamic action window (model-side only)
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Action mask — dynamic action window (model-side only)
+    # ------------------------------------------------------------------
     def get_action_mask(self, world, day_night):
         """Return list[int] of length ACTION_SIZE — 1 = valid, 0 = masked."""
         mask = [0] * config_rl.ACTION_SIZE
 
-        # Movement — always available if tile passable
+        # Movement — available if tile passable or if it is a progression gate the agent can unlock
+        inv_items = self.get_inventory_item_ids()
         for act, (dx, dy) in [
             (config_rl.ACT_MOVE_FORWARD, (0, -1)),
             (config_rl.ACT_MOVE_BACKWARD, (0, 1)),
@@ -196,7 +229,16 @@ class Agent:
             (config_rl.ACT_MOVE_RIGHT, (1, 0)),
         ]:
             nx, ny = self.x + dx, self.y + dy
-            if world.in_bounds_passable(nx, ny, world.door_unlocked):
+            can_pass = world.in_bounds_passable(nx, ny, world.door_unlocked)
+            if not can_pass:
+                g_tile = world._tile(nx, ny)
+                if g_tile and g_tile.tile_type == 7:  # TILE_GATE
+                    for g_id, g_info in world.gates.items():
+                        if g_info["pos"] == (nx, ny):
+                            if (g_info.get("req_cap") in self.capabilities) or (g_info.get("req_item") in inv_items):
+                                can_pass = True
+                                break
+            if can_pass:
                 mask[act] = 1
 
         # Sprint on/off
@@ -240,11 +282,12 @@ class Agent:
             mask[config_rl.ACT_OPEN_INVENTORY] = 1
         else:
             mask[config_rl.ACT_CLOSE_INVENTORY] = 1
-            # Slot selection
+            # Only enable slot selection for occupied slots — empty slots are pointless to select
             for i in range(config_rl.INVENTORY_SLOTS):
-                mask[config_rl.ACT_SELECT_SLOT_BASE + i] = 1
+                if self.inventory[i]["id"] and self.inventory[i]["count"] > 0:
+                    mask[config_rl.ACT_SELECT_SLOT_BASE + i] = 1
             # Use item (if selected slot has something)
-            if self.inventory[self.selected_slot]["id"]:
+            if self.inventory[self.selected_slot]["id"] and self.inventory[self.selected_slot]["count"] > 0:
                 mask[config_rl.ACT_USE_ITEM] = 1
 
         # Crafting
@@ -300,17 +343,27 @@ class Agent:
 
         # --- Slot selection ---
         if config_rl.ACT_SELECT_SLOT_BASE <= action_idx < config_rl.ACT_SELECT_SLOT_BASE + config_rl.INVENTORY_SLOTS:
-            new_slot = action_idx - config_rl.ACT_SELECT_SLOT_BASE
-            if new_slot != self.selected_slot:
-                self.selected_slot = new_slot
-                s_item = self.inventory[self.selected_slot]
-                if s_item["id"]:
-                    self.log_event(f"Selected slot {self.selected_slot}: {item_name(s_item['id'])} x{s_item['count']}")
+            slot_idx = action_idx - config_rl.ACT_SELECT_SLOT_BASE
+            s_item = self.inventory[slot_idx]
+            if s_item["id"] and s_item["count"] > 0:
+                self.selected_slot = slot_idx
+                self.last_failed_action = 0
+                self.log_event(f"Selected slot {slot_idx}: {item_name(s_item['id'])} x{s_item['count']}")
+            else:
+                self.last_failed_action = action_idx
+                self.log_event(f"Slot {slot_idx} is EMPTY [Disabled]")
+                rewards.add(-1.0)
             return
 
         # --- Use item ---
         if action_idx == config_rl.ACT_USE_ITEM:
-            self._use_item(rewards)
+            s_item = self.inventory[self.selected_slot]
+            if s_item["id"] and s_item["count"] > 0:
+                self._use_item(rewards)
+            else:
+                self.last_failed_action = action_idx
+                self.log_event(f"Cannot use: Slot {self.selected_slot} is EMPTY [Disabled]")
+                rewards.add(-1.0)
             return
 
         # --- Crafting ---
@@ -353,6 +406,7 @@ class Agent:
                     self.log_event(f"Picked up {item_name(item_id)}")
                     if item_id in ("0002", "0013", "0033", "0034"):
                         self.has_sword = True
+                        self.unlock_capability("CAP_BASIC_WEAPON", rewards)
                     item = REGISTRY.get_item(item_id)
                     if item and item.get("xp"):
                         self.xp += int(item["xp"])
@@ -361,11 +415,13 @@ class Agent:
 
         # --- Attack / Harvest ---
         if action_idx == config_rl.ACT_ATTACK:
+            dmg_to_deal = self._weapon_damage()
             target_id, drop_id, is_world_obj = self.world.attack_at(
-                self.x, self.y, self._weapon_damage(),
+                self.x, self.y, dmg_to_deal,
                 attacker_pos=(self.x, self.y),
                 facing_dx=self.facing[0], facing_dy=self.facing[1]
             )
+            rewards.damage_dealt += float(dmg_to_deal)
             if target_id:
                 if is_world_obj:
                     # Harvested world object (tree, bush, rock)
@@ -382,6 +438,12 @@ class Agent:
                     self.log_event(f"Defeated {entity_name(target_id)}!")
                     self.xp += 3
                     self._check_level_up(rewards)
+
+                    # Boss progression validator check
+                    if target_id in ("E009", "E023", "E025"):
+                        self.unlock_capability("CAP_BOSS_SLAYER", rewards)
+                        rewards.on_boss_defeated(target_id)
+                        self.log_event(f"★ Progression Validator Passed! Defeated Boss {entity_name(target_id)}!")
             return
 
         # --- Interact ---
@@ -426,16 +488,45 @@ class Agent:
             return
 
         nx, ny = self.x + dx, self.y + dy
+
+        # Check if attempting to pass through a progression gate
+        unlocked_gate = self.world.try_unlock_gate(nx, ny, self.capabilities, self.get_inventory_item_ids())
+        if unlocked_gate:
+            rewards.on_gate_unlocked(unlocked_gate)
+            self.unlock_capability(f"CAP_GATE_{unlocked_gate.upper()}", rewards)
+            self.log_event(f"★ Unlocked Gate: {unlocked_gate}!")
+
         if not self.world.in_bounds_passable(nx, ny, self.world.door_unlocked):
             rewards.on_wall_hit()
             return
+
+        # Water & Sea speed penalty
+        cur_tile = self.world._tile(self.x, self.y)
+        new_tile = self.world._tile(nx, ny)
+        in_water = (cur_tile and cur_tile.tile_type in (5, 8)) or (new_tile and new_tile.tile_type in (5, 8))
+
+        if in_water:
+            is_deep_sea = (cur_tile and cur_tile.tile_type == 8 and self.sea_blocks_crossed >= 3) or (new_tile and new_tile.tile_type == 8 and self.sea_blocks_crossed >= 3)
+            needed_subticks = 3 if is_deep_sea else 2
+            self._water_move_counter += 1
+            if self._water_move_counter < needed_subticks:
+                drag_name = "Deep Sea (1/3 speed)" if is_deep_sea else "Water/H2O (1/2 speed)"
+                self.log_event(f"Wading in {drag_name}...")
+                return
+            self._water_move_counter = 0
+            if new_tile and new_tile.tile_type == 8:
+                self.sea_blocks_crossed += 1
+            elif new_tile and new_tile.tile_type != 5:
+                self.sea_blocks_crossed = 0
+        else:
+            self._water_move_counter = 0
+            self.sea_blocks_crossed = 0
 
         if self.sprint and self.stamina > 0 and not self.leg_injured:
             self.stamina = max(0, self.stamina - 2)
 
         # Fall damage calculation
         old_z = self.z
-        new_tile = self.world._tile(nx, ny)
         new_z = new_tile.z if new_tile else 0
         z_fall = old_z - new_z  # positive = falling down
 
@@ -444,6 +535,14 @@ class Agent:
 
         if z_fall > 2.0:
             self._apply_fall_damage(z_fall, rewards)
+
+        # Ice slip check
+        if new_tile and new_tile.tile_type == 10:  # TILE_ICE
+            if random.random() < 0.20 and not self.leg_injured:
+                self.leg_injured = 1
+                self.sprint = False
+                rewards.on_leg_injury()
+                self.log_event("Slipped on Ice! (Leg Injured)")
 
     # ------------------------------------------------------------------
     # Use item logic
@@ -464,6 +563,15 @@ class Agent:
                 if item.get("cure_leg"):
                     self.leg_injured = 0
                     self.log_event(f"Treated leg with {item_name(consumed)} (Injury Cured)")
+                if item.get("cure_poisoned"):
+                    self.status["poisoned"] = 0
+                    self.log_event("Poison cured!")
+                if item.get("cure_burning"):
+                    self.status["burning"] = 0
+                    self.log_event("Extinguished flames!")
+                if item.get("cure_blinded"):
+                    self.status["blinded"] = 0
+                    self.log_event("Vision restored!")
         elif item.get("torch"):
             self.torch_active = True
             self.log_event(f"Lit Torch (Perception Radius increased)")
@@ -488,6 +596,12 @@ class Agent:
             self._add_to_inventory(result)
             rewards.on_craft(result)
             self.log_event(f"Crafted {item_name(result)}!")
+
+            # Minecraft-style emergent capability unlock
+            from crafting import RECIPE_CAPABILITIES
+            cap = RECIPE_CAPABILITIES.get(result)
+            if cap:
+                self.unlock_capability(cap, rewards)
         else:
             self.log_event(f"Added {item_name(item_id)} to crafting bench")
 
@@ -521,7 +635,7 @@ class Agent:
             dmg = int(dmg * 1.5)
 
         self.health -= dmg
-        rewards.on_damage()
+        rewards.on_damage(dmg)
         self.log_event(f"Took {dmg} Fall Damage!")
 
         # Leg injury
@@ -546,6 +660,28 @@ class Agent:
             self.health = max(0, self.health - 1)
             rewards.add(-0.5)
 
+        # Safe Haven natural recovery bonus
+        if self.world.is_safe_zone(self.x, self.y) and self.health < 100:
+            if self._hunger_counter % 10 == 0:
+                self.health = min(100, self.health + 1)
+
+        # Tile environmental hazards
+        cur_t = self.world._tile(self.x, self.y)
+        if cur_t:
+            if cur_t.tile_type == 6:  # TILE_LAVA
+                self.health = max(0, self.health - config_rl.LAVA_DAMAGE_PER_TICK)
+                self.status["burning"] = max(self.status["burning"], 5)
+                rewards.on_damage(config_rl.LAVA_DAMAGE_PER_TICK)
+            elif cur_t.tile_type == 9:  # TILE_ACID
+                self.status["poisoned"] = max(self.status["poisoned"], config_rl.ACID_POISON_TICKS)
+            elif cur_t.tile_type == 12: # TILE_SPORE
+                self.status["blinded"] = max(self.status["blinded"], 8)
+
+            if cur_t.tile_type == 8:    # TILE_OCEAN
+                self.ocean_ticks += 1
+            else:
+                self.ocean_ticks = 0
+
         # Status effect ticks
         if self.status["poisoned"] > 0:
             self.health -= 1
@@ -553,18 +689,22 @@ class Agent:
         if self.status["burning"] > 0:
             self.health -= 2
             self.status["burning"] -= 1
+        if self.status["slowed"] > 0:
+            self.status["slowed"] -= 1
+        if self.status["blinded"] > 0:
+            self.status["blinded"] -= 1
 
         # Stamina regen
         if not self.sprint and self.stamina < 100:
             self.stamina += 1
 
     # ------------------------------------------------------------------
-    # State vector
+    # State vector (exact 130 dimensions)
     # ------------------------------------------------------------------
     def build_state(self, world, day_night, memory_features, action_mask=None):
         if action_mask is None:
             action_mask = self.get_action_mask(world, day_night)
-        """Build the flat state array the model receives every tick."""
+
         ent, ent_dist = world.nearest_entity(self.x, self.y)
         obj_id, obj_dist = world.nearest_object(self.x, self.y)
         z = world.get_adjacent_z(self.x, self.y)
@@ -578,7 +718,7 @@ class Agent:
                 incoming = int(ent.data.get("damage", 0))
 
         cur_tile = world._tile(self.x, self.y)
-        cur_biome = cur_tile.biome if cur_tile else 0
+        cur_island = cur_tile.island_id if cur_tile else -1
 
         state = [
             # Vitals (5)
@@ -607,17 +747,22 @@ class Agent:
             float(ent_state),
             float(incoming),
 
-            # Nearest object (2)
+            # Nearest object (2): dist normalized, obj_id normalized to same scale as inventory
             self._norm(obj_dist, day_night.perception_radius(self.torch_active)),
-            float(int(obj_id) if obj_id.isdigit() else 0),
+            (int(obj_id) / config_rl.ITEM_VOCAB_SIZE) if obj_id.isdigit() and int(obj_id) > 0 else 0.0,
         ]
 
-        # Inventory: 24 slots × (item_id, count) = 48 values
+        # Inventory: 7 slots × (norm_item_id, norm_count) = 14 values
+        # item_id: 0.0 = empty, else normalized to (id / ITEM_VOCAB_SIZE) so model sees ~0.01..0.99
+        # count:   normalized to count / 99, capped at 1.0
         for slot in self.inventory:
-            state.append(float(int(slot["id"])) if slot["id"].isdigit() else 0.0)
-            state.append(float(slot["count"]))
+            raw_id = int(slot["id"]) if slot["id"] and slot["id"].isdigit() else 0
+            norm_id = raw_id / config_rl.ITEM_VOCAB_SIZE if raw_id > 0 else 0.0
+            norm_cnt = min(1.0, slot["count"] / 99.0)
+            state.append(norm_id)
+            state.append(norm_cnt)
 
-        # Status effects (6)
+        # Status effects (8)
         state.extend([
             float(self.status["poisoned"]),
             float(self.status["burning"]),
@@ -625,18 +770,21 @@ class Agent:
             float(self.status["blinded"]),
             float(self.status["speed_boost"]),
             float(self.leg_injured),
+            float(self.status["cold"]),
+            float(self.status["acid_burn"]),
         ])
 
-        # Environment (8) — includes facing vector (dx, dy)
+        # Environment (9)
         state.extend([
             day_night.time_of_day,
             float(self.torch_active),
             float(self.crafting.open),
             float(self.inventory_open),
-            float(cur_biome),
+            float(cur_island),
             float(self.last_failed_action),
-            float(self.facing[0]),  # Facing X (-1, 0, 1)
-            float(self.facing[1]),  # Facing Y (-1, 0, 1)
+            float(self.facing[0]),
+            float(self.facing[1]),
+            float(self.ocean_ticks),
         ])
 
         # Memory features (3)
@@ -645,7 +793,7 @@ class Agent:
         # Action mask (42)
         state.extend(float(v) for v in action_mask)
 
-        # Pad/truncate to STATE_SIZE
+        # Pad/truncate to exact STATE_SIZE
         while len(state) < config_rl.STATE_SIZE:
             state.append(0.0)
         return state[:config_rl.STATE_SIZE]

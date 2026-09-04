@@ -62,9 +62,9 @@ class NeedDetector:
         for slot in range(_INV_SLOTS):
             item_id_idx = _INV_START + slot * _INV_FIELDS
             if len(state) > item_id_idx:
-                item_id = int(state[item_id_idx])
-                # Weapons: 0002 (Sword), 0013 (Stone Sword)
-                if item_id in (2, 13):
+                raw_id = round(state[item_id_idx] * config_rl.ITEM_VOCAB_SIZE)
+                # Weapons: 0002 (Sword), 0013 (Stone Sword), 0033 (Iron Dagger), 0034 (Wooden Club)
+                if raw_id in (2, 13, 33, 34):
                     has_weapon = True
                     break
         tool_need = 0.0 if has_weapon else 1.0

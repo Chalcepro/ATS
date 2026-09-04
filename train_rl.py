@@ -93,18 +93,17 @@ def train(fresh: bool = False):
             recent_rewards.pop(0)
         avg_50 = sum(recent_rewards) / len(recent_rewards)
 
-        # ---- Logging -------------------------------------------------------
+        # ---- Logging & Peak-Relative Classification -----------------------
         ticks = len(rewards)
         rew_per_tick = ep_rew / max(ticks, 1)
-        if rew_per_tick > 0.3 or ep_rew > 100:
-            grade = "GOOD"
-        elif rew_per_tick >= -0.3:
-            grade = "MID"
-        else:
-            grade = "BAD"
+
+        # Dynamic peak-relative grade classification (GOOD/MID/FAIR/BAD)
+        grade = RewardEngine.classify_score(ep_rew)
+        prog_eff = env.rewards.compute_progression_efficiency(ticks)
+        caps_count = len(env.agent.capabilities)
 
         # Automatically process grade through Translator Agent
-        packet = translator.process_episode_grade(episode, grade, rew_per_tick)
+        packet = translator.process_episode_grade(episode, grade, rew_per_tick, ep_rew)
 
         if episode % config_rl.LOG_INTERVAL == 0:
             biomes_count = len(env.rewards.discovered_biomes)
@@ -112,20 +111,24 @@ def train(fresh: bool = False):
             print(
                 f"Episode {episode:4d}/{config_rl.EPISODES} | "
                 f"Ticks={ticks:3d} | Rew/Tick={rew_per_tick:+6.2f} | "
-                f"GRADE: {grade:4s} | Biomes={biomes_count} | Items={items_count} | "
-                f"Reward={ep_rew:7.2f} | 50-Ep Avg={avg_50:7.2f} | "
+                f"GRADE: {grade:4s} | Caps={caps_count} | Biomes={biomes_count} | Items={items_count} | "
+                f"Eff={prog_eff:.3f} | Reward={ep_rew:7.2f} | 50-Ep Avg={avg_50:7.2f} | "
                 f"Loss={loss.item():.4f}"
             )
             print(
-                f"  [Auto-Translator] Grade '{grade}' parsed -> Polarity: {packet['feedback_polarity']:+1.0f} | Tokens: {' '.join(packet['encoded_symbols'][:4])}..."
+                f"  [Auto-Translator] Grade '{grade}' parsed -> Polarity: {packet['feedback_polarity']:+1.1f} | Tokens: {' '.join(packet['encoded_symbols'][:4])}..."
             )
             writer.add_scalar('Reward/Episode', ep_rew, episode)
             writer.add_scalar('Reward/Avg50', avg_50, episode)
-            writer.add_scalar('Score/Efficiency', rew_per_tick, episode)
+            writer.add_scalar('Score/Efficiency', prog_eff, episode)
+            writer.add_scalar('Score/RewardPerTick', rew_per_tick, episode)
+            writer.add_scalar('Progression/Capabilities', caps_count, episode)
+            writer.add_scalar('Progression/Points', env.rewards.progression_points, episode)
             writer.add_scalar('Loss/Total', loss.item(), episode)
             writer.add_scalar('Loss/Actor', actor_loss.item(), episode)
             writer.add_scalar('Loss/Critic', critic_loss.item(), episode)
             writer.add_scalar('Entropy', entropy_bonus.item(), episode)
+
 
         # ---- Best-model checkpoint (based on 50-ep moving average) ---------
         if avg_50 > best_avg_reward:
