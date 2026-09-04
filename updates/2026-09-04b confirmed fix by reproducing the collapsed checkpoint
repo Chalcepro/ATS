@@ -1,0 +1,42 @@
+# ATS Update — 2026-09-04 (same day, follow-up) Confirmed the fix; found the real cause of the GUI symptom
+
+## Summary
+User ran `sanity_train.py` (PASS) then tried the real GUI and saw a
+degenerate "walks in a straight line, reward flat" agent. Reproduced it
+directly: it was the **old checkpoint**, not the fix. Archived the stale
+checkpoints so a plain run starts fresh by default; a fresh run now produces
+a healthy, non-degenerate episode.
+
+## Diagnosis
+- `checkpoints/model_best.pt` (hidden=1024) was trained under the pre-fix
+  code (return-normalisation bug, `R_OCEAN_DEATH=-500`, dead object
+  embedding, `ENTROPY_COEFF=0.01`). `main.py` with no `--fresh` flag loads it
+  automatically — that's the GUI default, so that's what the user ran.
+- Loaded and ran it for 2000 ticks: **120 of the first 124 actions were
+  identical** (fully collapsed policy). Died in 124 ticks. This is what
+  "the straight line thing, rewards stay" was.
+- A fresh policy on the same real `ATSEnvironment`, run for 2839 ticks:
+  reward climbed 37 → 52 → 87 → 128 → 163 → 187, action mix varied
+  (movement + wait + pick-up), survived to combat death rather than
+  starvation. The fix works; the checkpoint was the problem.
+
+## Change
+- Moved `checkpoints/model_best.pt` and `model_rl.pt` to
+  `checkpoints/_legacy_pre_2026-09-04_fix/` (with a README explaining why).
+  `checkpoints/` is gitignored — this is a filesystem-only change.
+- Re-ran `python main.py --no-gui --episodes 1` with no flags: now logs
+  `No matching checkpoint — fresh policy (hidden=256)` and produces
+  `GRADE: GOOD | Caps=3 | ticks=4721` on the very first episode of a truly
+  fresh policy — trains and saves a new, clean `checkpoints/model_best.pt`.
+
+## Verified
+- [x] Reproduced the reported symptom against the archived checkpoint
+- [x] Confirmed a fresh run no longer touches it and grades GOOD on episode 1
+- [x] New checkpoints are being written fresh going forward
+
+## Follow-up (not done)
+- No version/compatibility stamp on checkpoints yet, so this class of "silently
+  resume a checkpoint trained under an old reward/loss scheme" could recur
+  after a future reward or loss change. Worth adding a `reward_scheme_version`
+  (or similar) field to the checkpoint payload that `_load_policy` checks
+  against `config_rl` and refuses/warns on mismatch instead of silently loading.
