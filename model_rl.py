@@ -40,15 +40,19 @@ class RLPolicy(nn.Module):
         masked-out actions are set to -1e8 before sampling so the model
         never selects invalid actions.
         """
-        # Extract entity and object indices from state vector for embedding lookup
-        # Index 15 = nearest entity type ID, Index 19 = nearest object ID
+        # Extract entity and object indices from the state vector for embedding lookup.
+        #   index 15 = nearest entity type — stored as a RAW int  (E001 -> 1.0)
+        #   index 19 = nearest object id  — stored NORMALISED     (id / ITEM_VOCAB_SIZE)
+        # The object id must be de-normalised before the lookup: `.long()` on the
+        # 0..1 fraction previously collapsed every object to embedding row 0, so
+        # the item-embedding table (100x32) was dead weight.
         if state.dim() == 1:
             state_in = state.unsqueeze(0)
         else:
             state_in = state
 
-        ent_idx = state_in[..., 15].long().clamp(0, config_rl.ENTITY_VOCAB_SIZE - 1)
-        obj_idx = state_in[..., 19].long().clamp(0, config_rl.ITEM_VOCAB_SIZE - 1)
+        ent_idx = state_in[..., 15].round().long().clamp(0, config_rl.ENTITY_VOCAB_SIZE - 1)
+        obj_idx = (state_in[..., 19] * config_rl.ITEM_VOCAB_SIZE).round().long().clamp(0, config_rl.ITEM_VOCAB_SIZE - 1)
 
         ent_vec = self.entity_embed(ent_idx)
         obj_vec = self.item_embed(obj_idx)
