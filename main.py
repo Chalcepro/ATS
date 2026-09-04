@@ -183,7 +183,7 @@ def run_gui(args):
             # ---- Episode boundary -------------------------------------------
             if done:
                 sl.on_episode_end()
-                learner.maybe_update()
+                learner.flush()          # train on the tail of the episode before it rolls over
                 total_rew = sum(ep_rewards)
                 from rewards import RewardEngine
                 grade = RewardEngine.classify_score(total_rew)
@@ -240,7 +240,7 @@ def run_gui(args):
 
             learner.collect(state=state, action=action, reward=reward,
                             log_prob=sl.last_log_prob, value=sl.last_value,
-                            action_mask=mask)
+                            action_mask=mask, done=done)
             if learner.maybe_update() and learner.last_losses:
                 gui.record_loss(*learner.last_losses)
 
@@ -297,10 +297,10 @@ def run_headless(args):
             ep_rewards.append(reward)
             learner.collect(state=state, action=action, reward=reward,
                             log_prob=sl.last_log_prob, value=sl.last_value,
-                            action_mask=mask)
+                            action_mask=mask, done=done)
             learner.maybe_update()
 
-        learner.maybe_update()
+        learner.flush()
         total = sum(ep_rewards)
         grade = RewardEngine.classify_score(total)
         prog_eff = env.rewards.compute_progression_efficiency(env.tick)

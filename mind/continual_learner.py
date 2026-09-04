@@ -29,6 +29,7 @@ class Transition:
     reward: float
     value: float
     action_mask: list[int]
+    done: bool = False
 
 
 class ContinualLearner:
@@ -50,7 +51,7 @@ class ContinualLearner:
     # ------------------------------------------------------------------
     # Collect — called once per tick
     # ------------------------------------------------------------------
-    def collect(self, state, action, log_prob, reward, value, action_mask):
+    def collect(self, state, action, log_prob, reward, value, action_mask, done=False):
         """Store one transition in the rolling buffer."""
         self.buffer.append(Transition(
             state=list(state),
@@ -59,6 +60,7 @@ class ContinualLearner:
             reward=float(reward),
             value=float(value),
             action_mask=list(action_mask),
+            done=bool(done),
         ))
         self._ticks_since_update += 1
         self._total_ticks += 1
@@ -76,39 +78,68 @@ class ContinualLearner:
             return False
 
         self._do_ppo_update()
+        self.buffer.clear()          # keep updates on-policy — never re-train stale transitions
         self._ticks_since_update = 0
         self._maybe_grow()
         return True
 
+    def flush(self) -> bool:
+        """Force an update on whatever is buffered (call at an episode boundary).
+
+        Returns True if an update ran.  Unlike :meth:`maybe_update` this
+        ignores the tick counter so end-of-episode transitions are not
+        carried, unlearned, into the next episode.
+        """
+        if len(self.buffer) < config_rl.BATCH_SIZE:
+            return False
+        self._do_ppo_update()
+        self.buffer.clear()
+        self._ticks_since_update = 0
+        return True
+
     def _do_ppo_update(self):
-        """Mini PPO update on the buffer contents."""
+        """PPO update on the current rollout buffer.
+
+        Returns are the discounted reward-to-go, computed with **episode
+        boundaries** (the running sum resets at every ``done``) and
+        **bootstrapped at the buffer edge** from the last stored value.
+        The critic regresses to these *raw* returns; only the *advantages*
+        are normalised, and only for the policy-gradient term.
+
+        The previous version normalised the returns themselves
+        (``(returns - mean) / std`` per batch).  That made the critic's
+        target non-stationary — it changed scale every update — so the
+        value function never converged and ``advantage = return - value``
+        was noise.  This is the single biggest reason the agent's reward
+        curve never trended up.  See docs/architecture_and_reasoning_2026-09-04.md.
+        """
         transitions = list(self.buffer)
 
         states = torch.tensor([t.state for t in transitions], dtype=torch.float32)
         actions = torch.tensor([t.action for t in transitions], dtype=torch.long)
         old_log_probs = torch.tensor([t.log_prob for t in transitions], dtype=torch.float32)
-        rewards_raw = [t.reward for t in transitions]
         masks = torch.tensor([t.action_mask for t in transitions], dtype=torch.float32)
 
-        # Compute discounted returns
+        # --- discounted returns: episode-boundary aware + edge bootstrap ---
+        last = transitions[-1]
+        running = 0.0 if last.done else float(last.value)
         returns = []
-        running = 0.0
-        for r in reversed(rewards_raw):
-            running = r + config_rl.GAMMA * running
+        for t in reversed(transitions):
+            if t.done:
+                running = 0.0
+            running = t.reward + config_rl.GAMMA * running
             returns.insert(0, running)
         returns = torch.tensor(returns, dtype=torch.float32)
 
-        # Normalise returns
-        # Always normalise returns to keep advantages on a stable scale
-        returns = (returns - returns.mean()) / (returns.std() + 1e-8)
-
         for _ in range(config_rl.CONTINUAL_MINI_EPOCHS):
             log_probs, values, entropy = self.policy.evaluate(states, actions, action_masks=masks)
+
             advantages = returns - values.detach()
+            adv_norm = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
             ratio = torch.exp(log_probs - old_log_probs.detach())
             clipped = torch.clamp(ratio, 1.0 - config_rl.CLIP_EPS, 1.0 + config_rl.CLIP_EPS)
-            actor_loss = -torch.min(ratio * advantages, clipped * advantages).mean()
+            actor_loss = -torch.min(ratio * adv_norm, clipped * adv_norm).mean()
 
             critic_loss = torch.nn.functional.smooth_l1_loss(values, returns)
             entropy_bonus = -config_rl.ENTROPY_COEFF * entropy.mean()
@@ -119,15 +150,26 @@ class ContinualLearner:
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
             self.optimizer.step()
-            
+
             self.last_losses = (float(loss.item()), float(actor_loss.item()), float(critic_loss.item()))
-            print(f"[PPO] loss={loss.item():.4f} actor={actor_loss.item():.4f} critic={critic_loss.item():.4f}")
+
+        print(f"[PPO] update {len(transitions)} steps | loss={self.last_losses[0]:.4f} "
+              f"actor={self.last_losses[1]:.4f} critic={self.last_losses[2]:.4f}")
 
     # ------------------------------------------------------------------
     # Growth check
     # ------------------------------------------------------------------
     def _maybe_grow(self):
-        """Check if the policy has plateaued and should expand."""
+        """Check if the policy has plateaued and should expand.
+
+        Disabled by default (``config_rl.MIND_GROWTH_ENABLED``).  The old
+        trigger fired on *any* low reward-delta — including a converged or
+        merely stuck policy — and doubling the hidden width resets Adam's
+        moments and injects a zero block, which destabilises more than it
+        helps.  Get the fixed-width policy learning first, then revisit.
+        """
+        if not getattr(config_rl, "MIND_GROWTH_ENABLED", False):
+            return
         if self._total_ticks % config_rl.MIND_GROWTH_CHECK_EVERY != 0:
             return
         if self.policy.hidden_size >= config_rl.MIND_MAX_HIDDEN_SIZE:

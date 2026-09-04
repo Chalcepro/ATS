@@ -8,6 +8,7 @@ import config_rl
 from ats_env import ATSEnvironment
 from ats_virus_translator import ExternalTranslatorAgent
 from model_rl import RLPolicy
+from rewards import RewardEngine   # was used un-imported -> NameError on episode 1
 
 
 def compute_returns(rewards, gamma):
@@ -69,15 +70,19 @@ def train(fresh: bool = False):
             rewards.append(reward)
 
         returns = torch.tensor(compute_returns(rewards, config_rl.GAMMA), dtype=torch.float32)
-        norm_returns = (returns - returns.mean()) / (returns.std() + 1e-8)
         values_tensor = torch.stack(values)
-        advantages = norm_returns - values_tensor.detach()
+
+        # Normalise the ADVANTAGE (policy term), not the returns. The critic
+        # must regress to the real return scale or the value head is useless
+        # and advantages collapse to noise — see continual_learner._do_ppo_update.
+        advantages = returns - values_tensor.detach()
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         log_probs_tensor = torch.stack(log_probs)
         entropies_tensor = torch.stack(entropies)
 
         actor_loss = -(log_probs_tensor * advantages).mean()
-        critic_loss = torch.nn.functional.smooth_l1_loss(values_tensor, norm_returns)
+        critic_loss = torch.nn.functional.smooth_l1_loss(values_tensor, returns)
         entropy_bonus = entropies_tensor.mean()
 
         loss = actor_loss + 0.5 * critic_loss - config_rl.ENTROPY_COEFF * entropy_bonus

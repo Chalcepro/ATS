@@ -70,6 +70,7 @@ ACID_POISON_TICKS = 10    # POISONED duration from TILE_ACID
 # Growing mind / policy network
 # ---------------------------------------------------------------------------
 MIND_HIDDEN_SIZE = 256                 # starting hidden width (increased from 128)
+MIND_GROWTH_ENABLED = False            # OFF until the fixed-width policy demonstrably learns
 MIND_GROWTH_CHECK_EVERY = 500          # ticks between growth checks
 MIND_GROWTH_THRESHOLD = 0.02           # reward plateau delta that triggers growth
 MIND_MAX_HIDDEN_SIZE = 1024            # eventual upper bound (not a hard ceiling)
@@ -79,16 +80,20 @@ MIND_MAX_HIDDEN_SIZE = 1024            # eventual upper bound (not a hard ceilin
 # ---------------------------------------------------------------------------
 EPISODES = 20
 MAX_TICKS = 9000
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 3e-4                   # PPO default; 1e-4 was very slow for a from-scratch policy
 GAMMA = 0.99
 CLIP_EPS = 0.2
-ENTROPY_COEFF = 0.01                   # encourages active exploration vs premature collapse
+ENTROPY_COEFF = 0.005                  # exploration bonus; 0.01 was strong enough to fight
+                                      # convergence on small action spaces (see issues log #3)
 
 # Continual Learning
 # ---------------------------------------------------------------------------
-BATCH_SIZE = 32
-CONTINUAL_BUFFER_SIZE = 256            # rolling transition buffer
-CONTINUAL_UPDATE_EVERY = 64            # ticks between online PPO updates
+# A PPO update now consumes a full fresh rollout and then clears the buffer,
+# so BUFFER_SIZE and UPDATE_EVERY are kept equal — every transition is trained
+# on exactly once (times MINI_EPOCHS), never stale.
+BATCH_SIZE = 32                        # minimum transitions before an update is allowed
+CONTINUAL_BUFFER_SIZE = 256            # rollout length
+CONTINUAL_UPDATE_EVERY = 256           # ticks between online PPO updates (== rollout length)
 CONTINUAL_MINI_EPOCHS = 4              # PPO epochs per online update
 
 # ---------------------------------------------------------------------------
