@@ -70,7 +70,12 @@ R_DAMAGE_PER_HIT = -1.0     # damage penalty
 R_HUNGER_DRAIN = -0.5       # per starvation tick
 R_LEG_INJURY = -2.0
 R_DEATH = -10.0             # Normal death penalty
-R_OCEAN_DEATH = -500.0      # Falling into ocean / shark kill penalty
+# Ocean/shark penalty. Was -500.0 — but ats_env applies it on every shark
+# trigger, including *survived* strikes, and a single -500 tick under gamma=0.99
+# dominates the whole discounted return and (after advantage normalisation)
+# flattens every other transition in the same rollout to ~zero. Kept clearly
+# worse than a normal death, but on the same order of magnitude.
+R_OCEAN_DEATH = -15.0       # Falling into ocean / shark strike penalty
 R_STANDING_STILL = -0.05    # scales up per tick while standing still
 
 # Standing still threshold — ticks before penalty kicks in
