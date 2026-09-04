@@ -1,0 +1,89 @@
+# ATS Update — 2026-09-04 RL Core Learning Fixes & Sanity Harness
+
+## Summary
+Fixed the reasons the PPO agent's reward curve never trended up, added a
+fast deterministic smoke test that proves the learner learns, and disabled
+the auto-growing network until the fixed-width policy is shown to work.
+Full reasoning and the intended architecture are in
+[`docs/architecture_and_reasoning_2026-09-04.md`](file:///c:/Users/Bob/Documents/github/ATS/docs/architecture_and_reasoning_2026-09-04.md).
+
+---
+
+## Changes
+
+### 1. PPO returns & advantages — [`mind/continual_learner.py`](file:///c:/Users/Bob/Documents/github/ATS/mind/continual_learner.py)
+- **Stopped normalising the returns.** `_do_ppo_update` used
+  `returns = (returns - mean) / std` per batch, then `advantage = return - value`
+  and `critic_loss = smooth_l1(value, returns)`. Normalising the returns makes
+  the critic's target non-stationary — it rescales every update — so the value
+  head never converges and the advantage signal is noise. This is the single
+  biggest reason training never improved.
+- **Now:** returns are the raw discounted reward-to-go, computed with
+  **episode-boundary resets** (`running = 0` at every `done`) and an
+  **edge bootstrap** (`running = last.value` if the buffer doesn't end on a
+  terminal step). Only the *advantage* is normalised, and only for the
+  policy-gradient term. The critic regresses to the raw returns.
+- **On-policy rollouts.** The 256-slot buffer was re-trained every 64 ticks →
+  each transition used ~4× with a stale `old_log_prob`. Buffer is now cleared
+  after every update and `CONTINUAL_UPDATE_EVERY == CONTINUAL_BUFFER_SIZE`, so
+  every transition trains exactly once (× `CONTINUAL_MINI_EPOCHS`).
+- Added `Transition.done` and `ContinualLearner.flush()` (force an update at an
+  episode boundary).
+- `_maybe_grow()` gated behind `config_rl.MIND_GROWTH_ENABLED` (default `False`).
+- `[PPO]` log line prints once per update instead of once per mini-epoch.
+
+### 2. Config — [`config_rl.py`](file:///c:/Users/Bob/Documents/github/ATS/config_rl.py)
+- `LEARNING_RATE` `1e-4 → 3e-4` (PPO default; 1e-4 barely moved a from-scratch policy).
+- `ENTROPY_COEFF` `0.01 → 0.005` (0.01 was strong enough to fight convergence on small action spaces).
+- `CONTINUAL_UPDATE_EVERY` `64 → 256` (== buffer size; see above).
+- Added `MIND_GROWTH_ENABLED = False`.
+
+### 3. Run loop — [`main.py`](file:///c:/Users/Bob/Documents/github/ATS/main.py)
+- Both `learner.collect(...)` calls now pass `done=done`.
+- Episode-boundary `learner.maybe_update()` → `learner.flush()` in `run_gui` and `run_headless`.
+
+### 4. Reward scale — [`rewards.py`](file:///c:/Users/Bob/Documents/github/ATS/rewards.py)
+- `R_OCEAN_DEATH` `-500.0 → -15.0`. `ats_env` applies it on every shark trigger
+  (including survived strikes); a single -500 tick dominates the whole return and,
+  after advantage normalisation, flattens every other transition in the rollout.
+
+### 5. Object embedding bug — [`model_rl.py`](file:///c:/Users/Bob/Documents/github/ATS/model_rl.py)
+- `forward()` did `state[..., 19].long()`, but index 19 is the nearest-object id
+  **normalised** as `id / ITEM_VOCAB_SIZE`. `.long()` on a 0..1 fraction is
+  always 0, so the 100×32 item-embedding table was only ever read at row 0.
+  Now de-normalised (`* ITEM_VOCAB_SIZE`, rounded). Entity index 15 is a raw int
+  and was already fine.
+- No parameter-shape change; old checkpoints still load.
+
+### 6. train_rl.py — [`train_rl.py`](file:///c:/Users/Bob/Documents/github/ATS/train_rl.py)
+- Same return-normalisation fix as (1).
+- `RewardEngine` was used at line ~101 without an import → `NameError` on the
+  first episode. Added the import. (`main.py --train` was dead.)
+
+### 7. Sanity harness — NEW
+- [`sanity_env.py`](file:///c:/Users/Bob/Documents/github/ATS/sanity_env.py) — a
+  7×7 navigate-to-goal grid with the same `STATE_SIZE` / `ACTION_SIZE` and the
+  same `reset()/step()/action_mask()` interface as `ATSEnvironment`. **Not part
+  of the world.**
+- [`sanity_train.py`](file:///c:/Users/Bob/Documents/github/ATS/sanity_train.py) —
+  trains a fresh `RLPolicy` through the real `ContinualLearner` and asserts
+  reward + goal-reach rate climb above the learner's own early episodes and a
+  random policy. ~40s, deterministic. Run it before any long ATS training run.
+
+---
+
+## Verified
+- [x] `python -m py_compile` on all changed files
+- [x] `python -c "from ats_env import ATSEnvironment; env=ATSEnvironment(); print(len(env.reset()))"` → 79
+- [x] `python sanity_train.py` → **PASS** (first-100 mean reward −0.34 / reach 33% → last-100 +0.34 / reach 65%; random policy reach 43%)
+- [x] A/B vs. the old return-normalisation confirms the fixed version learns faster and further
+- [x] `python main.py --no-gui --episodes 1` → exit 0, PPO updates run without error
+
+## Not done / follow-ups
+- State-feature scaling: `level`, `island_id`, `last_failed_action` are raw
+  unbounded floats next to 0..1 features feeding `fc1`.
+- GAE-λ (currently n-step / MC returns with a single edge bootstrap).
+- The ATS → Virus narration pipeline is still effectively mocked
+  (`generate_narration` has a 0.8s subprocess timeout it can't meet).
+- Existing `checkpoints/*.pt` are hidden=1024 and carry the old pathologies —
+  start fresh: `python main.py --no-gui --fresh`.

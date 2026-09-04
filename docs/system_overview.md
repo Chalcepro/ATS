@@ -7,8 +7,8 @@ flowchart TD
     subgraph Mind ["Mind Architecture (mind/)"]
         ND[Need Detector] --> SL[Solution Loop]
         EM[Experience Memory] <--> SL
-        SL --> ACT[Policy Forward (Hidden: 256)]
-        CL[Continual Learner] -->|Online PPO| ACT
+        SL --> ACT[Policy Forward (Hidden: 256, fixed)]
+        CL[Continual Learner] -->|On-policy PPO, 256-step rollouts| ACT
     end
 
     subgraph Environment ["Environment (ats_env.py)"]
@@ -43,10 +43,20 @@ Executes the primary 5-stage cognitive cycle on every simulation tick:
 5. **Record**: Logs action outcomes and reinforces sequences that resolve triggering needs.
 
 ### B. Continual Learner (`mind/continual_learner.py`)
-- Maintains a rolling ring buffer of recent transitions.
-- Triggers online mini-PPO updates in the background every 64 ticks.
-- Enables the agent to adapt and improve weights immediately while exploring without waiting for episode termination.
-- **Checkpoint Synchronization**: Automatically saves matching architecture metadata (`hidden_size: 256`) to both `checkpoints/model_rl.pt` and `checkpoints/model_best.pt` for seamless warm-start reloading across sessions.
+- Collects a rollout of `CONTINUAL_BUFFER_SIZE` (256) transitions, runs a PPO
+  update (`CONTINUAL_MINI_EPOCHS` epochs), then **clears the buffer** — every
+  transition is trained exactly once, on-policy. `flush()` forces an update at
+  an episode boundary so the tail of an episode isn't carried unlearned.
+- Returns are raw discounted reward-to-go with episode-boundary resets and an
+  edge bootstrap; **only the advantage is normalised** (see the 2026-09-04
+  update and `docs/architecture_and_reasoning_2026-09-04.md` for why the old
+  return-normalisation broke learning).
+- Auto-growing the hidden width is **disabled by default**
+  (`config_rl.MIND_GROWTH_ENABLED = False`).
+- **Checkpoint Synchronization**: architecture metadata (`hidden_size`) is saved
+  into `checkpoints/model_rl.pt` and `checkpoints/model_best.pt` so reloads pick
+  the right width. *Existing checkpoints are hidden=1024 from earlier auto-grow
+  runs and carry the pre-fix pathologies — start fresh (`--fresh`).*
 
 ---
 

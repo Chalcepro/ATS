@@ -1,5 +1,13 @@
 # ATS (AI Training System) & Virus Integration — Comprehensive Technical Documentation
 
+> ⚠️ **Partially stale (2026-09-04).** This document describes **42 actions** and a
+> **126–130-dim state vector**. The code is **25 actions / 79 dims**
+> (`config_rl.py` is authoritative; `docs/system_overview.md` and `AGENTS.md`
+> are current). The PPO description here also predates the 2026-09-04 RL-core
+> fixes — see `docs/architecture_and_reasoning_2026-09-04.md` and
+> `updates/2026-09-04 rl core learning fixes and sanity harness`. Treat the
+> prose below as design intent, not as a description of the running system.
+
 ## 1. Executive Summary & Project Vision
 
 The **AI Training System (ATS)** is an interactive, 2D tile-world reinforcement learning simulator paired with a cognitive mind architecture and linked to **Virus**, a dual-profile Language Model.
