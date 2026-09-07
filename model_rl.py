@@ -20,15 +20,38 @@ class RLPolicy(nn.Module):
         self.action_size = action_size or config_rl.ACTION_SIZE
         self.hidden_size = hidden_size or config_rl.MIND_HIDDEN_SIZE
 
-        # 32-dim learned embedding tables
+        # Learned embedding tables
         self.item_embed = nn.Embedding(config_rl.ITEM_VOCAB_SIZE, config_rl.ITEM_EMBED_DIM)
         self.entity_embed = nn.Embedding(config_rl.ENTITY_VOCAB_SIZE, config_rl.ENTITY_EMBED_DIM)
-        self.embed_proj = nn.Linear(config_rl.ITEM_EMBED_DIM + config_rl.ENTITY_EMBED_DIM, self.hidden_size)
+        self.tile_embed = nn.Embedding(config_rl.TILE_VOCAB_SIZE, config_rl.TILE_EMBED_DIM)
+        # nn.Embedding defaults to N(0, 1), which is large next to typical
+        # activations.  With the patch contributing 25 rows, the embedding
+        # branch otherwise swamps fc1(state) at init and drowns the rest of
+        # the observation (caught by sanity_train.py).  Start small; the
+        # tables grow their own scale if the information is worth it.
+        for table in (self.item_embed, self.entity_embed, self.tile_embed):
+            nn.init.normal_(table.weight, mean=0.0, std=0.1)
+
+        self.embed_proj = nn.Linear(self.embed_input_dim, self.hidden_size)
 
         self.fc1 = nn.Linear(self.state_size, self.hidden_size)
         self.fc2 = nn.Linear(self.hidden_size, self.hidden_size)
         self.actor = nn.Linear(self.hidden_size, self.action_size)
         self.critic = nn.Linear(self.hidden_size, 1)
+
+    @property
+    def embed_input_dim(self) -> int:
+        """Width of the concatenated embedding features fed to ``embed_proj``.
+
+        nearest-entity + nearest-object + pooled inventory + flattened
+        egocentric tile patch.  The patch is flattened rather than pooled on
+        purpose — pooling would discard *where* each tile is, which is the
+        entire reason the patch was added.
+        """
+        return (config_rl.ENTITY_EMBED_DIM
+                + config_rl.ITEM_EMBED_DIM          # nearest object on the ground
+                + config_rl.ITEM_EMBED_DIM          # pooled inventory contents
+                + config_rl.PATCH_TILES * config_rl.TILE_EMBED_DIM)
 
     # ------------------------------------------------------------------
     # Forward pass
@@ -51,12 +74,32 @@ class RLPolicy(nn.Module):
         else:
             state_in = state
 
-        ent_idx = state_in[..., 15].round().long().clamp(0, config_rl.ENTITY_VOCAB_SIZE - 1)
-        obj_idx = (state_in[..., 19] * config_rl.ITEM_VOCAB_SIZE).round().long().clamp(0, config_rl.ITEM_VOCAB_SIZE - 1)
+        ent_idx = state_in[..., config_rl.IDX_ENT_TYPE].round().long().clamp(0, config_rl.ENTITY_VOCAB_SIZE - 1)
+        obj_idx = (state_in[..., config_rl.IDX_OBJ_ID] * config_rl.ITEM_VOCAB_SIZE).round().long().clamp(0, config_rl.ITEM_VOCAB_SIZE - 1)
 
         ent_vec = self.entity_embed(ent_idx)
         obj_vec = self.item_embed(obj_idx)
-        emb_feat = self.embed_proj(torch.cat([ent_vec, obj_vec], dim=-1))
+
+        # Inventory: 7 slots of (norm_item_id, norm_count) -> item ids live on
+        # the even offsets.  These used to bypass the embedding table entirely
+        # and enter the net as raw normalised floats, so a 100x32 table was
+        # trained on exactly one input (the nearest ground object).  Empty
+        # slots are masked out of the mean so padding doesn't wash it out.
+        inv_start = config_rl.IDX_INV_START
+        inv_end = inv_start + config_rl.INVENTORY_SLOTS * 2
+        inv_idx = (state_in[..., inv_start:inv_end:2] * config_rl.ITEM_VOCAB_SIZE)
+        inv_idx = inv_idx.round().long().clamp(0, config_rl.ITEM_VOCAB_SIZE - 1)
+        inv_emb = self.item_embed(inv_idx)                              # (..., slots, dim)
+        inv_valid = (inv_idx > 0).to(inv_emb.dtype).unsqueeze(-1)
+        inv_vec = (inv_emb * inv_valid).sum(-2) / inv_valid.sum(-2).clamp(min=1.0)
+
+        # Egocentric tile patch -> embedded and flattened (position preserved).
+        patch_start = config_rl.IDX_PATCH_START
+        patch_end = patch_start + config_rl.PATCH_TILES
+        patch_idx = state_in[..., patch_start:patch_end].round().long().clamp(0, config_rl.TILE_VOCAB_SIZE - 1)
+        patch_vec = self.tile_embed(patch_idx).flatten(start_dim=-2)
+
+        emb_feat = self.embed_proj(torch.cat([ent_vec, obj_vec, inv_vec, patch_vec], dim=-1))
 
         x = torch.relu(self.fc1(state_in) + emb_feat)
         x = torch.relu(self.fc2(x))
@@ -102,8 +145,8 @@ class RLPolicy(nn.Module):
 
         old = self.hidden_size
 
-        # --- embed_proj: (64 → old) → (64 → new) ---
-        new_embed_proj = nn.Linear(config_rl.ITEM_EMBED_DIM + config_rl.ENTITY_EMBED_DIM, new_hidden_size)
+        # --- embed_proj: (embed_input_dim → old) → (embed_input_dim → new) ---
+        new_embed_proj = nn.Linear(self.embed_input_dim, new_hidden_size)
         nn.init.zeros_(new_embed_proj.weight)
         nn.init.zeros_(new_embed_proj.bias)
         new_embed_proj.weight.data[:old, :] = self.embed_proj.weight.data

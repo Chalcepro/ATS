@@ -47,16 +47,53 @@ Executes the primary 5-stage cognitive cycle on every simulation tick:
   update (`CONTINUAL_MINI_EPOCHS` epochs), then **clears the buffer** — every
   transition is trained exactly once, on-policy. `flush()` forces an update at
   an episode boundary so the tail of an episode isn't carried unlearned.
-- Returns are raw discounted reward-to-go with episode-boundary resets and an
-  edge bootstrap; **only the advantage is normalised** (see the 2026-09-04
-  update and `docs/architecture_and_reasoning_2026-09-04.md` for why the old
-  return-normalisation broke learning).
+- Advantages are **GAE(`GAE_LAMBDA`=0.95)** over the rollout-time values
+  stored per-transition, with a `done`-mask that zeroes bootstrap and
+  lambda-return propagation across episode boundaries; critic target
+  (`returns`) is `advantage + old_value`. Only the advantage is normalised.
+  (Replaced raw discounted-reward-to-go advantage 2026-09-04 — that was
+  unbiased but high-variance, matching a non-monotonic reward trend over a
+  300-episode run; see `docs/architecture_and_reasoning_2026-09-04.md` and
+  `updates/2026-09-04c ...` for why the earlier return-normalisation bug and
+  this variance issue are separate problems. GAE fixed the variance — critic
+  loss is confirmed low and stable across a full 2000-episode run.)
+- **Entropy-collapse guard (fixed + verified 2026-09-05).** A flat
+  `ENTROPY_COEFF` was found to let policy entropy decay toward zero and
+  never recover — confirmed directly from per-update `entropy`/`adv_mean`
+  logging (added 2026-09-04d): once entropy is near-zero, the entropy bonus
+  (`ENTROPY_COEFF * entropy`) contributes a vanishingly small gradient
+  regardless of the coefficient, so nothing pulls the policy back; a
+  2000-episode run went from +50 avg reward to hundreds of consecutive
+  byte-identical episodes (same reward, same tick count, `MaxTicks`
+  termination). Fix: `ContinualLearner.entropy_coeff` (not
+  `config_rl.ENTROPY_COEFF` directly) now *adapts* — ramps up toward
+  `ENTROPY_COEFF_MAX` (0.10, 20x the floor) while measured entropy is below
+  `ENTROPY_TARGET` (0.5 nats), relaxes back toward the floor
+  (`config_rl.ENTROPY_COEFF`, kept live so the GUI's Hyperparameter Studio
+  control still works) once healthy. **Verified** on a fresh 2000-episode
+  run vs. the pre-fix run: mean reward -193 → +80, median -75 → +81,
+  % positive episodes 40% → 98%, no sustained collapse (previously 170+
+  exact-tick repeats and hundreds of identical dead-end episodes; after the
+  fix the most-repeated tick count across 2000 episodes was 16, normal
+  coincidence). Caveat: not full immunity — one single-episode dip still
+  occurred (coefficient hit the ceiling but 15 mini-batches wasn't enough
+  to arrest a fast in-episode entropy slide), but it self-corrected on the
+  very next episode rather than compounding. See `updates/2026-09-04e ...`
+  (diagnosis) and `updates/2026-09-05 ...` (fix + verification) for detail.
+  `checkpoints/model_best.pt`/`model_rl.pt` from the verification run are a
+  **healthy** policy, safe to resume from.
 - Auto-growing the hidden width is **disabled by default**
   (`config_rl.MIND_GROWTH_ENABLED = False`).
 - **Checkpoint Synchronization**: architecture metadata (`hidden_size`) is saved
   into `checkpoints/model_rl.pt` and `checkpoints/model_best.pt` so reloads pick
-  the right width. *Existing checkpoints are hidden=1024 from earlier auto-grow
-  runs and carry the pre-fix pathologies — start fresh (`--fresh`).*
+  the right width. Payloads also carry `reward_scheme_version`
+  (`config_rl.REWARD_SCHEME_VERSION`) — `main.py`'s `_load_policy` **skips**
+  (does not silently resume) any checkpoint whose version doesn't match the
+  current one, since an old checkpoint's critic was calibrated under a
+  different reward/return scheme and silently resuming it looks like a
+  regression that isn't one (this happened once already — see
+  `updates/2026-09-04b ...`). Bump `REWARD_SCHEME_VERSION` whenever the
+  reward function or return/advantage computation changes.
 
 ---
 

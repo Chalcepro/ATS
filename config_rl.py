@@ -53,13 +53,35 @@ ITEM_EMBED_DIM    = 32
 ENTITY_EMBED_DIM  = 32
 ITEM_VOCAB_SIZE   = 100
 ENTITY_VOCAB_SIZE = 40
+TILE_EMBED_DIM    = 8
+TILE_VOCAB_SIZE   = 16     # world.py defines TILE_EMPTY..TILE_SPORE = 0..12
+
+# Egocentric perception patch (added 2026-09-05).  Before this the agent saw
+# only the 4 adjacent tiles plus a *distance* to the nearest object/hostile
+# with NO direction — so "walk toward the food" was not a learnable function
+# of the observation, and a straight line (which maximises new-tile
+# exploration reward) was close to optimal.  See updates/2026-09-05b ... .
+PATCH_RADIUS = 2                              # 2 -> 5x5 window centred on the agent
+PATCH_SIZE   = PATCH_RADIUS * 2 + 1
+PATCH_TILES  = PATCH_SIZE * PATCH_SIZE        # 25
 
 # Vitals (5) + position/Z (5) + adjacent tiles (4) + hostile (4) + object (2)
 #   + inventory 7*(item_id, count) = 14
-#   + status effects (8) + environment (9) + memory features (3)
+#   + status effects (8) + environment (9) + memory features (3)   -> 54
+#   + direction unit-vectors (4) + egocentric patch (25)
 #   + action mask (25)
-#   = 5+5+4+4+2+14+8+9+3+25 = 79
-STATE_SIZE = 79
+#   = 54+4+25+25 = 108
+# NOTE: the new blocks are inserted *before* the action mask on purpose —
+# indices 0..53 keep their historical meaning (mind/need_detector.py and
+# ExperienceMemory's state[:20] slice depend on them) and the mask stays at
+# the tail (sanity_env.py writes it as s[-ACTION_SIZE:]).
+IDX_ENT_TYPE   = 15        # nearest entity type, RAW int -> entity_embed
+IDX_OBJ_ID     = 19        # nearest object id, NORMALISED (id/ITEM_VOCAB_SIZE)
+IDX_INV_START  = 20        # 7 slots x (norm_item_id, norm_count)
+IDX_DIR_START  = 54        # obj_dx, obj_dy, hostile_dx, hostile_dy
+IDX_PATCH_START = IDX_DIR_START + 4
+IDX_MASK_START  = IDX_PATCH_START + PATCH_TILES
+STATE_SIZE = IDX_MASK_START + ACTION_SIZE     # 108
 
 # Hazard & Ocean constants
 OCEAN_SHARK_TICKS = 3     # ticks before lethal shark arrives
@@ -69,6 +91,12 @@ ACID_POISON_TICKS = 10    # POISONED duration from TILE_ACID
 # ---------------------------------------------------------------------------
 # Growing mind / policy network
 # ---------------------------------------------------------------------------
+# The recalled-solution logit boost in mind/solution_loop.py.  Kept ON (this
+# is existing behaviour) but now gated so the Mind hint can be A/B'd against
+# a plain policy — roadmap step 2 is "empirically evaluate the hint
+# mechanism", which is impossible without an off switch.
+MIND_HINT_ENABLED = True
+
 MIND_HIDDEN_SIZE = 256                 # starting hidden width (increased from 128)
 MIND_GROWTH_ENABLED = False            # OFF until the fixed-width policy demonstrably learns
 MIND_GROWTH_CHECK_EVERY = 500          # ticks between growth checks
@@ -82,9 +110,34 @@ EPISODES = 20
 MAX_TICKS = 9000
 LEARNING_RATE = 3e-4                   # PPO default; 1e-4 was very slow for a from-scratch policy
 GAMMA = 0.99
+GAE_LAMBDA = 0.95                      # advantage smoothing; raw n-step MC advantage was
+                                      # too high-variance to give a stable policy gradient
+                                      # (reward climbed then collapsed non-monotonically —
+                                      # see updates/2026-09-04 first-long-run.md)
 CLIP_EPS = 0.2
 ENTROPY_COEFF = 0.005                  # exploration bonus; 0.01 was strong enough to fight
                                       # convergence on small action spaces (see issues log #3)
+
+# Entropy-collapse guard (2026-09-05). A *flat* coefficient multiplies
+# whatever the entropy gradient happens to be — once entropy has already
+# decayed near zero, that gradient is tiny too, so a fixed coefficient
+# can't pull a collapsed policy back out; it ratchets tighter instead.
+# Confirmed directly (not guessed) over a 2000-episode real run: entropy
+# decayed 0.0162 -> 0.0001 within a single episode with actor loss pinned
+# at 0.0000 the whole time. See updates/2026-09-04e ... .
+# Fix: adapt the coefficient itself — ramp it up while measured entropy is
+# below ENTROPY_TARGET (so the push gets *stronger* exactly when the policy
+# is at risk of collapsing, instead of staying flat), relax it back toward
+# the floor once entropy is healthy again (so a well-converged policy isn't
+# permanently forced to over-explore).
+ENTROPY_TARGET = 0.5                   # nats; max possible for 25 actions is ln(25)=3.22
+ENTROPY_COEFF_MAX = 0.10               # ceiling = 20x ENTROPY_COEFF
+ENTROPY_ADAPT_UP = 1.08                # multiplicative step when entropy < target
+ENTROPY_ADAPT_DOWN = 0.98              # multiplicative step when entropy >= target
+# NOTE: the floor is `ENTROPY_COEFF` itself (not a separate baked constant),
+# on purpose — debug_gui.py's Hyperparameter Studio lets the user live-tune
+# ENTROPY_COEFF at runtime; a separate ENTROPY_COEFF_MIN captured once at
+# import time would silently stop tracking that control.
 
 # Continual Learning
 # ---------------------------------------------------------------------------
@@ -111,6 +164,18 @@ STARTING_ROOM_SIZE = 3
 
 MODEL_PATH = CHECKPOINT_DIR / "model_rl.pt"
 BEST_MODEL_PATH = CHECKPOINT_DIR / "model_best.pt"
+
+# Bump this whenever the reward function or the return/advantage computation
+# changes in a way that makes an old checkpoint's *critic* calibration invalid
+# (even though its weights still load fine, structurally).  A checkpoint
+# stamped with a different version is treated as incompatible for resume —
+# see _load_policy() in main.py.  History: 1 = pre-2026-09-04 (broken
+# return-normalisation, moved to checkpoints/_legacy_pre_2026-09-04_fix/);
+# 2 = fixed return/critic handling + on-policy rollouts + GAE(lambda);
+# 3 = STATE_SIZE 79->108 (directional perception + egocentric patch) and the
+#     reworked embedding front-end — old checkpoints are structurally
+#     incompatible (fc1/embed_proj shapes differ), not merely miscalibrated.
+REWARD_SCHEME_VERSION = 3
 
 # ---------------------------------------------------------------------------
 # Logging / TensorBoard

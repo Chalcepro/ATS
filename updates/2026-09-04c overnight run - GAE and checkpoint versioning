@@ -1,0 +1,81 @@
+# ATS Update — 2026-09-04 (overnight session) GAE(lambda) + checkpoint version stamping
+
+## Context
+First real multi-hundred-episode run since the `rl-core-fixes` branch fix
+(the return-normalisation bug). Goal: check whether the fix holds over a
+long run, not just the first few episodes.
+
+## Run 1: `py -3.12 main.py --no-gui --episodes 300` (resumed from that
+morning's 20-episode checkpoint)
+Reward is real and moving — nothing like the old permanent -100/-128 floor —
+but non-monotonic:
+
+| episodes | avg reward |
+|---|---|
+| 1–30    | 47.2 |
+| 31–60   | 16.6 |
+| 61–90   | -17.8 |
+| 91–120  | 12.4 |
+| 121–150 | 64.9 |
+| 151–180 | 57.3 |
+| 181–210 | 86.8 (peak) |
+| 211–240 | 59.0 |
+| 241–270 | 60.8 |
+| 271–300 | 42.0 (declining) |
+
+Climbs to a real peak, dips hard once, climbs again, then declines toward
+the end. Critic loss is noisy (1–19 range) alongside near-zero actor loss —
+consistent with a high-variance advantage signal, not a broken one.
+
+## Diagnosis
+`continual_learner.py`'s advantage was full n-step-to-go return minus the
+(detached) current value — effectively Monte-Carlo advantage over up to a
+256-step buffer. Unbiased, but high variance, which plausibly explains the
+noisy non-monotonic trend above (this was on the known follow-up list from
+the first fix).
+
+## Change
+- `config_rl.py`: added `GAE_LAMBDA = 0.95`.
+- `mind/continual_learner.py`: `_do_ppo_update` now computes advantages via
+  GAE(lambda) over the rollout-time (`old`) values stored per-transition,
+  with a `done`-mask that zeroes both the bootstrap and the lambda-return
+  propagation across episode boundaries. Critic target (`returns`) is now
+  `advantage + old_value` instead of raw discounted-reward-to-go.
+- Verified `sanity_train.py` still passes, and improved: final-100 mean
+  reward +0.858 (was +0.34 pre-GAE), reach rate 84% (was 65%). Not a
+  regression.
+- **Checkpoint version stamping** (the follow-up flagged after the
+  checkpoint-collapse incident earlier today): added
+  `config_rl.REWARD_SCHEME_VERSION = 2`. `main.py` `_save_policy` stamps it;
+  `_load_policy` now skips (does not silently resume) any checkpoint whose
+  stamp doesn't match, logging why, and falls through to the next candidate
+  or a fresh policy. This is exactly the failure class from
+  `2026-09-04b ...`: an old checkpoint's critic calibrated under a different
+  return/reward scheme, loaded silently, looking like a regression that
+  wasn't one.
+- Moved the pre-GAE 300-episode checkpoint (unstamped, and now genuinely
+  stale relative to the new critic-target math) to
+  `checkpoints/_pre_gae_300ep_validation_2026-09-04/` — filesystem only,
+  `checkpoints/` is gitignored.
+- Launched `py -3.12 main.py --no-gui --episodes 2000 --fresh` as the actual
+  overnight run under `REWARD_SCHEME_VERSION=2` + GAE, to get a real read on
+  whether reward trends up over a much longer horizon than 300 episodes.
+  Result to be recorded in a follow-up entry once it completes.
+
+## Verified
+- [x] `sanity_train.py` passes post-GAE-change (stronger than before)
+- [x] `_load_policy` skips a mismatched-version checkpoint with a clear log
+      line rather than silently loading it
+- [ ] Not yet verified: whether GAE meaningfully reduces the non-monotonic
+      swings on the real ATS env over a long run — pending the 2000-episode
+      run above
+
+## Follow-up (not done)
+- `data/ats_episode_history.csv` header (9 cols) no longer matches the rows
+  debug_gui.py actually writes (12 cols incl. grade + efficiency) — cosmetic
+  but should be fixed before relying on it for analysis. Note: this file is
+  only written by the GUI path (`debug_gui.py`), not `--no-gui` runs, so it
+  wasn't touched by tonight's headless runs at all.
+- Still open from the prior fix: unbounded raw state features
+  (`level`/`island_id`/`last_failed_action`), a full audit of `rewards.py`
+  for other oversized constants beyond `R_OCEAN_DEATH`.

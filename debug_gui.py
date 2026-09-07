@@ -232,7 +232,7 @@ class TerminalGUI:
             self.table_scroll = 0
         self.export_csv()
 
-    def record_loss(self, total, actor, critic):
+    def record_loss(self, total, actor, critic, entropy=None):
         self.loss_history.append((total, actor, critic))
         if len(self.loss_history) > 600:
             self.loss_history.pop(0)

@@ -402,13 +402,18 @@ class World:
     # Object queries
     # ------------------------------------------------------------------
     def nearest_object(self, x: int, y: int):
-        best_id, best_dist = "", 999
+        """Return ``(object_id, manhattan_dist, pos)``.
+
+        ``pos`` is the (x, y) of the nearest object or None — the agent's
+        state vector needs the *direction* to it, not just the distance.
+        """
+        best_id, best_dist, best_pos = "", 999, None
         for (tx, ty), tile in self.tiles.items():
             if tile.object_id:
                 d = abs(tx - x) + abs(ty - y)
                 if d < best_dist:
-                    best_id, best_dist = tile.object_id, d
-        return best_id, best_dist
+                    best_id, best_dist, best_pos = tile.object_id, d, (tx, ty)
+        return best_id, best_dist, best_pos
 
     # ------------------------------------------------------------------
     # Height map helpers (stub — elevation not tile-based in island arch)

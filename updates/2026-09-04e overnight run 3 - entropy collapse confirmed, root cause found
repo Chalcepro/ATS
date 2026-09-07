@@ -1,0 +1,90 @@
+# ATS Update — 2026-09-04/05 (overnight session, final) Entropy collapse confirmed as root cause — training should not resume as-is
+
+## Correction to `updates/2026-09-04d ...`
+That entry called the stuck-in-place cluster in run 2 "self-recovering" and
+"an on-policy exploration hiccup, not a permanent collapse." Run 3 (2000
+more episodes, same policy, entropy/advantage logging now on) shows that
+read was wrong — it wasn't recovering, it was in an early/mild stage of a
+collapse that got monotonically worse. Correcting the record here rather
+than editing that entry, since the reasoning process (instrument before
+tuning) was right even though the interim conclusion wasn't.
+
+## Result: severe, worsening collapse
+Per-100-episode reward, run 3 (started from run 2's end-of-run checkpoint):
+
+| episodes | avg reward | grades |
+|---|---|---|
+| 1-100   |   5.2  | mostly MID, some BAD |
+| 101-400 |  ~50   | mostly MID (looked fine) |
+| 501-600 | -66.1  | FAIR rising |
+| 701-800 | -210.8 | FAIR dominant |
+| 901-1000| -507.1 | **FAIR 98/100** |
+| 1401-1500| -964.5| **BAD 45/100**, min -1906.70 |
+| 1601-1800| ~-425 | **FAIR 100/100 both blocks** |
+| 1901-2000| -165.3| FAIR 83/100 |
+
+Episodes 1457-1471+ (checked 15, likely more) are **byte-identical**:
+`reward=-1906.70, ticks=9000, MaxTicks` — the agent runs out the full
+episode length doing the same deterministic bad thing every single time.
+`4470` also recurs as an exact tick count **170 times** across the run (was
+a rare one-off cluster in run 2).
+
+## Root cause — confirmed directly, not inferred
+Looked at the raw PPO update lines *inside* episode 1457 (35 consecutive
+updates, one episode): `entropy` decays monotonically 0.0162 → 0.0001,
+`actor` loss is `0.0000` for essentially the entire episode, `adv_mean`/
+`adv_std` shrink to near-zero (~±0.02, std ~0.15) for the whole plateau
+region, until one large terminal spike when the episode truncates. This is
+textbook **entropy collapse**: the policy has converged to a near-fully
+deterministic action distribution, the near-zero entropy means the entropy
+bonus (`ENTROPY_COEFF * entropy`) contributes a vanishingly small gradient
+regardless of the coefficient's magnitude, and the near-zero GAE advantage
+in the flat penalty region gives the actor loss nothing to push against
+either. Nothing in the current setup pulls entropy back up once it's this
+low — so it doesn't recover, it ratchets tighter every episode, which
+matches the monotonic worsening in the table above exactly.
+
+This is a different, more fundamental problem than what the GAE change
+addressed. GAE fixed the *variance* of the advantage estimate (confirmed:
+critic loss dropped and stayed low all through this run, 0.001-3 range,
+never blew up). What's failing now is *exploration* — nothing in the
+current PPO setup has a floor that prevents entropy from decaying to zero
+and staying there.
+
+## Deliberately NOT fixed tonight
+Per explicit instruction to stop after this run. Not touching
+`ENTROPY_COEFF` blind — same reasoning as `2026-09-04d`, now with much
+stronger evidence for *what* to fix, not just *that* something's off.
+Worth considering next session (not decided, just options on the table):
+- A coefficient bump alone likely still isn't sufficient by itself — the
+  problem is entropy decaying to near-zero, at which point *any* fixed
+  coefficient contributes a near-zero gradient. An entropy **floor** (e.g.
+  clip the policy's minimum action-distribution temperature, or add a
+  penalty that grows as entropy approaches zero rather than a flat
+  coefficient) targets the actual failure mode more directly than a bigger
+  flat `ENTROPY_COEFF`.
+- Alternative: periodic forced exploration (epsilon-style random action
+  injection) as a hard floor independent of the entropy bonus's gradient.
+- Whatever is chosen, verify against `sanity_train.py` first (as tonight's
+  GAE change was), and specifically build a check for "does entropy stay
+  above some floor over a long run" — this failure mode took ~1500-2000
+  episodes to become severe, so a short sanity run won't catch it; may need
+  a longer regression check for entropy specifically.
+
+## Checkpoint state — heads up for next session
+`checkpoints/model_best.pt` / `model_rl.pt` (from this run's end) reflect
+the **fully collapsed** policy, not a healthy one. `REWARD_SCHEME_VERSION`
+is unchanged (this wasn't a reward/critic scheme change, just a training
+outcome), so the version-stamp guard will **not** protect against resuming
+this — it isn't designed to catch "trained into a bad local optimum,"
+only "trained under a different reward/critic scheme." Left as-is
+(real experimental data, not deleting it), but do not assume a plain
+resume tonight or tomorrow starts from a good policy. Consider `--fresh`
+once the entropy-collapse fix lands, rather than resuming from this.
+
+## Verified
+- [x] Entropy collapse confirmed directly from the new telemetry
+      (`entropy`, `adv_mean`, `adv_std` in `[PPO]` log lines), not inferred
+- [x] Critic (GAE) is NOT the problem — critic loss stayed low and stable
+      throughout, even during the collapsed episodes
+- [ ] Not done: an actual fix. This entry is a diagnosis, not a repair.

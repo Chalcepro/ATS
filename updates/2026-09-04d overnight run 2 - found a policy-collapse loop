@@ -1,0 +1,85 @@
+# ATS Update — 2026-09-04 (overnight session, cont.) Found a real "stuck-in-place" collapse mode; added entropy instrumentation
+
+## Context
+Continuation of `updates/2026-09-04c ...`. Ran `py -3.12 main.py --no-gui
+--episodes 2000 --fresh` under `REWARD_SCHEME_VERSION=2` (GAE added).
+
+## Result: mostly healthy, but a real recurring failure mode found
+Per-100-episode reward averages stayed positive and reasonably stable for
+the first ~700 episodes (60-80 avg, all MID grade — much more consistent
+than the pre-GAE 300-episode run). From ~episode 700 onward, a handful of
+episodes spike to catastrophic negative reward (-225 to -931), dragging two
+100-episode blocks (1301-1400, 1601-1700) to a negative average despite
+being otherwise healthy. Grade distribution over all 2000: MID 1854, FAIR
+128, GOOD 11, BAD 7 — the extreme negatives are rare but severe.
+
+## Diagnosis
+Looked at the worst cluster directly (episodes 1682-1689, 7 consecutive
+episodes at reward ≈ -890 to -931, **all terminating at the exact same
+tick count: 4470**). That repetition is the tell — not organic variance.
+
+Checked the PPO update lines feeding those episodes: `actor` loss is
+`0.0000` to `-0.0030` (rounds to zero) across ~17 consecutive updates
+through the whole cluster, while `critic` loss also collapses toward ~0.01.
+Reading `rewards.py`'s `update_standing_still`: the per-tick penalty for
+not moving is capped at `R_STANDING_STILL * 4 = -0.2/tick` (deliberately,
+so a stuck agent doesn't get a bottomless-pit gradient). `4470 * 0.2 ≈ 894`
+— matches the observed magnitude closely.
+
+Read together: the policy became near-deterministic (peaked enough that
+entropy's pull is negligible) and landed on a "stand still" action from a
+given start state. Because the environment reset is deterministic and the
+policy is too, the exact same trajectory replays every episode. Once
+plateaued at the -0.2/tick cap, consecutive-tick rewards are nearly
+identical, so GAE temporal-difference deltas are ≈0 through the stuck
+region — there is almost no gradient telling the policy to do anything
+else until the eventual death signal, and even that is one sparse spike
+diluted across a 256-step rollout. This is a real PPO collapse mode
+(entropy-starved local trap), not a reward-shaping bug — the cap on
+`R_STANDING_STILL` is doing its job (bounding the penalty), it's just
+that a bounded-but-flat penalty region also means a flat gradient region.
+
+It self-recovers within a handful of episodes each time (by ep 1701-1800
+the run is back to 46 avg, all MID) — an on-policy exploration hiccup, not
+a permanent collapse. But it recurred in at least 3 separate clusters
+across the 2000 episodes (ep ~960, ~1355-1385, ~1682-1690, ~1979), so it's
+worth being able to see directly rather than infer from tick counts.
+
+## Change (instrumentation only — no hyperparameter tuning yet)
+- `mind/continual_learner.py`: `_do_ppo_update` now also tracks
+  `entropy.mean()` and prints `adv_mean` / `adv_std` for the batch, so a
+  future stuck cluster can be confirmed directly (is entropy actually
+  collapsing, is advantage actually flatlining) instead of inferred from
+  tick counts and loss magnitudes after the fact.
+- `debug_gui.py`: `record_loss()` widened to accept the new 4th
+  (`entropy`) value from `learner.last_losses` — **without this, GUI mode
+  would have raised `TypeError: record_loss() takes 4 positional arguments
+  but 5 were given` on the very first PPO update**, since `main.py` calls
+  `gui.record_loss(*learner.last_losses)`. Caught by a syntax/AST check
+  across the changed files before relaunching, not by running the GUI
+  itself (headless overnight session — GUI untested tonight).
+
+## Deliberately NOT done tonight
+Did not touch `ENTROPY_COEFF` or the standing-still penalty shape. The
+project's own history already shows a blind entropy-coefficient bump
+(0.01→0.005) being reverted for a different reason ("too strong exploration
+for small action spaces") — changing it again without the entropy telemetry
+above to confirm the actual collapse mechanism would be exactly the
+"tuned symptoms instead of causes" mistake this project already made once
+(see `docs/architecture_and_reasoning_2026-09-04.md`). Next run's entropy
+numbers should say whether entropy really is collapsing before touching
+`ENTROPY_COEFF` or considering an annealing schedule.
+
+## Launched
+`py -3.12 main.py --no-gui --episodes 2000` (resumed from the checkpoint
+this run produced, same `REWARD_SCHEME_VERSION=2` — a legitimate resume,
+not a stale-checkpoint situation) — to get entropy telemetry through at
+least one more stuck cluster.
+
+## Verified
+- [x] All edited files pass an AST parse check
+- [x] `record_loss` signature change is backward compatible (new arg has a
+      default, existing 3-arg callers unaffected — there are none besides
+      the one in `main.py` that now passes 4)
+- [ ] Not yet verified: whether entropy telemetry actually confirms the
+      collapse hypothesis — pending next run

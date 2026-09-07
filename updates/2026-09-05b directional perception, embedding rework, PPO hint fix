@@ -1,0 +1,94 @@
+# ATS Update — 2026-09-05/06 Directional perception + embedding rework + PPO hint corruption fix
+
+Three changes, in the order they were prioritised after a full read of the
+Mind/perception stack. Root finding driving all of it: **the agent had no
+directional information anywhere in its observation**, so goal-directed
+movement was not a learnable function of the state, and a straight line
+(which maximises flat per-new-tile exploration reward) was close to optimal.
+The straight-line behaviour was the correct answer to the question being
+asked, not a training failure.
+
+## 1. PPO importance-ratio corruption via the Mind hint (correctness bug)
+`mind/solution_loop.py` boosted a recalled action's logit by up to +3.0,
+then sampled AND took `log_prob` from that **boosted** distribution. That
+`log_prob` is stored as PPO's `old_log_prob`, but `_do_ppo_update` recomputes
+log-probs with `policy.evaluate()`, which knows nothing about hints. So
+`ratio = exp(new - old)` compared two different distributions on every tick
+where a hint fired — silent off-policy corruption.
+
+Fix: sample from the (possibly boosted) *behaviour* distribution, but score
+the chosen action under the **policy's own** distribution, so `old_log_prob`
+is genuinely `log pi_theta(a|s)`. Added `config_rl.MIND_HINT_ENABLED` (default
+True, preserving existing behaviour) — roadmap step 2 is "empirically evaluate
+the hint mechanism", which is impossible without an off switch.
+
+Not changed: the +3.0 boost magnitude is large enough to steamroll a trained
+policy on one stale remembered action. Flagged, not tuned — no measurement yet.
+
+## 2. Directional perception (STATE_SIZE 79 -> 108)
+Previously: nearest hostile and nearest object each contributed a *distance*
+and nothing else; `memory.py:as_state_features` returned three bare confidence
+scalars, discarding x/y/kind/value; terrain was 4 adjacent tiles despite
+`PERCEPTION_RADIUS = 7`. The agent knew "food is 0.4 away" with no idea which way.
+
+Added, inserted **before** the action mask so indices 0..53 keep their
+historical meaning (`mind/need_detector.py` and ExperienceMemory's `state[:20]`
+depend on them) and the mask stays at the tail (`sanity_env.py` writes it as
+`s[-ACTION_SIZE:]`):
+- `[54..57]` unit direction vectors toward nearest object and nearest hostile
+- `[58..82]` egocentric 5x5 tile-id patch (`PATCH_RADIUS=2`), world-aligned
+- `world.nearest_object()` now also returns the object's position (one caller)
+- named index constants in `config_rl` so this stops being scattered magic numbers
+
+## 3. Embedding front-end rework
+- **Inventory now uses the item embedding table.** The 7 slots previously
+  bypassed it entirely and entered as raw normalised floats, so a 100x32 table
+  was trained on exactly one input (the nearest ground object). Now embedded and
+  presence-masked mean-pooled (empty slots excluded so padding can't wash it out).
+  State encoding unchanged — de-normalisation happens in the model, matching the
+  existing `obj_idx` pattern.
+- **New `tile_embed`** (16 x 8) for the patch, flattened not pooled — pooling
+  would discard *where* each tile is, which is the whole point of the patch.
+- **Embedding init scaled to N(0, 0.1).** `nn.Embedding` defaults to N(0,1),
+  which is large next to typical activations; with the patch contributing 25
+  rows the embedding branch swamped `fc1(state)` at init. **`sanity_train.py`
+  caught this** — it failed outright (reward -0.117 -> -0.008, reach 42% -> 50%)
+  until the init was scaled.
+- `expand()` fixed: it rebuilt `embed_proj` with the old hardcoded input width.
+
+`REWARD_SCHEME_VERSION` 2 -> 3 (old checkpoints are now structurally
+incompatible, not merely miscalibrated).
+
+## New tool: `eval_behaviour.py`
+Reward alone never caught the straight-line problem, so this measures *how*
+the agent moves, from positions only (no action-semantics assumptions):
+- `straightness` = net displacement / path length (1.0 = perfect straight line)
+- `approach rate` = of moves made while a nearest object exists, the fraction
+  that reduced manhattan distance to it — the goal-seeking test that was
+  impossible to beat above chance before this work
+
+Random-policy baseline measured: straightness **0.097**, approach **27.7%**.
+
+## Verified so far
+- [x] `sanity_train.py` passes, and is the **best result recorded**: first-100
+      +0.342 / reach 65%, last-100 **+1.200 / reach 98%** (previous best was
+      +0.858 / 84%). The oversized default embedding init was likely hurting
+      the original model too.
+- [x] Model verified batched, unbatched, through `evaluate()`, and after `expand()`
+- [x] Real-env state vector verified: length 108, unit-magnitude direction
+      vectors, patch showing real varied tile ids, mask correctly at the tail
+- [x] 12-episode real run clean; progression efficiency 0.6-1.06 vs ~0.2-0.5 before
+- [ ] **Pending**: 2000-episode verification run + `eval_behaviour.py` on the
+      resulting checkpoint, to confirm the straight lines actually break
+      (approach rate well above the 27.7% baseline is the thing to look for)
+
+## Follow-up: Mission Control GUI (agreed, deferred)
+The GUI hasn't been updated for any of this. Worth doing:
+- surface `entropy` and the adaptive `entropy_coeff` — the telemetry that
+  caught the collapse is currently print-only, and `record_loss()` accepts the
+  entropy value then discards it
+- a live view of the new 5x5 perception patch + direction vectors, so what the
+  agent actually sees is visible rather than inferred
+- `mind/need_detector.py` has badly stale comments (`_INV_SLOTS = 7  # 24`,
+  `# 20 + 48 = 68` when it is 34) that land on the right index only because
+  they are computed rather than hardcoded — a trap for the next reader

@@ -41,6 +41,7 @@ class ContinualLearner:
         self.buffer: deque[Transition] = deque(maxlen=config_rl.CONTINUAL_BUFFER_SIZE)
         self._ticks_since_update = 0
         self.last_losses = None
+        self.entropy_coeff = config_rl.ENTROPY_COEFF
 
         # Growth tracking
         self._total_ticks = 0
@@ -100,18 +101,27 @@ class ContinualLearner:
     def _do_ppo_update(self):
         """PPO update on the current rollout buffer.
 
-        Returns are the discounted reward-to-go, computed with **episode
-        boundaries** (the running sum resets at every ``done``) and
-        **bootstrapped at the buffer edge** from the last stored value.
-        The critic regresses to these *raw* returns; only the *advantages*
-        are normalised, and only for the policy-gradient term.
+        Advantages come from **GAE(lambda)** over the *old* (rollout-time)
+        values stored on each transition; returns for the critic target are
+        ``advantage + old_value``.  Only the advantages are normalised.
 
-        The previous version normalised the returns themselves
-        (``(returns - mean) / std`` per batch).  That made the critic's
-        target non-stationary — it changed scale every update — so the
-        value function never converged and ``advantage = return - value``
-        was noise.  This is the single biggest reason the agent's reward
-        curve never trended up.  See docs/architecture_and_reasoning_2026-09-04.md.
+        Before this, advantages were raw n-step-to-go returns minus the
+        (detached, current) value — effectively full Monte-Carlo advantage
+        over up to a 256-step buffer.  That is unbiased but very
+        high-variance, which is consistent with what the first long
+        real-world run after the return-normalisation fix showed: reward
+        climbed for ~150 episodes, dipped negative, climbed again to a
+        peak, then declined — a noisy, non-monotonic trend rather than a
+        broken one.  See updates/2026-09-04 first-long-run.md.
+
+        The entropy bonus uses ``self.entropy_coeff``, an adaptive value
+        (see ``__init__`` and the end of this method) rather than the flat
+        ``config_rl.ENTROPY_COEFF`` — a fixed coefficient can't recover a
+        policy that has already collapsed toward zero entropy, since the
+        entropy gradient itself is tiny there too.  Confirmed directly on a
+        2000-episode run: entropy decayed 0.0162->0.0001 within a single
+        episode with actor loss pinned at 0.0000 throughout.  See
+        updates/2026-09-04e ... and updates/2026-09-05 ... (the fix).
         """
         transitions = list(self.buffer)
 
@@ -119,22 +129,26 @@ class ContinualLearner:
         actions = torch.tensor([t.action for t in transitions], dtype=torch.long)
         old_log_probs = torch.tensor([t.log_prob for t in transitions], dtype=torch.float32)
         masks = torch.tensor([t.action_mask for t in transitions], dtype=torch.float32)
+        old_values = [t.value for t in transitions]
 
-        # --- discounted returns: episode-boundary aware + edge bootstrap ---
-        last = transitions[-1]
-        running = 0.0 if last.done else float(last.value)
-        returns = []
-        for t in reversed(transitions):
-            if t.done:
-                running = 0.0
-            running = t.reward + config_rl.GAMMA * running
-            returns.insert(0, running)
-        returns = torch.tensor(returns, dtype=torch.float32)
+        # --- GAE(lambda): episode-boundary aware, bootstrapped at the buffer edge ---
+        # `mask` zeroes both the bootstrap and the lambda-return propagation across
+        # a `done` step, so one episode's advantage never leaks into the next.
+        next_value = 0.0 if transitions[-1].done else old_values[-1]
+        gae = 0.0
+        advantages = [0.0] * len(transitions)
+        for i in reversed(range(len(transitions))):
+            mask = 0.0 if transitions[i].done else 1.0
+            delta = transitions[i].reward + config_rl.GAMMA * next_value * mask - old_values[i]
+            gae = delta + config_rl.GAMMA * config_rl.GAE_LAMBDA * mask * gae
+            advantages[i] = gae
+            next_value = old_values[i]
+        advantages = torch.tensor(advantages, dtype=torch.float32)
+        returns = advantages + torch.tensor(old_values, dtype=torch.float32)
 
         for _ in range(config_rl.CONTINUAL_MINI_EPOCHS):
             log_probs, values, entropy = self.policy.evaluate(states, actions, action_masks=masks)
 
-            advantages = returns - values.detach()
             adv_norm = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
             ratio = torch.exp(log_probs - old_log_probs.detach())
@@ -142,7 +156,7 @@ class ContinualLearner:
             actor_loss = -torch.min(ratio * adv_norm, clipped * adv_norm).mean()
 
             critic_loss = torch.nn.functional.smooth_l1_loss(values, returns)
-            entropy_bonus = -config_rl.ENTROPY_COEFF * entropy.mean()
+            entropy_bonus = -self.entropy_coeff * entropy.mean()
 
             loss = actor_loss + 0.5 * critic_loss + entropy_bonus
 
@@ -151,10 +165,27 @@ class ContinualLearner:
             torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
             self.optimizer.step()
 
-            self.last_losses = (float(loss.item()), float(actor_loss.item()), float(critic_loss.item()))
+            self.last_losses = (
+                float(loss.item()), float(actor_loss.item()), float(critic_loss.item()),
+                float(entropy.mean().item()),
+            )
+
+        # --- adapt the entropy coefficient for the *next* update, based on
+        # the freshest entropy reading from this one. Ramps up while entropy
+        # is below target (push harder before/while collapsing), relaxes
+        # back toward the floor once entropy is healthy again. ---
+        measured_entropy = self.last_losses[3]
+        if measured_entropy < config_rl.ENTROPY_TARGET:
+            self.entropy_coeff = min(self.entropy_coeff * config_rl.ENTROPY_ADAPT_UP,
+                                      config_rl.ENTROPY_COEFF_MAX)
+        else:
+            self.entropy_coeff = max(self.entropy_coeff * config_rl.ENTROPY_ADAPT_DOWN,
+                                      config_rl.ENTROPY_COEFF)
 
         print(f"[PPO] update {len(transitions)} steps | loss={self.last_losses[0]:.4f} "
-              f"actor={self.last_losses[1]:.4f} critic={self.last_losses[2]:.4f}")
+              f"actor={self.last_losses[1]:.4f} critic={self.last_losses[2]:.4f} "
+              f"entropy={self.last_losses[3]:.4f} coeff={self.entropy_coeff:.4f} "
+              f"adv_mean={advantages.mean().item():.3f} adv_std={advantages.std().item():.3f}")
 
     # ------------------------------------------------------------------
     # Growth check

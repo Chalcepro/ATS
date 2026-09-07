@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import torch
 
+import config_rl
 from mind.need_detector import NeedDetector, NUM_NEEDS
 from mind.experience_memory import ExperienceMemory
 
@@ -79,17 +80,30 @@ class SolutionLoop:
         with torch.no_grad():
             logits, value = self.policy(state_t, action_mask=mask_t)
 
+            # The *policy's own* distribution.  PPO's stored `old_log_prob`
+            # MUST come from this one, not from the hint-boosted behaviour
+            # distribution below: `_do_ppo_update` recomputes log-probs with
+            # `policy.evaluate()` (which knows nothing about hints), so
+            # storing a boosted log-prob made ratio = exp(new - old) compare
+            # two different distributions and silently corrupted every
+            # importance ratio on any tick where a hint fired.
+            policy_dist = torch.distributions.Categorical(logits=logits)
+
+            behaviour_logits = logits
             # If a high-confidence past solution was recalled with positive reward, boost its recommended action
-            if hint and hint.action_sequence and hint.cumulative_reward > 0:
+            if (config_rl.MIND_HINT_ENABLED
+                    and hint and hint.action_sequence and hint.cumulative_reward > 0):
                 rec_act = hint.action_sequence[0]
                 if 0 <= rec_act < len(action_mask) and action_mask[rec_act]:
                     boost = min(3.0, max(0.5, float(hint.confidence) * 2.0))
-                    logits[0, rec_act] += boost
+                    behaviour_logits = logits.clone()
+                    behaviour_logits[0, rec_act] += boost
                     self._trace['recall'] = f"hint={hint} -> BOOST act_{rec_act}(+{boost:.1f})"
 
-            dist = torch.distributions.Categorical(logits=logits)
-            action_t = dist.sample()
-            log_prob = dist.log_prob(action_t)
+            # Sample from the (possibly boosted) behaviour distribution, but
+            # score the chosen action under the policy distribution.
+            action_t = torch.distributions.Categorical(logits=behaviour_logits).sample()
+            log_prob = policy_dist.log_prob(action_t)
 
         self.last_log_prob = log_prob
         self.last_value = value.squeeze(0)

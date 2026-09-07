@@ -1,0 +1,53 @@
+# ATS Update — 2026-09-05 Entropy-collapse fix verified on a real long run
+
+## Fix (see `docs/system_overview.md` §Continual Learner for the full writeup)
+`mind/continual_learner.py`: `ENTROPY_COEFF` is no longer a flat constant in
+the loss. `ContinualLearner.entropy_coeff` now adapts every update: ramps
+up (multiplicatively, toward a 0.10 ceiling = 20x the floor) whenever
+measured entropy is below `config_rl.ENTROPY_TARGET` (0.5 nats), relaxes
+back toward the floor (`config_rl.ENTROPY_COEFF`) once entropy is healthy.
+The floor is `config_rl.ENTROPY_COEFF` itself, not a separately-baked
+constant, so `debug_gui.py`'s Hyperparameter Studio live-tune control still
+works.
+
+## Verification: 2000 fresh episodes, `REWARD_SCHEME_VERSION=2` unchanged
+
+| | run 3 (pre-fix) | run 4 (post-fix) |
+|---|---|---|
+| mean reward | -193.36 | **+80.14** |
+| median reward | -75.20 | **+80.75** |
+| % episodes positive | 40.0% | **98.0%** |
+| sustained collapse (>10 near-identical episodes) | yes (170+ exact 4470-tick repeats, hundreds of consecutive -1906.70/MaxTicks) | **no** — most-repeated tick count across all 2000 episodes was 16 occurrences (normal coincidence, not a lock) |
+| grade mix | FAIR/BAD dominant in back half | MID ~98-100% almost throughout |
+
+## Honest caveat — not a complete guarantee
+One rough patch did occur (ep ~1229-1280 of 2000, worst single episode
+-1541.85 at ep 1253). Traced it directly: coefficient hit its 0.10 ceiling
+appropriately as entropy started dropping, but entropy still collapsed to
+~0.0003 *within that one episode* — 15 mini-batch updates wasn't enough
+time for even the maxed-out coefficient to arrest a fast in-episode slide.
+**The difference from before**: the very next update after that episode
+ended showed entropy back up to 0.55 and stayed healthy for the rest of
+the run (700+ episodes, no recurrence). Before this fix, an entropy dip
+compounded across hundreds of subsequent episodes and never recovered on
+its own. After the fix, a dip is still possible but is self-limited to
+roughly one bad episode rather than becoming a permanent trap. That's a
+real, measured improvement, not full immunity — worth knowing if a future
+run shows an occasional bad episode; it's expected behavior, not a sign
+the fix isn't working, unless it starts recurring in *clusters* again.
+
+## State
+- Checkpoint from this run (`checkpoints/model_best.pt`/`model_rl.pt`) is a
+  **healthy** policy — safe to resume from, unlike the run-3 checkpoint.
+- Nothing committed to git yet (user's call).
+- `sanity_train.py` still passes (unaffected — the sanity env never
+  approaches the entropy range where the adaptive mechanism activates).
+
+## Not yet done
+- The rough patch at ep ~1230-1280 wasn't root-caused beyond "entropy
+  dropped faster than even the maxed coefficient could counter within one
+  episode" — if this becomes a priority, a per-tick (rather than per-256-
+  step-batch) entropy floor, or a smaller `CONTINUAL_UPDATE_EVERY`, would
+  react faster within a single episode. Not done — current result is
+  already a large, verified improvement and further tightening wasn't
+  asked for.

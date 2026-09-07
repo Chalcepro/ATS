@@ -1,0 +1,68 @@
+# ATS Update — 2026-09-06 Results of the directional-perception run
+
+Verification of `updates/2026-09-05b ...` (PPO hint fix + directional
+perception + embedding rework). 2000 fresh episodes, `REWARD_SCHEME_VERSION=3`.
+
+## The entropy fix is holding — better than ever
+| | run 3 (pre-entropy-fix) | run 4 (entropy fix) | run 5 (this one) |
+|---|---|---|---|
+| min entropy over run | 0.0000 | 0.0000 | **0.1653** |
+| updates with entropy < 0.05 | many, sustained | 76 / 3882 | **0 / 3286** |
+| collapse signature (repeated identical episodes) | 170x same tick count | none | **none** (max 15, normal noise) |
+
+Not one update in the entire run got near collapse. The adaptive entropy
+coefficient plus the richer observation appear to reinforce each other.
+
+## Reward: LOWER than the previous run, and that's the honest result
+| | run 4 (79-dim state) | run 5 (108-dim state) |
+|---|---|---|
+| mean reward | +80.14 | **+53.16** |
+| median | +80.75 | **+55.35** |
+| % episodes positive | 98.0% | **87.8%** |
+
+Per-200 trend: starts at 112, sags to **-11.75** around ep 1201-1400, then
+recovers to a stable ~55 for the last 400 episodes and is still climbing at
+the end. So it is not a collapse — it dipped and came back — but the run did
+not beat the simpler model on raw score.
+
+Most likely reading: the observation went 79 -> 108 dims and the model went
+~90k -> 181k params, so 2000 episodes is materially less training *per
+parameter* than run 4 got. The run ends on an upward trend rather than a
+plateau, which supports "undertrained" over "worse". Not proven — the
+cheap test is simply a longer run.
+
+## Behaviour: goal-seeking is now measurable, for the first time
+This is the thing the change was actually for. Reward was never able to catch
+the straight-line problem; `eval_behaviour.py` measures it directly.
+
+| metric | random baseline | trained policy |
+|---|---|---|
+| approach rate (moves that close distance to nearest object) | 27.7% | **35.3%** |
+| straightness (net displacement / path length) | 0.097 | 0.341 |
+
+Approach rate beats chance by 7.6 points over 1146 sampled moves — small
+standard error, so the margin is real. **Before this change that margin was
+not merely absent, it was impossible**: the direction to anything was not in
+the observation at all, so no policy could have beaten chance on it.
+
+Straightness 0.341 sits between a random wander (0.097) and a pure straight
+line (1.0) — movement with purpose that still changes direction, which is the
+shape you want.
+
+Caveat worth stating plainly: 35.3% vs 27.7% is evidence of goal-seeking, not
+evidence of *good* goal-seeking. And there is no before/after on the same
+metric, because the pre-perception checkpoint is 79-dim and structurally
+cannot load into the new model — the random baseline is the only reference
+point available.
+
+## Next, in order of expected value
+1. **Longer run** (4000-6000 episodes). Cheapest way to test the undertrained
+   hypothesis, and to see whether approach rate keeps climbing.
+2. Track approach rate *during* training, not just at the end — it is the
+   metric that actually reflects the goal, and reward demonstrably hides this
+   class of problem.
+3. Only then revisit the Mind hint (`MIND_HINT_ENABLED` now allows the A/B)
+   and the experience-memory rebuild — both still unaddressed:
+   `recall()` still does exact md5 matching while its docstring promises
+   nearest-neighbour, `state_summary` is still stored and never read, and
+   `decay(0.05)` still wipes all memory in ~45 episodes.

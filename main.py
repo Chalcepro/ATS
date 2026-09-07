@@ -58,6 +58,13 @@ def _load_policy(fresh=False):
         if ckpt.exists():
             try:
                 data = torch.load(ckpt, map_location="cpu")
+                version = data.get("reward_scheme_version") if isinstance(data, dict) else None
+                if version != config_rl.REWARD_SCHEME_VERSION:
+                    print(f"[ATS] SKIPPING {ckpt.name}: reward_scheme_version={version!r} "
+                          f"does not match current {config_rl.REWARD_SCHEME_VERSION!r} — "
+                          f"its critic was calibrated under a different reward/return scheme "
+                          f"and resuming from it would silently reproduce old behaviour.")
+                    continue
                 hidden = data.get("hidden_size", config_rl.MIND_HIDDEN_SIZE) if isinstance(data, dict) else config_rl.MIND_HIDDEN_SIZE
                 policy = RLPolicy(hidden_size=hidden)
                 sd   = data.get("model_state_dict", data.get("state_dict", data)) if isinstance(data, dict) else data
@@ -80,7 +87,8 @@ def _save_policy(policy):
                "state_dict": policy.state_dict(),
                "hidden_size": policy.hidden_size,
                "state_size": policy.state_size,
-               "action_size": policy.action_size}
+               "action_size": policy.action_size,
+               "reward_scheme_version": config_rl.REWARD_SCHEME_VERSION}
     torch.save(payload, config_rl.MODEL_PATH)
     torch.save(payload, config_rl.BEST_MODEL_PATH)
     print(f"[ATS] Checkpoint saved (hidden={policy.hidden_size})")

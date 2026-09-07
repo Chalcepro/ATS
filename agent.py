@@ -1,5 +1,6 @@
 """Agent stats, 7-slot inventory, action mask, and state vector generation."""
 
+import math
 import time
 import random
 import config_rl
@@ -701,12 +702,20 @@ class Agent:
     # ------------------------------------------------------------------
     # State vector (exact 130 dimensions)
     # ------------------------------------------------------------------
+    def _unit_delta(self, tx: int, ty: int) -> tuple[float, float]:
+        """Unit vector from the agent toward (tx, ty); (0, 0) if coincident."""
+        dx, dy = tx - self.x, ty - self.y
+        mag = math.hypot(dx, dy)
+        if mag <= 0.0:
+            return (0.0, 0.0)
+        return (dx / mag, dy / mag)
+
     def build_state(self, world, day_night, memory_features, action_mask=None):
         if action_mask is None:
             action_mask = self.get_action_mask(world, day_night)
 
         ent, ent_dist = world.nearest_entity(self.x, self.y)
-        obj_id, obj_dist = world.nearest_object(self.x, self.y)
+        obj_id, obj_dist, obj_pos = world.nearest_object(self.x, self.y)
         z = world.get_adjacent_z(self.x, self.y)
         incoming = 0
         ent_state = 0
@@ -790,7 +799,21 @@ class Agent:
         # Memory features (3)
         state.extend(memory_features)
 
-        # Action mask (42)
+        # Direction unit-vectors (4) — toward nearest object, toward nearest
+        # hostile.  Without these the agent knows *how far* something is but
+        # not *which way*, so goal-directed movement is not a learnable
+        # function of the observation at all.
+        state.extend(self._unit_delta(obj_pos[0], obj_pos[1]) if obj_pos else (0.0, 0.0))
+        state.extend(self._unit_delta(ent.x, ent.y) if ent else (0.0, 0.0))
+
+        # Egocentric tile patch (PATCH_TILES) — raw tile ids, embedded by the
+        # policy.  Row-major, world-aligned, centred on the agent.
+        r = config_rl.PATCH_RADIUS
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                state.append(float(world.tile_type_at(self.x + dx, self.y + dy)))
+
+        # Action mask (ACTION_SIZE) — must stay at the tail of the vector
         state.extend(float(v) for v in action_mask)
 
         # Pad/truncate to exact STATE_SIZE
