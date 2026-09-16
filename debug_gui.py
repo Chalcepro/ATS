@@ -71,6 +71,57 @@ WINDOW_WIDTH  = 1040
 WINDOW_HEIGHT = 680
 W, H = WINDOW_WIDTH, WINDOW_HEIGHT
 
+
+# ---------------------------------------------------------------------------
+# The curriculum, as the menu presents it
+# ---------------------------------------------------------------------------
+#
+# School names because that is how the ladder was described, and because
+# "nursery" says what the stage is for far better than "stage 1" does. The
+# rungs underneath are the real Stage objects from curriculum.py.
+#
+# Locked entries are shown rather than hidden on purpose: a menu that grows new
+# items as you progress hides the shape of the thing you are climbing.
+TRACKS = [
+    ("NURSERY",    ["nursery"],
+     "One room, one goal, nothing that can hurt you", True),
+    ("PRIMARY",    ["corridors", "corridors7", "avoid", "hazards", "foraging", "primary"],
+     "Walls, then danger, then scarcity, then size", True),
+    ("JUNIOR SEC", ["junior"],
+     "Something in here with you - coming soon", False),
+    ("SENIOR SEC", [],
+     "Tools, crafting, the long game - coming soon", False),
+    ("FULL WORLD", [],
+     "The island. Everything at once", True),
+]
+
+
+def brain_progress():
+    """What the saved brain says it has already passed. Never raises."""
+    try:
+        import torch
+        path = config_rl.CHECKPOINT_DIR / "brain.pt"
+        if not path.exists():
+            return {}
+        blob = torch.load(path, map_location="cpu", weights_only=False)
+        prog = dict(blob.get("progress") or {})
+        prog["ticks"] = blob.get("total_ticks", 0)
+        return prog
+    except Exception:
+        return {}
+
+
+def track_rungs(names):
+    """The Stage objects behind a track name, in ladder order."""
+    try:
+        from curriculum import default_ladder
+        by_name = {}
+        for st in default_ladder():
+            by_name.setdefault(st.name, st)
+        return [by_name[n] for n in names if n in by_name]
+    except Exception:
+        return []
+
 # ---------------------------------------------------------------------------
 # App States & Tabs
 # ---------------------------------------------------------------------------
@@ -159,6 +210,15 @@ class TerminalGUI:
         self.alive         = True
         self.frame         = 0
         self.app_state     = STATE_MENU
+        # Which rung of the ladder the launch button will start.
+        self.selected_track = 0
+        # What the running stage actually permits. None means the full world,
+        # where everything is live. A curriculum rung sets this to its action
+        # mask, and anything it masks off is drawn locked rather than removed -
+        # so the panel shows the whole instrument, greyed, instead of quietly
+        # shrinking and leaving you to wonder what happened to the rest.
+        self.active_mask = None
+        self.active_stage = None
         self.active_tab    = 0
         self.sidebar_open  = False
 
@@ -206,6 +266,59 @@ class TerminalGUI:
             except Exception:
                 continue
         return pygame.font.Font(None, size + 2)
+
+    # -----------------------------------------------------------------------
+    # The mark
+    # -----------------------------------------------------------------------
+    def _logo_lines(self):
+        """The ATS ASCII logo, read from logo/logo_Style.txt.
+
+        Kept as a file rather than baked into this module so the logo can be
+        redrawn without touching code - it is artwork, and artwork belongs
+        somewhere a person can edit it.
+        """
+        if getattr(self, "_logo_cache", None) is None:
+            try:
+                raw = (config_rl.ROOT / "logo" / "logo_Style.txt").read_text(encoding="utf-8")
+                self._logo_cache = [ln.rstrip() for ln in raw.splitlines()]
+                while self._logo_cache and not self._logo_cache[0].strip():
+                    self._logo_cache.pop(0)
+                while self._logo_cache and not self._logo_cache[-1].strip():
+                    self._logo_cache.pop()
+            except Exception:
+                self._logo_cache = ["A T S", "AGENT TRAINING SYSTEM"]
+        return self._logo_cache
+
+    def _logo_surface(self, target_w, colour=None):
+        """The logo rendered once at full size, then scaled to fit.
+
+        Scaling a rendered surface rather than picking a smaller font is what
+        lets the same artwork sit in a 240px header and on a 700px splash and
+        look like the same mark in both. At header size the individual
+        characters stop resolving, which is fine - by then it is a shape.
+        """
+        colour = colour or GOLD
+        key = (int(target_w), tuple(colour))
+        if not hasattr(self, "_logo_surfs"):
+            self._logo_surfs = {}
+        hit = self._logo_surfs.get(key)
+        if hit is not None:
+            return hit
+
+        lines = self._logo_lines()
+        f = self._load_font(14)
+        cw, ch = f.size("M")
+        wide = max((len(ln) for ln in lines), default=1)
+        full = pygame.Surface((max(1, wide * cw), max(1, len(lines) * ch)), pygame.SRCALPHA)
+        for i, ln in enumerate(lines):
+            if ln.strip():
+                full.blit(f.render(ln, True, colour), (0, i * ch))
+
+        scale = target_w / float(full.get_width())
+        surf = pygame.transform.smoothscale(
+            full, (int(full.get_width() * scale), max(1, int(full.get_height() * scale))))
+        self._logo_surfs[key] = surf
+        return surf
 
     def clear_session_data(self):
         """Resets in-memory table and graphs for a brand-new run."""
@@ -469,6 +582,10 @@ class TerminalGUI:
             self.turbo_mode = not self.turbo_mode
         elif cb == "save":
             self.sig_save = True
+        elif cb.startswith("curr:"):
+            idx = int(cb.split(":")[1])
+            if 0 <= idx < len(TRACKS) and TRACKS[idx][3]:
+                self.selected_track = idx
         elif cb == "arm_fresh":
             self._confirm_fresh_armed = True
         elif cb == "cancel_fresh":
@@ -603,21 +720,83 @@ class TerminalGUI:
             self._blit(title, x + 12, y + 10, self.f_bold, GOLD)
         return rect
 
+    def _draw_curriculum_card(self, x, y, w, h):
+        """What to run, and how far up the ladder it already is.
+
+        Locked tracks are drawn rather than hidden. A menu that grows new
+        entries as you progress hides the shape of the thing you are climbing,
+        and the shape is the point of a curriculum.
+        """
+        self._panel(x, y, w, h, "2. CURRICULUM")
+        prog = brain_progress()
+        passed = set(prog.get("passed") or [])
+
+        row = y + 34
+        for i, (name, rungs, blurb, open_) in enumerate(TRACKS):
+            stages = track_rungs(rungs)
+            done = sum(1 for st in stages if f"{st.name} {st.grid}x{st.grid}" in passed)
+            sel = (self.selected_track == i)
+
+            if not open_:
+                tail = "coming soon"
+            elif stages:
+                tail = f"{done}/{len(stages)} passed"
+            else:
+                tail = "full island"
+
+            label = f"{name:<11} {tail}"
+            self._btn(label, x + 12, row, w - 24, 32, f"curr:{i}",
+                      active=sel, locked=not open_, font=self.f_bold)
+            row += 34
+            self._blit(blurb, x + 18, row, self.f_tiny, DIM if open_ else DIM2)
+            row += 18
+
+        pygame.draw.line(self.screen, DIM2, (x + 12, row + 4), (x + w - 12, row + 4), 1)
+        row += 16
+
+        name, rungs, _, open_ = TRACKS[self.selected_track]
+        stages = track_rungs(rungs)
+        if stages:
+            self._blit(f"{name} RUNGS", x + 14, row, self.f_bold, GOLD)
+            row += 20
+            for st in stages:
+                key = f"{st.name} {st.grid}x{st.grid}"
+                ok = key in passed
+                # A tick you can read at a glance beats a progress bar you
+                # have to interpret - there are eight of these, not eight
+                # hundred.
+                self._blit("[x]" if ok else "[ ]", x + 16, row, self.f_small,
+                           FG_BOLD if ok else DIM2)
+                self._blit(key, x + 44, row, self.f_small, WHITE if ok else DIM)
+                row += 17
+        else:
+            self._blit("Nothing staged - this track runs the", x + 14, row, self.f_tiny, DIM)
+            row += 14
+            self._blit("full world directly." if open_ else "rungs are not built yet.",
+                       x + 14, row, self.f_tiny, DIM)
+
     def _draw_menu_header(self):
-        self._draw_ats_cyber_logo(cx=75, cy=58, scale=0.95, pulse=self._pulse)
+        logo = self._logo_surface(300, GOLD)
+        self.screen.blit(logo, (18, 14))
 
-        header_x = 155
-        self._blit("ATS // MISSION CONTROL v2.5", header_x, 16, self.f_title, GOLD)
-        self._blit("Deep Reinforcement Learning & Cognitive Embodied AI Simulator", header_x, 42, self.f_body, WHITE)
+        header_x = 336
+        self._blit("MISSION CONTROL v2.6", header_x, 20, self.f_title, GOLD)
+        self._blit("Agent Training System  //  curriculum + embodied RL",
+                   header_x, 46, self.f_body, WHITE)
 
-        # Status & Checkpoint Pill
-        ckpt_name = config_rl.MODEL_PATH.name
-        ckpt_exists = config_rl.MODEL_PATH.exists()
-        status_col = FG_BOLD if ckpt_exists else AMBER
-        status_txt = f"[● SYSTEM READY]  Checkpoint: {ckpt_name}  |  Profile: {config_rl.VIRUS_PROFILE}"
-        self._blit(status_txt, header_x, 68, self.f_small, status_col)
+        b = brain_progress()
+        passed = b.get("passed") or []
+        if passed:
+            line = f"[● BRAIN]  {len(passed)} rung(s) passed  |  {b.get('episodes', 0)} episodes lived"
+            col = FG_BOLD
+        else:
+            line = "[○ BRAIN]  no curriculum progress yet - start at NURSERY"
+            col = AMBER
+        self._blit(line, header_x, 70, self.f_small, col)
+        self._blit(f"Checkpoint: {config_rl.MODEL_PATH.name}  |  Profile: {config_rl.VIRUS_PROFILE}",
+                   header_x, 88, self.f_tiny, DIM)
 
-        self._hline(112)
+        self._hline(116)
 
     # -----------------------------------------------------------------------
     # 🏠 MAIN MENU / HOME SCREEN
@@ -630,12 +809,15 @@ class TerminalGUI:
         ckpt_exists = config_rl.MODEL_PATH.exists()
 
         # 2. Main Content Grid (Two clean side-by-side cards)
-        card_y = 124
-        card_h = 445
-        card_w = 485
+        # Three columns now: what to run is a first-class choice, not
+        # something buried behind a tab.
+        card_y = 140
+        card_h = 424
+        card_w = 318
+        COL1, COL2, COL3 = 16, 361, 706
 
         # LEFT CARD: PRE-LAUNCH HYPERPARAMETERS
-        self._panel(20, card_y, card_w, card_h, "1. PRE-LAUNCH HYPERPARAMETERS")
+        self._panel(COL1, card_y, card_w, card_h, "1. HYPERPARAMETERS")
         row = card_y + 38
 
         params = [
@@ -646,85 +828,89 @@ class TerminalGUI:
         ]
         for attr, label, step, fmt in params:
             val = getattr(config_rl, attr)
-            self._blit(f"{label:<18}", 36, row + 2, self.f_body, WHITE)
-            self._blit(fmt.format(val), 210, row + 2, self.f_bold, FG_BOLD)
-            self._btn("[-]", 330, row, 42, 22, f"cfg:{attr}:dec")
-            self._btn("[+]", 380, row, 42, 22, f"cfg:{attr}:inc")
+            self._blit(f"{label}", 32, row + 2, self.f_body, WHITE)
+            self._blit(fmt.format(val), 158, row + 2, self.f_bold, FG_BOLD)
+            self._btn("[-]", 224, row, 42, 22, f"cfg:{attr}:dec")
+            self._btn("[+]", 270, row, 42, 22, f"cfg:{attr}:inc")
             row += 32
 
         row += 4
         # Learning Rate Row
-        self._blit("Learning Rate", 36, row, self.f_body, WHITE)
-        self._blit(f"{config_rl.LEARNING_RATE:.2e}", 210, row, self.f_bold, FG_BOLD)
+        self._blit("Learning Rate", 32, row, self.f_body, WHITE)
+        self._blit(f"{config_rl.LEARNING_RATE:.2e}", 158, row, self.f_bold, FG_BOLD)
         row += 24
-        lr_x = 36
+        lr_x = 32
         for lr in _LR_PRESETS:
             active = abs(config_rl.LEARNING_RATE - lr) < lr * 0.01
-            self._btn(f"{lr:.0e}", lr_x, row, 74, 22, f"cfg:LEARNING_RATE:{lr}", active=active)
-            lr_x += 82
+            self._btn(f"{lr:.0e}", lr_x, row, 68, 22, f"cfg:LEARNING_RATE:{lr}", active=active)
+            lr_x += 72
         row += 34
 
         # Entropy Coeff Row
-        self._blit("Entropy Coeff", 36, row, self.f_body, WHITE)
-        self._blit(f"{config_rl.ENTROPY_COEFF:.3f}", 210, row, self.f_bold, FG_BOLD)
+        self._blit("Entropy Coeff", 32, row, self.f_body, WHITE)
+        self._blit(f"{config_rl.ENTROPY_COEFF:.3f}", 158, row, self.f_bold, FG_BOLD)
         row += 24
-        ent_x = 36
+        ent_x = 32
         for ent in _ENTROPY_PRESETS:
             active = abs(config_rl.ENTROPY_COEFF - ent) < 0.0001
-            self._btn(f"{ent:.3f}", ent_x, row, 74, 22, f"cfg:ENTROPY_COEFF:{ent}", active=active)
-            ent_x += 82
+            self._btn(f"{ent:.3f}", ent_x, row, 68, 22, f"cfg:ENTROPY_COEFF:{ent}", active=active)
+            ent_x += 72
         row += 34
 
         # Hidden Width
-        self._blit("Hidden Layer Width", 36, row, self.f_body, WHITE)
-        self._blit(f"{config_rl.MIND_HIDDEN_SIZE} units", 210, row, self.f_bold, FG_BOLD)
-        self._blit("(Synced to weights)", 330, row + 2, self.f_tiny, DIM)
-        row += 26
+        self._blit("Hidden / Embed", 32, row, self.f_body, WHITE)
+        self._blit(f"{config_rl.MIND_HIDDEN_SIZE} / {config_rl.ITEM_EMBED_DIM}",
+                   158, row, self.f_bold, FG_BOLD)
+        row += 20
+        self._blit("growth is OFF (MIND_GROWTH_ENABLED)", 32, row, self.f_tiny, DIM)
+        row += 24
 
         # Checkpoint confirmation line
         ckpt_col = FG_BOLD if (ckpt_exists and not self.is_fresh_mode) else AMBER
         ckpt_msg = "Status: Fresh policy weights (Scratch Start)" if self.is_fresh_mode else (f"Status: Checkpoint '{ckpt_name}' ready" if ckpt_exists else "Status: Fresh random policy weights")
-        self._blit(ckpt_msg, 36, row, self.f_small, ckpt_col)
+        self._blit(ckpt_msg, 32, row, self.f_tiny, ckpt_col)
         row += 22
 
         # Safe fresh start button (2-step confirmation)
         if not self._confirm_fresh_armed:
-            self._btn("[ ⚠ FRESH START (NEW MODEL) ]", 36, row, 230, 26, "arm_fresh", color=AMBER, bg_color=(45, 20, 25), border_color=RED, font=self.f_small)
-            self._blit("(Start from scratch)", 276, row + 5, self.f_tiny, DIM)
+            self._btn("[ FRESH START - NEW MODEL ]", 32, row, 280, 26, "arm_fresh", color=AMBER, bg_color=(45, 20, 25), border_color=RED, font=self.f_small)
         else:
-            self._btn("[ CONFIRM FRESH RESET? ]", 36, row, 200, 26, "fresh_reset", color=WHITE, bg_color=BTN_STOP_BG, border_color=GOLD, font=self.f_bold)
-            self._btn("[ CANCEL ]", 245, row, 90, 26, "cancel_fresh", color=DIM, font=self.f_small)
+            self._btn("[ CONFIRM? ]", 32, row, 150, 26, "fresh_reset", color=WHITE, bg_color=BTN_STOP_BG, border_color=GOLD, font=self.f_bold)
+            self._btn("[ CANCEL ]", 190, row, 122, 26, "cancel_fresh", color=DIM, font=self.f_small)
+
+        # MIDDLE CARD: the ladder
+        self._draw_curriculum_card(COL2, card_y, card_w, card_h)
 
         # RIGHT CARD: AGENT & ENVIRONMENT MATRIX
-        rx = 535
-        self._panel(rx, card_y, card_w, card_h, "2. AGENT & ENVIRONMENT MATRIX")
+        rx = COL3
+        self._panel(rx, card_y, card_w, card_h, "3. AGENT & ENVIRONMENT")
         info_row = card_y + 38
 
         specs = [
-            ("Policy Architecture", f"{config_rl.MIND_HIDDEN_SIZE}-Hidden 2-Layer Actor-Critic"),
-            ("State Dimensions",   f"{config_rl.STATE_SIZE} Vector Dimensions"),
-            ("Action Space",       f"{config_rl.ACTION_SIZE} Discrete Actions"),
-            ("Replay Memory",      f"{config_rl.CONTINUAL_BUFFER_SIZE} Transitions ({config_rl.CONTINUAL_UPDATE_EVERY}t PPO)"),
-            ("Procedural Map",     "7 Biomes (Safe Haven, Gates, Boss Arena)"),
-            ("Virus LM Profile",   f"Profile '{config_rl.VIRUS_PROFILE}' Grounded"),
+            ("Policy",     f"{config_rl.MIND_HIDDEN_SIZE}-hidden actor-critic"),
+            ("Embeddings", f"item/entity {config_rl.ITEM_EMBED_DIM}, tile {config_rl.TILE_EMBED_DIM}"),
+            ("State",      f"{config_rl.STATE_SIZE} dims"),
+            ("Actions",    f"{config_rl.ACTION_SIZE} discrete"),
+            ("Rollout",    f"{config_rl.CONTINUAL_BUFFER_SIZE} steps / {config_rl.CONTINUAL_UPDATE_EVERY}t"),
+            ("Map",        "7 biomes, gates, boss arena"),
         ]
         for k, v in specs:
-            self._blit(f"{k}", rx + 18, info_row, self.f_body, DIM)
-            self._blit(v, rx + 195, info_row, self.f_body, WHITE)
-            info_row += 24
+            self._blit(f"{k}", rx + 14, info_row, self.f_body, DIM)
+            self._blit(v, rx + 96, info_row, self.f_body, WHITE)
+            info_row += 22
 
         info_row += 8
         pygame.draw.line(self.screen, DIM2, (rx + 14, info_row), (rx + card_w - 14, info_row), 1)
         info_row += 14
 
-        self._blit("ACTIVE REWARD RULES (Click to Toggle):", rx + 18, info_row, self.f_bold, GOLD)
+        self._blit("REWARD RULES (click to toggle)", rx + 14, info_row, self.f_bold, GOLD)
         info_row += 24
 
         for idx, (label, key) in enumerate(_RULE_LABELS):
             en = self.reward_rules.get(key, True)
-            col_pos = idx % 3
-            row_pos = idx // 3
-            bx = rx + 18 + col_pos * 148
+            col_pos = idx % 2
+            row_pos = idx // 2
+            bx = rx + 14 + col_pos * 152
             by = info_row + row_pos * 30
             btn_txt = f"[ON] {label}" if en else f"[OFF] {label}"
             btn_col = FG_BOLD if en else DIM
@@ -733,14 +919,17 @@ class TerminalGUI:
             self._btn(btn_txt, bx, by, 140, 24, f"rule:{key}", active=en, color=btn_col, bg_color=btn_bg, border_color=btn_bdr)
 
         # 3. Bottom Launch & Navigation Section
-        self._hline(582)
-        nav_y = 594
+        self._hline(578)
+        nav_y = 590
 
         self._btn("[ 2: ANALYTICS ]", 20, nav_y, 220, 38, "tab:1", active=(self.active_tab == TAB_ANALYTICS), font=self.f_bold)
         self._btn("[ 3: HYPERPARAMS ]", 255, nav_y, 220, 38, "tab:2", active=(self.active_tab == TAB_CONFIG), font=self.f_bold)
 
         # Main Launch Button
-        self._btn(">> LAUNCH TRAINING SESSION <<", 495, nav_y, 525, 38, "start", active=True, color=WHITE, bg_color=BTN_LAUNCH_BG, border_color=BTN_LAUNCH_BDR, font=self.f_header)
+        track = TRACKS[self.selected_track][0]
+        self._btn(f">> LAUNCH: {track} <<", 495, nav_y, 529, 38, "start", active=True,
+                  color=WHITE, bg_color=BTN_LAUNCH_BG, border_color=BTN_LAUNCH_BDR,
+                  font=self.f_header)
 
         self._blit("Hotkeys: [SPACE] Launch / Pause   |   [T] Turbo   |   [Ctrl+S] Save Checkpoint   |   [ESC] Quit ATS", 24, H - 20, self.f_small, DIM)
 
@@ -801,7 +990,17 @@ class TerminalGUI:
         self._blit(f"WORLD VIEW (7x7)    FACING: {facing_lbl}", 520, y0, self.f_bold, GOLD)
         pygame.draw.line(self.screen, DIM2, (505, 40), (505, 270), 1)
 
-        inv_y = y0 + 18
+        # Inventory is meaningless in a stage that cannot pick anything up.
+        # Shown anyway, greyed and labelled, for the same reason as the action
+        # toggles.
+        inv_live = self.active_mask is None or (
+            config_rl.ACT_PICK_UP < len(self.active_mask)
+            and self.active_mask[config_rl.ACT_PICK_UP])
+        if not inv_live:
+            self._blit("INVENTORY - not used in this stage", 16, y0 + 18,
+                       self.f_small, DIM2)
+
+        inv_y = y0 + (36 if not inv_live else 18)
         for i in range(len(agent.inventory)):
             yp = inv_y + i * 24
             sl = agent.inventory[i]
@@ -883,11 +1082,16 @@ class TerminalGUI:
 
         # Action Toggles
         self._hline(454)
-        self._blit("ACTION TOGGLES (Click or W/A/S/D to toggle):", 16, 458, self.f_small, DIM)
+        stage_note = f"   [{self.active_stage}]" if self.active_stage else ""
+        self._blit(f"ACTION TOGGLES (Click or W/A/S/D to toggle):{stage_note}",
+                   16, 458, self.f_small, DIM)
         bx = 16
         for label, idx in _ACTION_TOGGLES:
-            en = idx not in self.disabled_actions
-            self._btn(f"[{'X' if en else ' '}] {label}", bx, 474, 68, 22, f"act:{idx}", active=en)
+            in_stage = self.active_mask is None or (
+                idx < len(self.active_mask) and self.active_mask[idx])
+            en = (idx not in self.disabled_actions) and in_stage
+            self._btn(f"[{'X' if en else ' '}] {label}", bx, 474, 68, 22,
+                      f"act:{idx}", active=en, locked=not in_stage)
             bx += 72
 
         # Reward Rules

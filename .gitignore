@@ -16,3 +16,7 @@ checkpoints/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Generated screenshots and scratch output
+build/
+build_shot.png

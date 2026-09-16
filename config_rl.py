@@ -49,11 +49,14 @@ ACTION_SIZE = 25  # total action indices 0..24
 # ---------------------------------------------------------------------------
 # State vector sizing & Embeddings
 # ---------------------------------------------------------------------------
-ITEM_EMBED_DIM    = 32
-ENTITY_EMBED_DIM  = 32
+ITEM_EMBED_DIM    = 64
+ENTITY_EMBED_DIM  = 64
 ITEM_VOCAB_SIZE   = 100
 ENTITY_VOCAB_SIZE = 40
-TILE_EMBED_DIM    = 8
+# 16, not 64: there are thirteen tile types. A 64-wide table for thirteen
+# things is 51 columns of noise for the optimiser to push around, and tiles
+# are the one vocabulary here that genuinely is small.
+TILE_EMBED_DIM    = 16
 TILE_VOCAB_SIZE   = 16     # world.py defines TILE_EMPTY..TILE_SPORE = 0..12
 
 # Egocentric perception patch (added 2026-09-05).  Before this the agent saw
@@ -98,7 +101,11 @@ ACID_POISON_TICKS = 10    # POISONED duration from TILE_ACID
 MIND_HINT_ENABLED = True
 
 MIND_HIDDEN_SIZE = 256                 # starting hidden width (increased from 128)
-MIND_GROWTH_ENABLED = False            # OFF until the fixed-width policy demonstrably learns
+# Still OFF, and this is why nothing has ever appeared to change when it was
+# switched on and off: RLPolicy.expand() exists and works, but this flag has
+# gated it out of every run so far. The observation that the dynamic sizing
+# does nothing is correct - it has never run.
+MIND_GROWTH_ENABLED = False
 MIND_GROWTH_CHECK_EVERY = 500          # ticks between growth checks
 MIND_GROWTH_THRESHOLD = 0.02           # reward plateau delta that triggers growth
 MIND_MAX_HIDDEN_SIZE = 1024            # eventual upper bound (not a hard ceiling)
@@ -131,6 +138,14 @@ ENTROPY_COEFF = 0.005                  # exploration bonus; 0.01 was strong enou
 # the floor once entropy is healthy again (so a well-converged policy isn't
 # permanently forced to over-explore).
 ENTROPY_TARGET = 0.5                   # nats; max possible for 25 actions is ln(25)=3.22
+# Under a narrow action mask the 0.5-nat target above is meaningless: with
+# four moves available the ceiling is ln(4)=1.39, a healthy policy sits near
+# 1.3, and the guard never engages until the policy is already most of the way
+# to deterministic. For masks this narrow the target becomes a fraction of the
+# achievable ceiling instead. The full 25-action world is deliberately left on
+# the flat 0.5 - changing that is a separate decision with its own evidence.
+ENTROPY_NARROW_MASK = 10       # masks at or below this width use the fraction
+ENTROPY_TARGET_FRAC = 0.45     # ...of ln(available actions)
 ENTROPY_COEFF_MAX = 0.10               # ceiling = 20x ENTROPY_COEFF
 ENTROPY_ADAPT_UP = 1.08                # multiplicative step when entropy < target
 ENTROPY_ADAPT_DOWN = 0.98              # multiplicative step when entropy >= target

@@ -651,6 +651,10 @@ class Agent:
     # Tick stats
     # ------------------------------------------------------------------
     def tick_stats(self, rewards):
+        # The wage for being alive. Without it the integral of a long episode
+        # is negative and dying early is the better play - see the long note
+        # in rewards.py.
+        rewards.tick_alive()
         self._hunger_counter += 1
         # Hunger drains 1 point every 15 ticks
         if self.hunger > 0 and self._hunger_counter % 15 == 0:

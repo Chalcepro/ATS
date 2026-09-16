@@ -65,7 +65,8 @@ R_SLEEP = 2.0
 
 # Penalties
 R_WAIT = -0.2               # wait penalty
-R_WALL_HIT = -0.3           # wall hit
+R_WALL_HIT = -0.05          # wall hit. Was -0.3, which at 30 ticks/s is -9 a
+                            # second for being pressed against a rock
 R_DAMAGE_PER_HIT = -1.0     # damage penalty
 R_HUNGER_DRAIN = -0.5       # per starvation tick
 R_LEG_INJURY = -2.0
@@ -80,6 +81,36 @@ R_STANDING_STILL = -0.05    # scales up per tick while standing still
 
 # Standing still threshold — ticks before penalty kicks in
 STANDING_STILL_THRESHOLD = 5
+
+# ---------------------------------------------------------------------------
+# Staying alive
+# ---------------------------------------------------------------------------
+#
+# THE BUG THIS FIXES. Until now, being alive cost money and dying was a
+# one-off -10. Pressed against a wall the agent lost 0.3 (wall hit) + 0.2
+# (standing still) every tick, so after roughly twenty ticks of being stuck,
+# death was the cheaper option. The episode history bears it out: 724 of 726
+# episodes ended in death, and the one episode that survived to max ticks
+# scored -3281 against a survival bonus of +10.
+#
+# An agent that learns "end the episode early" under those numbers has learned
+# correctly. The reward function was the bug, and no amount of tuning the
+# learning rate or the entropy was ever going to find it.
+#
+# Two changes make living the better option and keep it that way:
+#
+#   1. A wage for being alive. Small, per tick, unconditional. It is what
+#      makes the integral of a long episode positive instead of negative.
+#   2. A budget for the nuisance penalties. Walking into a wall and standing
+#      still are mistakes worth flagging, but they must not be able to
+#      out-earn everything else simply by being repeatable. Once an episode
+#      has spent its budget they stop accruing, so they can shape behaviour
+#      early without dominating the return.
+#
+# Hunger, damage and death are deliberately *not* budgeted: those are real
+# stakes and they are supposed to hurt.
+R_ALIVE = 0.02              # per tick, just for still being here
+NUISANCE_BUDGET = 25.0      # most an episode can lose to wall-hits + standing still
 
 # Survival bonus
 R_SURVIVE_EPISODE = 10.0
@@ -133,6 +164,8 @@ class RewardEngine:
         self.rules: dict[str, bool] = default_reward_rules()
         # Standing-still tracker
         self._still_ticks = 0
+        # How much of this episode's nuisance budget has been spent
+        self._nuisance_spent = 0.0
         self._last_pos: tuple[int, int] | None = None
 
     @classmethod
@@ -166,6 +199,24 @@ class RewardEngine:
 
     def reset_tick(self):
         self.tick_reward = 0.0
+
+    def add_nuisance(self, value: float, reason: str = "") -> float:
+        """A small, repeatable penalty - drawn from a per-episode budget.
+
+        Anything charged every tick has to be capped, or its total is decided
+        by how long the episode ran rather than by how badly the agent played.
+        That is the arithmetic that made dying the rational move.
+        """
+        room = NUISANCE_BUDGET - self._nuisance_spent
+        if room <= 0.0:
+            return 0.0
+        value = max(value, -room)
+        self._nuisance_spent += -value
+        return self.add(value, reason)
+
+    def tick_alive(self) -> float:
+        """The wage for existing. Called once per tick while the agent lives."""
+        return self.add(R_ALIVE, "alive")
 
     def add(self, value: float, reason: str = "") -> float:
         self.tick_reward += value
@@ -325,7 +376,7 @@ class RewardEngine:
     def on_wall_hit(self) -> float:
         if not self.rules.get("wall_hit", True):
             return 0.0
-        return self.add(R_WALL_HIT, "wall_hit")
+        return self.add_nuisance(R_WALL_HIT, "wall_hit")
 
     def on_leg_injury(self) -> float:
         return self.add(R_LEG_INJURY, "leg_injury")
@@ -359,6 +410,50 @@ class RewardEngine:
 
         if self._still_ticks >= STANDING_STILL_THRESHOLD:
             multiplier = min(self._still_ticks - STANDING_STILL_THRESHOLD + 1, 4)
-            self.add(R_STANDING_STILL * multiplier, "standing_still")
+            self.add_nuisance(R_STANDING_STILL * multiplier, "standing_still")
 
 
+
+
+# ---------------------------------------------------------------------------
+# The audit
+# ---------------------------------------------------------------------------
+
+def audit(max_ticks: int = 9000, verbose: bool = True) -> bool:
+    """Is staying alive worth more than dying? Check, do not assume.
+
+    The full world ran 725 episodes against a reward function where the answer
+    was no. Nothing in the training loop could have told you - the loss curves
+    were fine, the entropy was fine, the agent was simply optimising what it
+    had been asked to optimise.
+
+    So this is the question asked directly: an agent that plays badly for a
+    whole episode - stuck on walls, standing still, starving - must still come
+    out ahead of one that dies on tick one.
+    """
+    worst_tick = R_WALL_HIT + (R_STANDING_STILL * 4)
+    nuisance = max(worst_tick * max_ticks, -NUISANCE_BUDGET)
+    starving = (R_HUNGER_DRAIN * max_ticks) / 30.0
+    wage = R_ALIVE * max_ticks
+
+    survive_badly = wage + nuisance + starving + R_SURVIVE_EPISODE
+    die_at_once = R_DEATH
+
+    ok = survive_badly > die_at_once
+    if verbose:
+        print("reward audit over %d ticks" % max_ticks)
+        print("   wage for being alive      %+9.1f" % wage)
+        print("   nuisance (budget %-5.1f)   %+9.1f" % (NUISANCE_BUDGET, nuisance))
+        print("   starving the whole time   %+9.1f" % starving)
+        print("   survival bonus            %+9.1f" % R_SURVIVE_EPISODE)
+        print("   --------------------------------")
+        print("   played badly, survived    %+9.1f" % survive_badly)
+        print("   died immediately          %+9.1f" % die_at_once)
+        print("   %s" % ("ok - living beats dying"
+                         if ok else "BROKEN - the agent is paid to die"))
+    return ok
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(0 if audit() else 1)

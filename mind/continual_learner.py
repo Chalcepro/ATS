@@ -15,6 +15,7 @@ from collections import deque
 from dataclasses import dataclass
 
 import torch
+import math
 import torch.optim as optim
 
 import config_rl
@@ -174,8 +175,31 @@ class ContinualLearner:
         # the freshest entropy reading from this one. Ramps up while entropy
         # is below target (push harder before/while collapsing), relaxes
         # back toward the floor once entropy is healthy again. ---
+        #
+        # The target has to be read against how many actions were actually
+        # *available*, not against the 25 the policy has in total. A fixed
+        # 0.5 nats was set when the whole action set was live, where ln(25) =
+        # 3.22 is the ceiling. Under a mask that leaves four moves the ceiling
+        # is ln(4) = 1.39, so a healthy, well-spread policy sits around 1.3 -
+        # always above 0.5, so the controller reads "plenty of exploration"
+        # and walks the coefficient down to its floor every single update.
+        # The collapse guard then only wakes at 0.5 nats, by which point a
+        # four-action policy is already most of the way to deterministic.
+        #
+        # So: scale the target by the live action count. Same intent, read
+        # against the space the policy is actually choosing in.
+        # Applied only where the mask is narrow - the curriculum stages. The
+        # full 25-action world keeps the target it was tuned with, because
+        # raising it there is a real change to a system that has hours of runs
+        # behind it and it deserves to be decided on its own evidence, not
+        # inherited as a side effect of fixing the nursery.
+        n_avail = float(masks.sum(dim=1).mean().item()) if masks.numel() else 0.0
+        target = config_rl.ENTROPY_TARGET
+        if 1.0 < n_avail <= config_rl.ENTROPY_NARROW_MASK:
+            target = max(target, config_rl.ENTROPY_TARGET_FRAC * math.log(n_avail))
+
         measured_entropy = self.last_losses[3]
-        if measured_entropy < config_rl.ENTROPY_TARGET:
+        if measured_entropy < target:
             self.entropy_coeff = min(self.entropy_coeff * config_rl.ENTROPY_ADAPT_UP,
                                       config_rl.ENTROPY_COEFF_MAX)
         else:
