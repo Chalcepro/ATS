@@ -58,11 +58,18 @@ def run_episode(env, policy, learner, tracer=None, episode=0):
             a = dist.sample()
             logp = dist.log_prob(a)
         action = int(a.item())
+        # The state the action was CHOSEN IN, before env.step overwrites it.
+        # PPO re-evaluates log pi(a|s) from the stored state; handing it the
+        # state the action led TO makes ratio = exp(new - old) compare two
+        # different distributions, and the gradient then pushes pi(a|s') for
+        # an advantage earned in s. In a grid that reads as "one tile west of
+        # here, prefer west" - a constant bias instead of a mapping.
+        prev_state = state
         state, reward, done, info = env.step(action)
         if tracer:
             tracer.record(env, action, reward, info)
         total += reward
-        learner.collect(state=state, action=action, reward=reward,
+        learner.collect(state=prev_state, action=action, reward=reward,
                         log_prob=logp, value=value.squeeze(0),
                         action_mask=mask, done=done)
         learner.maybe_update()

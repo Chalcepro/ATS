@@ -397,6 +397,11 @@ def run_gui(args):
             mask   = env.agent.get_action_mask(env.world, env.day_night)
             action = sl.choose_action(state, mask)
 
+            # Kept before env.step overwrites it: PPO re-evaluates
+            # log pi(a|s) from the state stored with the transition, so it
+            # has to be the state the action was chosen in. See
+            # train_curriculum.run_episode for the full note.
+            prev_state = state
             state, reward, done, info = env.step(
                 action,
                 disabled_actions=gui.disabled_actions,
@@ -408,7 +413,7 @@ def run_gui(args):
             # Record step outcome in solution loop
             sl.record_outcome(action, reward, state)
 
-            learner.collect(state=state, action=action, reward=reward,
+            learner.collect(state=prev_state, action=action, reward=reward,
                             log_prob=sl.last_log_prob, value=sl.last_value,
                             action_mask=mask, done=done)
             if learner.maybe_update() and learner.last_losses:
@@ -462,9 +467,10 @@ def run_headless(args):
         while not done:
             mask   = env.agent.get_action_mask(env.world, env.day_night)
             action = sl.choose_action(state, mask)
+            prev_state = state
             state, reward, done, _ = env.step(action)
             ep_rewards.append(reward)
-            learner.collect(state=state, action=action, reward=reward,
+            learner.collect(state=prev_state, action=action, reward=reward,
                             log_prob=sl.last_log_prob, value=sl.last_value,
                             action_mask=mask, done=done)
             learner.maybe_update()
