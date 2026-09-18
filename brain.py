@@ -44,8 +44,25 @@ import torch
 
 import config_rl
 
-VERSION = 2
+VERSION = 3
 DEFAULT_PATH = config_rl.CHECKPOINT_DIR / "brain.pt"
+
+
+def saved_shape(path: Path | None = None) -> dict:
+    """The shape of the brain on disk, without building a policy first.
+
+    The caller needs this before it can construct the network to load into:
+    a brain saved at hidden=256 cannot be poured into a hidden=128 policy, and
+    guessing from the config is how a resumed run quietly becomes a fresh one.
+    """
+    path = Path(path or DEFAULT_PATH)
+    if not path.exists():
+        return {}
+    try:
+        blob = torch.load(path, map_location="cpu", weights_only=False)
+    except Exception:
+        return {}
+    return dict(blob.get("shape") or {})
 
 
 def _shape_of(policy):
@@ -54,6 +71,82 @@ def _shape_of(policy):
         "state_size": int(policy.state_size),
         "action_size": int(policy.action_size),
     }
+
+
+def _params_of(state_dict) -> dict:
+    """Every parameter's shape, which is the only honest compatibility test.
+
+    hidden/state/action matched while the embedding front-end was widened
+    underneath them (item 32->64, tile 8->16), so the old check waved through
+    a brain whose tensors could not actually be poured into the network - and
+    then, worse, its progress record was still believed. The menu skipped the
+    nursery for a policy that had never seen one.
+    """
+    return {k: tuple(v.shape) for k, v in state_dict.items()
+            if hasattr(v, "shape")}
+
+
+def incompatible(blob, policy) -> list[str]:
+    """The parameters that do not line up, or [] when the brain will load."""
+    saved = blob.get("param_shapes")
+    if not saved:
+        saved = _params_of(blob.get("policy") or {})
+    mine = _params_of(policy.state_dict())
+    bad = [k for k, shp in mine.items()
+           if k in saved and tuple(saved[k]) != tuple(shp)]
+    bad += ["%s (absent)" % k for k in mine if k not in saved]
+    return bad
+
+
+def is_loadable(policy, path: Path | None = None) -> bool:
+    """Whether the brain on disk belongs to this network at all."""
+    path = Path(path or DEFAULT_PATH)
+    if not path.exists():
+        return False
+    try:
+        blob = torch.load(path, map_location="cpu", weights_only=False)
+    except Exception:
+        return False
+    return not incompatible(blob, policy)
+
+
+def adopt_legacy(policy) -> str | None:
+    """Pour the pre-brain checkpoints into `policy`, once.
+
+    model_rl.pt / model_best.pt are what main.py used to load and save. The
+    curriculum never wrote to them - it writes here - so the two lineages
+    diverged and the GUI ran one set of weights while the menu card reported
+    the other one's rungs. These are read only when there is no usable brain,
+    so an old run is adopted once and then continues in one place.
+
+    Returns the filename adopted, or None.
+    """
+    for ckpt in (config_rl.BEST_MODEL_PATH, config_rl.MODEL_PATH):
+        if not ckpt.exists():
+            continue
+        try:
+            data = torch.load(ckpt, map_location="cpu")
+        except Exception as e:
+            print("[brain] %s: %s" % (ckpt.name, e))
+            continue
+        if isinstance(data, dict):
+            version = data.get("reward_scheme_version")
+            if version != config_rl.REWARD_SCHEME_VERSION:
+                print("[brain] skipping %s: reward scheme %r, this build is %r"
+                      % (ckpt.name, version, config_rl.REWARD_SCHEME_VERSION))
+                continue
+            sd = data.get("model_state_dict", data.get("state_dict", data))
+        else:
+            sd = data
+        try:
+            policy.load_state_dict(sd)
+        except Exception as e:
+            print("[brain] %s did not fit (%s)" % (ckpt.name, e))
+            continue
+        print("[brain] adopted legacy %s - from here on it lives in %s"
+              % (ckpt.name, DEFAULT_PATH.name))
+        return ckpt.name
+    return None
 
 
 def save(policy, learner=None, progress=None, path: Path | None = None) -> Path:
@@ -66,8 +159,14 @@ def save(policy, learner=None, progress=None, path: Path | None = None) -> Path:
         "version": VERSION,
         "saved_at": _dt.datetime.now().isoformat(timespec="seconds"),
         "shape": _shape_of(policy),
+        "param_shapes": _params_of(policy.state_dict()),
         "policy": policy.state_dict(),
         "progress": dict(progress or {}),
+        # Which reward scheme this critic was calibrated against. A critic
+        # trained to expect one scale of return is worse than useless under
+        # another - it confidently predicts the wrong numbers - so the load
+        # refuses rather than resuming into nonsense.
+        "reward_scheme_version": config_rl.REWARD_SCHEME_VERSION,
     }
     if learner is not None:
         blob["optimizer"] = learner.optimizer.state_dict()
@@ -95,12 +194,37 @@ def load(policy, learner=None, path: Path | None = None, strict_shape: bool = Tr
     if blob.get("version", 0) < 2:
         print("[brain] %s is an older format - weights only" % path.name)
 
+    # Only refuse when the file states a scheme and it disagrees. A brain
+    # saved before this field existed says nothing, and refusing it would
+    # throw away every rung trained up to now over a missing key.
+    if "reward_scheme_version" in blob:
+        if blob["reward_scheme_version"] != config_rl.REWARD_SCHEME_VERSION:
+            print("[brain] refusing to load %s: saved under reward scheme %r, "
+                  "this build is %r - its critic would predict the wrong returns"
+                  % (path.name, blob["reward_scheme_version"],
+                     config_rl.REWARD_SCHEME_VERSION))
+            return {}
+    else:
+        print("[brain] %s predates reward-scheme tagging - loading anyway" % path.name)
+
     shape = blob.get("shape") or {}
     mine = _shape_of(policy)
     if strict_shape and shape and shape != mine:
         # Loading mismatched weights half-succeeds and then behaves oddly,
         # which is a much worse failure than refusing.
         print("[brain] refusing to load: saved %s, this policy is %s" % (shape, mine))
+        return {}
+
+    bad = incompatible(blob, policy)
+    if strict_shape and bad:
+        # The progress record goes with the weights. Returning {} here is the
+        # point: a rung list that outlives the weights that earned it makes
+        # the menu resume partway up a ladder the live policy never climbed.
+        print("[brain] refusing to load %s: %d parameter(s) do not fit this "
+              "network - %s" % (path.name, len(bad), ", ".join(bad[:4])))
+        print("[brain]   its %d recorded rung(s) go with it; the ladder "
+              "restarts at the nursery."
+              % len((blob.get("progress") or {}).get("passed") or []))
         return {}
 
     policy.load_state_dict(blob["policy"])

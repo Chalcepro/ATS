@@ -13,6 +13,7 @@ import argparse
 import time
 import torch
 
+import brain
 import config_rl
 from ats_env import ATSEnvironment
 from ats_virus_adapter import VirusAdapter
@@ -48,41 +49,74 @@ def parse_args():
 
 
 # ---------------------------------------------------------------------------
-def _load_policy(fresh=False):
+def _make_mind(fresh=False):
 # ---------------------------------------------------------------------------
+    """Policy, learner and ladder progress - all from brain.pt.
+
+    Built together because they are one thing. The learner has to exist before
+    the brain is opened: Adam's moments are half of what was saved, and a
+    policy restored without them spends its first few hundred updates
+    re-tuning the optimiser, which looks exactly like forgetting.
+
+    Returns (policy, learner, progress).
+    """
+    shape  = {} if fresh else brain.saved_shape()
+    hidden = int(shape.get("hidden_size", config_rl.MIND_HIDDEN_SIZE))
+
     if fresh:
-        policy = RLPolicy(hidden_size=config_rl.MIND_HIDDEN_SIZE)
+        policy  = RLPolicy(hidden_size=config_rl.MIND_HIDDEN_SIZE)
+        learner = ContinualLearner(policy=policy)
         print(f"[ATS] Fresh policy (hidden={policy.hidden_size})")
-        return policy, False
-    for ckpt in [config_rl.BEST_MODEL_PATH, config_rl.MODEL_PATH]:
-        if ckpt.exists():
-            try:
-                data = torch.load(ckpt, map_location="cpu")
-                version = data.get("reward_scheme_version") if isinstance(data, dict) else None
-                if version != config_rl.REWARD_SCHEME_VERSION:
-                    print(f"[ATS] SKIPPING {ckpt.name}: reward_scheme_version={version!r} "
-                          f"does not match current {config_rl.REWARD_SCHEME_VERSION!r} — "
-                          f"its critic was calibrated under a different reward/return scheme "
-                          f"and resuming from it would silently reproduce old behaviour.")
-                    continue
-                hidden = data.get("hidden_size", config_rl.MIND_HIDDEN_SIZE) if isinstance(data, dict) else config_rl.MIND_HIDDEN_SIZE
-                policy = RLPolicy(hidden_size=hidden)
-                sd   = data.get("model_state_dict", data.get("state_dict", data)) if isinstance(data, dict) else data
-                policy.load_state_dict(sd)
-                print(f"[ATS] Loaded checkpoint {ckpt.name} (hidden={policy.hidden_size})")
-                return policy, True
-            except Exception as e:
-                print(f"[ATS] Checkpoint load note: {e}")
-                continue
-    policy = RLPolicy(hidden_size=config_rl.MIND_HIDDEN_SIZE)
-    print(f"[ATS] No matching checkpoint — fresh policy (hidden={policy.hidden_size})")
-    return policy, False
+        return policy, learner, {}
+
+    policy  = RLPolicy(hidden_size=hidden)
+    learner = ContinualLearner(policy=policy)
+
+    if brain.DEFAULT_PATH.exists():
+        if brain.is_loadable(policy):
+            progress = brain.load(policy, learner)  # prints its own summary
+            return policy, learner, progress
+        # A brain from an older network shape. brain.load() prints exactly
+        # which tensors do not fit; say it out loud, then fall through to the
+        # legacy files rather than silently handing back a random policy.
+        brain.load(policy, learner)
+        print("[ATS] brain.pt belongs to an older network and cannot be "
+              "resumed - looking for weights that fit.")
+
+    # No usable brain - adopt whatever the old two-file scheme left behind,
+    # so a run that predates this change keeps its weights instead of
+    # restarting from noise. The ladder still starts at the nursery: those
+    # weights never climbed one.
+    if brain.adopt_legacy(policy):
+        return policy, learner, {}
+
+    print(f"[ATS] No brain to resume - fresh policy (hidden={policy.hidden_size})")
+    return policy, learner, {}
 
 
 # ---------------------------------------------------------------------------
-def _save_policy(policy):
+def _progress(passed, episodes):
 # ---------------------------------------------------------------------------
-    config_rl.CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    """What the ladder has to remember between sessions.
+
+    Written whole on every save, so it must carry forward what was already
+    there: handing brain.save() a bare {"episodes": n} would erase the list of
+    rungs the curriculum runner had recorded.
+    """
+    return {"passed": list(passed), "episodes": int(episodes)}
+
+
+# ---------------------------------------------------------------------------
+def _save_brain(policy, learner=None, progress=None):
+# ---------------------------------------------------------------------------
+    """One authoritative file, plus a mirror for the older tools.
+
+    brain.pt is what is loaded; model_rl.pt / model_best.pt are written so
+    eval_behaviour, run_benchmark and the virus adapter keep working, but
+    nothing reads them back into a training run any more.
+    """
+    path = brain.save(policy, learner, progress)
+
     payload = {"model_state_dict": policy.state_dict(),
                "state_dict": policy.state_dict(),
                "hidden_size": policy.hidden_size,
@@ -91,7 +125,10 @@ def _save_policy(policy):
                "reward_scheme_version": config_rl.REWARD_SCHEME_VERSION}
     torch.save(payload, config_rl.MODEL_PATH)
     torch.save(payload, config_rl.BEST_MODEL_PATH)
-    print(f"[ATS] Checkpoint saved (hidden={policy.hidden_size})")
+
+    passed = len((progress or {}).get("passed") or [])
+    print(f"[ATS] Brain saved -> {path.name} "
+          f"(hidden={policy.hidden_size}, {passed} rung(s) passed)")
 
 
 # ---------------------------------------------------------------------------
@@ -186,12 +223,20 @@ def run_gui(args):
 
         # ====== SETUP for this session ======
         gui.clear_session_data()
-        policy, _ = _load_policy(args.fresh)
+        policy, learner, progress = _make_mind(args.fresh)
         policy.eval()
         sl      = SolutionLoop(policy=policy)
         if not args.fresh:
             sl.experience.load()
-        learner = ContinualLearner(policy=policy)
+
+        # The ladder's own promotion test, run here as well as in
+        # train_curriculum: a rung the GUI clears has to be recorded, or
+        # _env_for_selection resumes at the same easiest room forever and the
+        # ladder can only ever be climbed from the command line.
+        from collections import deque
+        passed_rungs  = list(progress.get("passed") or [])
+        base_episodes = int(progress.get("episodes") or 0)
+        window        = deque()
 
         # Which rung the menu was sitting on when LAUNCH was pressed.
         #
@@ -218,19 +263,19 @@ def run_gui(args):
 
             if gui.sig_save:
                 gui.sig_save = False
-                _save_policy(policy)
+                _save_brain(policy, learner, _progress(passed_rungs, base_episodes + ep))
                 sl.experience.save()
                 if env: env.agent.event_log.append(("Checkpoint & Memory saved!", time.time()))
 
             if gui.sig_fresh_reset and gui.app_state == STATE_PAUSED:
                 gui.sig_fresh_reset = False
-                policy  = RLPolicy(hidden_size=config_rl.MIND_HIDDEN_SIZE)
+                policy, learner, _ = _make_mind(fresh=True)
                 sl      = SolutionLoop(policy=policy)
                 sl.experience.entries.clear()
                 mem_file = config_rl.DATA_DIR / "experience_memory.json"
                 if mem_file.exists():
                     mem_file.unlink(missing_ok=True)
-                learner = ContinualLearner(policy=policy)
+                passed_rungs, base_episodes, window = [], 0, deque()
                 if env: env.agent.event_log.append(("Policy & Memory reset to fresh!", time.time()))
 
             if gui.sig_stop:
@@ -283,9 +328,37 @@ def run_gui(args):
                 ])
                 print(f"Episode {ep} done | reward={total_rew:.2f} | GRADE: {grade:4s} | Caps={caps_count} | Eff={eff_str} | ticks={env.tick} | {reason}")
 
+                # ---- Did this rung's own promotion test just pass? -------
+                # The same rule train_curriculum uses: a fraction `pass_rate`
+                # of the last `window` episodes counted as a success. Recorded
+                # into the brain and then re-selected, so clearing the nursery
+                # in the GUI actually moves the agent up a room instead of
+                # replaying the same one until the episode budget runs out.
+                stage = getattr(gui, "active_stage", None)
+                if stage is not None:
+                    window.append(1.0 if info.get("success") else 0.0)
+                    while len(window) > stage.window:
+                        window.popleft()
+                    rung = f"{stage.name} {stage.grid}x{stage.grid}"
+                    rate = (sum(window) / len(window)) if window else 0.0
+                    if (rung not in passed_rungs
+                            and len(window) >= stage.window
+                            and rate >= stage.pass_rate):
+                        passed_rungs.append(rung)
+                        window.clear()
+                        # Written before re-selecting: _env_for_selection asks
+                        # the brain on disk which rung comes next.
+                        _save_brain(policy, learner,
+                                    _progress(passed_rungs, base_episodes + ep))
+                        print(f"[ATS] PASSED {rung} - {rate:.0%} over "
+                              f"{stage.window} episodes (needed {stage.pass_rate:.0%})")
+                        env = _env_for_selection(gui)
+                        state, done, ep_rewards = env.reset(), False, []
+                        continue
+
                 # Check if target reached
                 if ep >= num_eps:
-                    _save_policy(policy)
+                    _save_brain(policy, learner, _progress(passed_rungs, base_episodes + ep))
                     sl.experience.save()
                     gui.app_state = STATE_STOPPED
                     break
@@ -350,10 +423,9 @@ def run_headless(args):
         config_rl.MAX_TICKS = args.ticks
     num_eps = args.episodes or config_rl.EPISODES
 
-    policy, _ = _load_policy(args.fresh)
+    policy, learner, progress = _make_mind(args.fresh)
     policy.eval()
     sl      = SolutionLoop(policy=policy)
-    learner = ContinualLearner(policy=policy)
     env     = ATSEnvironment()
     adapter = VirusAdapter(profile=args.virus_profile)
     adapter.write_active_profile()
@@ -384,7 +456,7 @@ def run_headless(args):
         reason = "MaxTicks" if env.tick >= config_rl.MAX_TICKS else "Died"
         print(f"Ep {ep:4d} | reward={total:+7.2f} | GRADE: {grade:4s} | Caps={caps_count} | Eff={eff_str} | ticks={env.tick} | {reason}")
 
-    _save_policy(policy)
+    _save_brain(policy, learner, progress)
 
 
 

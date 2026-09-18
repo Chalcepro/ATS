@@ -96,16 +96,44 @@ TRACKS = [
 ]
 
 
+_BRAIN_CACHE = {"key": None, "value": {}}
+
+
 def brain_progress():
-    """What the saved brain says it has already passed. Never raises."""
+    """What the saved brain says it has already passed. Never raises.
+
+    Two things this does beyond reading the file:
+
+    * Caches on mtime. It is called from the render loop and from the menu
+      card, and it was opening a multi-megabyte checkpoint every frame.
+
+    * Reports nothing for a brain whose tensors no longer fit the current
+      network. The rung list was earned by weights that cannot be loaded, and
+      believing it anyway makes the menu resume partway up a ladder the live
+      policy has never climbed - which looks exactly like an agent that
+      learned nothing, because it is one.
+    """
     try:
-        import torch
-        path = config_rl.CHECKPOINT_DIR / "brain.pt"
+        import brain as _brain
+        path = _brain.DEFAULT_PATH
         if not path.exists():
             return {}
-        blob = torch.load(path, map_location="cpu", weights_only=False)
-        prog = dict(blob.get("progress") or {})
-        prog["ticks"] = blob.get("total_ticks", 0)
+        key = (str(path), path.stat().st_mtime_ns)
+        if _BRAIN_CACHE["key"] == key:
+            return _BRAIN_CACHE["value"]
+
+        import torch
+        from model_rl import RLPolicy
+        blob  = torch.load(path, map_location="cpu", weights_only=False)
+        shape = blob.get("shape") or {}
+        probe = RLPolicy(hidden_size=int(shape.get("hidden_size",
+                                                   config_rl.MIND_HIDDEN_SIZE)))
+        if _brain.incompatible(blob, probe):
+            prog = {}
+        else:
+            prog = dict(blob.get("progress") or {})
+            prog["ticks"] = blob.get("total_ticks", 0)
+        _BRAIN_CACHE["key"], _BRAIN_CACHE["value"] = key, prog
         return prog
     except Exception:
         return {}
@@ -795,7 +823,7 @@ class TerminalGUI:
             line = "[○ BRAIN]  no curriculum progress yet - start at NURSERY"
             col = AMBER
         self._blit(line, header_x, 70, self.f_small, col)
-        self._blit(f"Checkpoint: {config_rl.MODEL_PATH.name}  |  Profile: {config_rl.VIRUS_PROFILE}",
+        self._blit(f"Checkpoint: brain.pt  |  Profile: {config_rl.VIRUS_PROFILE}",
                    header_x, 88, self.f_tiny, DIM)
 
         self._hline(116)
@@ -807,8 +835,12 @@ class TerminalGUI:
         # 1. Top Header
         self._draw_menu_header()
 
-        ckpt_name = config_rl.MODEL_PATH.name
-        ckpt_exists = config_rl.MODEL_PATH.exists()
+        # brain.pt, not model_rl.pt. The card used to name the file the GUI
+        # saved to while the progress line above it read a different file, so
+        # the header advertised one brain's rungs beside another's filename.
+        _brain = config_rl.CHECKPOINT_DIR / "brain.pt"
+        ckpt_name = _brain.name
+        ckpt_exists = _brain.exists()
 
         # 2. Main Content Grid (Two clean side-by-side cards)
         # Three columns now: what to run is a first-class choice, not
@@ -1312,7 +1344,7 @@ class TerminalGUI:
 
         self._hline(y0 + 8 * 38)
         iy = y0 + 8 * 38 + 10
-        self._blit(f"Active Checkpoint: {config_rl.MODEL_PATH}   |   CSV History: {self.csv_path}   |   Profile: {config_rl.VIRUS_PROFILE}", 16, iy, self.f_small, DIM, max_w=1000)
+        self._blit(f"Active Checkpoint: {config_rl.CHECKPOINT_DIR / 'brain.pt'}   |   CSV History: {self.csv_path}   |   Profile: {config_rl.VIRUS_PROFILE}", 16, iy, self.f_small, DIM, max_w=1000)
 
     # -----------------------------------------------------------------------
     # TAB 3: MIND & LLM INSPECTOR

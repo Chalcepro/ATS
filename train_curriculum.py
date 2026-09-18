@@ -163,6 +163,11 @@ def main(argv=None):
     # rungs are already behind it - all of it, or a week-old brain re-learns
     # the nursery to find out it already knew it. See brain.py.
     progress = {} if a.fresh else brain.load(policy, learner)
+    if not a.fresh and not progress and not brain.is_loadable(policy):
+        # Either there is no brain yet or the one on disk belongs to an older
+        # network. Either way the GUI's old checkpoints may still fit, and
+        # starting from them beats starting from noise.
+        brain.adopt_legacy(policy)
     passed = list(progress.get("passed") or [])
     episodes_total = int(progress.get("episodes") or 0)
 
