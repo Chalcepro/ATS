@@ -113,16 +113,23 @@ MIND_MAX_HIDDEN_SIZE = 1024            # eventual upper bound (not a hard ceilin
 # ---------------------------------------------------------------------------
 # Training hyperparameters (PPO)
 # ---------------------------------------------------------------------------
-EPISODES = 20
-MAX_TICKS = 9000
-LEARNING_RATE = 3e-4                   # PPO default; 1e-4 was very slow for a from-scratch policy
+EPISODES = 700
+MAX_TICKS = 4400
+LEARNING_RATE = 1e-4                   # half the PPO default. Slower than 3e-4 and
+                                       # chosen for it: a 700-episode run is long
+                                       # enough to afford stability. 5e-05 is the
+                                       # next step down and is where a from-scratch
+                                       # policy stops visibly moving.
 GAMMA = 0.99
 GAE_LAMBDA = 0.95                      # advantage smoothing; raw n-step MC advantage was
                                       # too high-variance to give a stable policy gradient
                                       # (reward climbed then collapsed non-monotonically —
                                       # see updates/2026-09-04 first-long-run.md)
 CLIP_EPS = 0.2
-ENTROPY_COEFF = 0.005                  # exploration bonus; 0.01 was strong enough to fight
+ENTROPY_COEFF = 0.002                  # the floor, and safe to start there: the
+                                       # adaptive controller below raises it 8% at a
+                                       # time whenever entropy falls under target.
+                                       # 0.01 was strong enough to fight
                                       # convergence on small action spaces (see issues log #3)
 
 # Entropy-collapse guard (2026-09-05). A *flat* coefficient multiplies
@@ -170,7 +177,11 @@ CONTINUAL_MINI_EPOCHS = 4              # PPO epochs per online update
 SPEED_MULTIPLIER = 9.0
 GUI_RENDER_EVERY = 1
 
-DAY_LENGTH_TICKS = 900
+DAY_LENGTH_TICKS = 4000
+# Where an episode starts in the day. 0.25 is dawn and 0.75 is dusk, so 0.30
+# opens just after sunrise. Zero means midnight, which is what this was by
+# accident for as long as the counter started at zero.
+DAY_START_FRACTION = 0.30
 PERCEPTION_RADIUS = 7
 NIGHT_PERCEPTION_RADIUS = 4
 TORCH_PERCEPTION_RADIUS = 6
