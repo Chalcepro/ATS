@@ -63,7 +63,7 @@ class Stage:
                  goals=1, respawn=True, can_pick=False, can_attack=False,
                  damage=False, max_steps=150, target=3,
                  pass_rate=0.80, window=50, grow_to=None, goals_scale=False,
-                 hazard_damage=10, punitive=True, shaped=True):
+                 hazard_damage=10, punitive=True, shaped=True, sequence=0):
         self.name = name
         self.grid = grid
         self.walls = walls
@@ -75,6 +75,16 @@ class Stage:
         self.can_attack = can_attack
         self.damage = damage
         self.max_steps = max_steps
+        # A trail: one goal visible at a time, the next appearing only when
+        # the current one is taken, `sequence` of them, and the episode ends
+        # when the trail is finished. Distinct from respawn, which drops a
+        # fresh goal in forever and never terminates on success.
+        #
+        # The point is time pressure. With `sequence` set, failing to finish
+        # the trail inside max_steps costs R_INCOMPLETE - so wandering has a
+        # price for the first time on this ladder, and the shortest path is
+        # worth something rather than merely tidier.
+        self.sequence = int(sequence)
         self.target = target          # collects that count as a success
         self.pass_rate = pass_rate
         self.window = window
@@ -160,6 +170,7 @@ R_TRASH = -0.15         # picking up the wrong thing
 R_GOOD = 0.5            # picking up a useful thing
 R_DEATH = -3.0
 R_CLEAR = 3.0           # collecting everything the room had
+R_INCOMPLETE = -2.0     # running out of steps with a trail unfinished
 
 STILL_GRACE = 4         # steps of stillness allowed before the penalty starts
 STILL_EVERY = 2         # ...then it lands this often
@@ -183,13 +194,48 @@ def default_ladder(max_grid=12):
     """
     L = []
 
-    # 1. A box and a goal that comes back. Only way to lose is to dawdle.
-    L.append(Stage("nursery", 5, walls=False, hazards=0, goals=1, respawn=True,
+    # 1. A box and ONE goal, and the episode ends when it is reached.
+    #
+    #    This used to respawn: collect a goal, another appears somewhere
+    #    random, repeat for 120 steps. Measured on 2026-09-18, that nursery
+    #    finished with a goal-sensitivity of 0.0155 - indistinguishable from
+    #    an untrained network - and its argmax followed the goal at chance.
+    #    The reason is that the bearing at IDX_DIR_START points at whatever
+    #    is nearest, and respawn moves that target at the exact instant of
+    #    reward, severing the association the signal exists to teach.
+    #
+    #    One goal, ending the episode, took the same network to sensitivity
+    #    0.6311, argmax 4/4, and a detour ratio of 1.98 in 60k steps.
+    L.append(Stage("nursery", 5, walls=False, hazards=0, goals=1, respawn=False,
                    damage=False, punitive=False, shaped=False,
-                   max_steps=120, target=3,
+                   max_steps=120, target=1,
                    pass_rate=0.85, window=50))
 
+    # A five-goal trail was built and measured here on 2026-09-18 and is
+    # deliberately NOT in the ladder. `sequence` remains supported by Stage
+    # and CurriculumEnv so it can be revisited, but as a rung it did harm:
+    #
+    #   nursery only       detour 1.98  sensitivity 0.6311  argmax 4.0/4
+    #   trail only         detour 8.12  sensitivity 0.0210  argmax 1.0/4
+    #   nursery -> trail   detour 3.96  sensitivity 0.1297  argmax 1.5/4
+    #
+    # Training the trail AFTER the nursery drags goal-sensitivity from 0.63
+    # back to 0.13 and the argmax from 4/4 to chance - it un-teaches the
+    # bearing. The cause is not an ambiguous bearing (only one goal is on the
+    # floor at a time) but that the episode does not end at the reward: the
+    # return from any state carries four more legs whose bearings are
+    # unrelated, so the value function learns "how many legs remain" instead
+    # of "how far to this goal". Signalling a GAE terminal at each leg was
+    # tried and changed nothing (0.1279 vs 0.1297), so the fix is not simply
+    # where the credit is cut.
+
     # 2. New thing: walls. Same goal, same respawn, still nothing that hurts.
+    #
+    #    NOTE: this rung and the three after it still use the respawn pattern
+    #    that rung 1 was just changed away from, and the same measurement says
+    #    respawn leaves goal-sensitivity indistinguishable from an untrained
+    #    network. They are left alone pending a decision, because changing
+    #    them is the ladder redesign that is on hold.
     L.append(Stage("corridors", 5, walls=True, hazards=0, goals=1, respawn=True,
                    damage=False, max_steps=160, target=3,
                    pass_rate=0.80, window=50))
@@ -316,7 +362,9 @@ class CurriculumEnv:
         self.ax, self.ay = self.rng.choice(free)
         taken = {(self.ax, self.ay)}
 
-        self.goals = self._place(taken, s.goals)
+        # A trail starts with exactly one goal on the floor however many it
+        # will eventually ask for; the rest arrive as it is walked.
+        self.goals = self._place(taken, 1 if s.sequence else s.goals)
         self.hazards = self._place(taken, s.hazards)
         for (hx, hy) in self.hazards:
             self.grid[hy][hx] = T_HAZARD
@@ -472,7 +520,16 @@ class CurriculumEnv:
             self.goals.remove(here)
             self.collected += 1
             reward += R_GOAL
-            if s.respawn:
+            if s.sequence:
+                # Next link, unless the trail is finished - in which case the
+                # floor stays empty and `done` below ends the episode.
+                if self.collected < s.sequence:
+                    taken = {here, (self.ax, self.ay)}
+                    taken.update(self.hazards)
+                    self.goals.extend(self._place(taken, 1))
+                else:
+                    reward += R_CLEAR
+            elif s.respawn:
                 taken = {here, (self.ax, self.ay)}
                 taken.update(self.hazards)
                 new = self._place(taken, 1)
@@ -493,8 +550,18 @@ class CurriculumEnv:
                 self.dead = True
                 reward += R_DEATH
 
-        done = self.dead or self.steps >= s.max_steps or (not s.respawn and not self.goals)
-        success = self.collected >= s.target and not self.dead
+        if s.sequence:
+            finished = self.collected >= s.sequence
+            done = self.dead or finished or self.steps >= s.max_steps
+            # The penalty lands only when the clock beat it, not when it died
+            # - death already costs R_DEATH and charging twice for one failure
+            # makes dying look worse than it is.
+            if done and not finished and not self.dead:
+                reward += R_INCOMPLETE
+            success = finished and not self.dead
+        else:
+            done = self.dead or self.steps >= s.max_steps or (not s.respawn and not self.goals)
+            success = self.collected >= s.target and not self.dead
         return self._state(), reward, done, {
             "collected": self.collected, "success": success,
             "dead": self.dead, "steps": self.steps, "health": self.health,
