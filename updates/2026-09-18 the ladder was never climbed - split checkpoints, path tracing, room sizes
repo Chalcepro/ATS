@@ -1,0 +1,392 @@
+# ATS Update — 2026-09-18 The ladder was never climbed
+
+Branch `rl-core-fixes`, commits `dade080` → `af3eb46`.
+
+Root finding: **the GUI was running a policy that had never passed a single
+rung, while the menu reported two rungs passed from a different file.** The
+uniform-action behaviour was not a broken learner. It was an agent dropped
+three rooms above anything it had been taught, which is what an agent looks
+like when it has no idea where it is.
+
+Everything else in this entry follows from that, including why the fix made
+the nursery learnable in 62 episodes after 550 episodes of nothing.
+
+---
+
+## 1. What was reported
+
+Bob's observations, kept in his framing because each one turned out to point
+at a real thing:
+
+- **"PPO loss history had not been showing results at all. Efficiency had
+  been flatlined (0.000 all through)."** Two separate readout bugs. Both
+  real, both fixed in `1548266`.
+- **"In the primary test room the model only stayed true to doing one
+  move — North, and that's it."** Real. Measured at 29/25/24/22% across the
+  four moves in the nursery — near-uniform, not stuck on North, but the
+  underlying complaint (it is not choosing) was correct.
+- **"The model was still dropped into the main world"** when a curriculum
+  rung was selected from the menu. Real: `run_gui` always built
+  `ATSEnvironment()`. Fixed in `dade080`.
+- **"I had the feeling there was something off with nighttime."** Real:
+  episodes opened at tick 0, i.e. midnight. Fixed in `754f5e4`.
+- **"Can you also include a positions/actions taken file so we can see what
+  moves it likes to use?"** Built — see §5. Turned into the most useful
+  instrument in the project.
+- **"Imagine in the nursery you realise it's making 60 moves... meanwhile
+  the object is right next to it. Maybe just a block away. That wouldn't
+  make sense. The model should be able to tell what is actually nearest to
+  it. At least maybe not on the first try, but on the second try it should
+  know."** This is the finding in §6, and it was called before it was
+  measured.
+- **Room sizes:** minimum 5, maximum ten or twelve. *"Three, four would be
+  very small."* Correct instinct, applied in `7254b00`.
+- **On his own model:** *"I do know my parameters is small... if my laptop
+  can handle it and the model doesn't learn Air for some reason, I would
+  like to actually increase it."* See §7 — capacity is not currently the
+  binding constraint, and there is a specific signal to watch for when it
+  becomes one.
+- **Guide leakage:** *"We can't actually let it see the info live, else it
+  may end up learning that there is always some imaginary guide telling it
+  where to go."* Right principle. See §6 — the guide already exists, in the
+  observation, by design.
+- **Backup before structural change.** Requested and done:
+  `_backups/ATS_2026-09-18_0201_pre-curriculum.zip`, 486 entries, 9.7 MB,
+  all four `.pt` files verified byte-for-byte.
+- **The curriculum redesign is NOT implemented.** Six nursery rungs with
+  randomised spawn, one-face open-box mazes, escalating 1/10/50 rewards,
+  primary as a progressively harder maze with ≤6 enemies whose damage scales
+  with reward, shrinking vision to 5 blocks, JS rooms with a read-only
+  compass slot, visibility-buff lucky drop, continuous flow between grounds,
+  no hunger until the final JS room, procedural generation after nursery 1.
+  Specified, understood, deliberately not built. Standing instruction.
+
+---
+
+## 2. The hypothesis that was wrong, and why it is worth recording
+
+`actor_loss` was displaying as `-0.000000` and this was read as "the actor is
+not learning". It is not a bug. It is arithmetic:
+
+```
+MINI-EPOCH 1, on-policy
+  ratio  mean 1.000000   min 1.0000  max 1.0000
+  adv_n  mean 0.000000   std 1.0000
+  actor  -0.000000
+```
+
+On the first mini-epoch the policy has not changed, so `ratio` is exactly 1;
+advantages are normalised, so their mean is exactly 0. `-mean(1 x adv_n)` is
+zero by construction in **every correct PPO implementation**. The displayed
+actor loss carries no information about progress and should not be read as
+if it does.
+
+Second hypothesis, also wrong: that the critic was swamping the actor on the
+shared trunk. Measured, rather than assumed:
+
+```
+fc1.weight   actor 6.425498e-02   critic 2.136788e-01   critic 3x
+fc2.weight   actor 1.029662e-01   critic 4.448902e-01   critic 4x
+```
+
+3–4x is normal for a shared trunk, not pathological. The actor gradient was
+healthy the whole time.
+
+**Cost of this detour: about an hour.** The cheaper move would have been to
+check which file the GUI actually loads before theorising about gradients.
+Recorded here so the next person checks the boring thing first.
+
+---
+
+## 3. The actual cause: two checkpoint lineages that never met
+
+`train_curriculum.py:191` saves through `brain.save()` → `checkpoints/brain.pt`.
+
+`main.py:_load_policy` loaded `BEST_MODEL_PATH` then `MODEL_PATH`
+(`model_best.pt`, `model_rl.pt`) and **never `brain.pt`**. `_save_policy`
+wrote back to `MODEL_PATH`.
+
+Meanwhile `brain_progress()` (`debug_gui.py:761`, `:817`) read **`brain.pt`**
+for the menu card. So the header advertised one brain's rungs beside a
+different brain's weights:
+
+```
+model_rl.pt      actor.weight mean +0.000910   progress = None
+model_best.pt    actor.weight mean +0.000910   progress = None
+brain.pt         actor.weight mean -0.000685   progress = ['nursery 5x5', 'corridors 5x5']
+```
+
+Every lesson the curriculum taught landed in a file the GUI had never opened.
+
+### 3a. And `brain.pt` could not be loaded at all
+
+`brain.load()`'s shape check compared three numbers — hidden, state, action —
+and all three still matched. But the embedding front-end had been widened on
+2026-09-05 (see `updates/2026-09-05b`):
+
+```
+brain.pt   item_embed (100, 32)  tile_embed (16, 8)   embed_proj (256, 296)
+CURRENT    item_embed (100, 64)  tile_embed (16, 16)  embed_proj (256, 592)
+```
+
+`config_rl.py:202` already documents this as reward scheme 3, *"old
+checkpoints are structurally incompatible"*. The guard simply did not check
+the tensors that changed.
+
+### 3b. Why that was the thing causing the symptom
+
+`_env_for_selection` resumes at the first rung **not** in `brain_progress()`.
+The progress record said nursery and corridors were passed. The weights that
+earned that record could not be loaded. So the menu skipped two rungs for a
+policy that had never solved either, and dropped it into `corridors7`.
+
+A rung list that outlives the weights that earned it is worse than no record
+at all. **The progress belongs to the weights.**
+
+### 3c. What changed
+
+- `brain.py` compares **every parameter's shape**, not three numbers, and
+  returns an empty progress dict when it refuses — the rung list dies with
+  the weights it belonged to.
+- `brain.adopt_legacy()` pours `model_best`/`model_rl` in once when there is
+  no usable brain, so the 550 island episodes survive. The ladder still
+  restarts at the nursery, because those weights never climbed one.
+- `main.py:_make_mind()` builds policy, learner and progress together from
+  `brain.pt`, so Adam's moments and the adapted entropy coefficient come back
+  with the weights. It mirrors to `model_rl`/`model_best` so
+  `eval_behaviour.py` and `run_benchmark.py` keep working, but **nothing
+  reads those back into a training run any more.**
+- The GUI now runs the ladder's own promotion test, so clearing a rung there
+  records it and moves up a room instead of replaying the easiest one
+  forever.
+- `brain_progress()` is cached on mtime and reports nothing for an
+  unloadable brain. It was opening a megabyte checkpoint every frame.
+- Old lineage preserved as `checkpoints/brain_pre-embed-rework.pt`.
+
+---
+
+## 4. Result
+
+First run after the fix, nursery from the adopted weights:
+
+```
+PASSED after 62 episodes   reward +10.64   success 86%   12s
+entropy 1.2296 -> 1.1280
+```
+
+62 episodes, against 550 episodes previously sat at entropy 1.3847 where
+`ln(4) = 1.3863` — 99.9% of maximum, i.e. no preference at all between the
+four moves.
+
+---
+
+## 5. Path tracing (`trace.py`, new)
+
+Episode return says an agent scored 47. It does not say whether it walked two
+tiles to the goal or wandered sixty and arrived by accident. Those are the
+same number and different animals.
+
+`trace.py` records the route and compares it against a **breadth-first
+shortest path through the actual walls**, measured **per goal** rather than
+per episode — three goals in one episode is three separate walks, and
+averaging them hides a clean first walk behind a hopeless third. Manhattan
+distance was rejected: it ignores the wall you have to walk around and would
+report a competent agent as a wasteful one.
+
+Three outputs, for three readers:
+
+| file | contents |
+|---|---|
+| `logs/trace/action_trace.csv` | one row per tick: position, action name, reward, distance to goal |
+| `logs/trace/episode_paths.csv` | per episode: detour ratio, revisit ratio, coverage, wall bumps, action histogram |
+| `logs/trace/last_path.txt` | the room drawn with the route on it |
+
+`last_path.txt` is the one to hand to another model. It shows the procedure
+instead of describing it, and it fits in a message.
+
+Calibrated before being trusted, on `corridors7`:
+
+- greedy walker → detour **x1.00**, 0 wall bumps
+- random walker → never reaches a goal, 106 wall bumps
+
+**Caution on reading it:** the action histogram alone cannot tell good from
+bad. The greedy walker's counts were 57/54/46/43 — as flat as the random
+one's, because a competent agent in a maze also uses all four directions.
+The detour ratio is what separates them.
+
+---
+
+## 6. The open finding: the direction block is being ignored
+
+Over the 62 episodes of the passing nursery run:
+
+```
+ep   1-10   detour x13.33   bumps 53.6   success  70%   return  +8.40
+ep  11-20   detour x16.23   bumps 53.8   success  60%   return  +6.60
+ep  21-30   detour x9.24    bumps 45.6   success  90%   return +10.40
+ep  31-40   detour x10.71   bumps 43.5   success  80%   return +10.60
+ep  41-50   detour x7.71    bumps 41.7   success  80%   return +11.80
+ep  51-60   detour x10.62   bumps 40.3   success 100%   return +12.80
+```
+
+Success climbs to 100%. Wall bumps fall 53.6 → 38.0, so **something real is
+being learned** — walls hurt. The detour ratio does not move.
+
+The passing episode itself:
+
+```
+  #####
+  #*G*#
+  #**S#
+  #***#
+  #####
+  walk vs best   113 steps where 10 would do  (x11.3)
+  per goal       4/2, 33/2, 43/3, 33/3
+```
+
+Thirty-three moves for a goal two tiles away.
+
+Now the part that makes this diagnostic rather than merely disappointing:
+
+1. **The nursery has no walls.** `Stage("nursery", 5, walls=False, ...)`.
+2. **The agent is handed a signed bearing to the goal every tick.**
+   `curriculum.py` `_state()`, at `config_rl.IDX_DIR_START`:
+
+```python
+s[d + 0] = (goal[0] - self.ax) / (n - 1)
+s[d + 1] = (goal[1] - self.ay) / (n - 1)
+```
+
+The comment there calls it *"the single most useful thing in the vector"*.
+
+So: open room, no obstacles, exact direction supplied, and it still takes ten
+times the optimal path. **Those four numbers are not being used.** That is
+not a capacity problem — 261,402 parameters is not a shortage of room to
+learn "walk the way the arrow points."
+
+This also settles the guide-leakage question. The worry was about
+introducing an imaginary guide. The guide already exists, deliberately, in
+the observation — and in the reward too from `corridors` onward, via
+`R_TOWARDS * (before - after)` (the nursery has `shaped=False`). The open
+question is not whether to add one. It is why the one already there is
+ignored.
+
+### Why the rung passed anyway
+
+`pass_rate=0.85` over a 50-episode window, `target=3` collects in 120 steps,
+with goals that respawn. Wandering satisfies that. **The promotion test
+certifies persistence, not navigation**, so the ladder will promote a
+wanderer into a harder room — which is how an agent gets stuck three rungs
+later.
+
+**Recommended and not yet done:** add detour ratio to the promotion test
+alongside success rate. This is evaluator-side only — BFS is computed to
+decide whether a rung is passed; the number never enters the state vector and
+never touches the reward. It is a grading rubric, not a hint, so it carries
+no leakage risk.
+
+---
+
+## 7. On model size
+
+Current: **261,402 parameters.**
+
+```
+item_embed     (100, 64)     6,400
+entity_embed   (40, 64)      2,560
+tile_embed     (16, 16)        256
+embed_proj     (256, 592)   151,552     <- 58% of the network
+fc1            (256, 108)    27,648
+fc2            (256, 256)    65,536
+actor          (25, 256)      6,400
+critic         (1, 256)         256
+```
+
+Raising it is reasonable **when the signal for it appears**, and that signal
+is: the agent plateaus while still improving on its training rungs. That is
+what running out of capacity looks like.
+
+What is happening now is the opposite — maximum entropy while ignoring a
+signal it is being handed. Adding width to that produces a more fluent
+wanderer. Size is not the binding constraint today.
+
+The grid world is likewise the right call, not a compromise. Thousands of
+episodes have to run and be watched on a modest laptop; 3D would cost a
+hundred times the compute to teach the same lesson more slowly.
+
+---
+
+## 8. Room sizes (`7254b00`)
+
+`default_ladder(max_grid=13)` → `12`. Growth is in steps of 2, so:
+
+```
+nursery     5x5
+corridors   5x5
+corridors7  7x7
+avoid       7x7
+hazards     7x7
+foraging    7x7
+primary     9x9  -> 11x11
+junior      9x9  -> 11x11
+```
+
+5 stays the floor deliberately: a 3x3 or 4x4 room is solved by random
+walking, so it teaches nothing that carries to the next rung. A rung has to
+be hard enough that random behaviour mostly fails, and easy enough that it
+sometimes succeeds — no success means no gradient.
+
+---
+
+## 9. Parent/child training — noted, not built
+
+Proposed: train a parent that only wins on the shortest route; run it again
+recording its actions; train a child guided by those actions, but free to
+deviate so obedience can be observed.
+
+This is **behavioural cloning followed by RL fine-tuning** — how AlphaGo
+started and how VPT learned Minecraft. It works.
+
+Known failure mode: **distribution shift.** The child only sees states the
+parent visited. The moment it deviates it is somewhere the parent never
+demonstrated, with no guidance, and small errors compound. The fix has a
+name — **DAgger** — and is a small change: let the child drive, and when it
+reaches an unfamiliar state, query the parent for what it would have done
+and add that to the training set. The child then learns recovery, not just
+the route. Cheap here because the parent is a live network, not a fixed
+recording.
+
+**Ordering constraint:** cloning a wanderer produces a wanderer, faster. The
+parent has to be good first, which routes straight back to §6.
+
+Selective skill inheritance was raised and correctly flagged as hard: skills
+are not stored separably — "knows hazards hurt" is smeared across the whole
+network. Open research problem, not an implementation detail.
+
+---
+
+## 10. Earlier fixes this session
+
+- `1548266` — three readouts that were lying. `learner.flush()` losses were
+  never handed to the panel (`CONTINUAL_UPDATE_EVERY` is 256 ticks, rungs run
+  120–200, and flush resets the counter every episode, so `maybe_update`
+  could never reach its threshold — PPO history stayed empty while training
+  was in fact running). Efficiency `None` now renders "n/a" in all five
+  formatters instead of 0.000. `facing_dir` follows the move.
+- `754f5e4` — `DAY_START_FRACTION` honoured, so an episode no longer opens
+  at midnight.
+- `dade080` — the curriculum buttons actually launch the curriculum.
+
+## Run config in force
+
+`EPISODES=700`, `MAX_TICKS=4400`, `DAY_LENGTH_TICKS=4000`,
+`DAY_START_FRACTION=0.30`, `LEARNING_RATE=1e-4`, `ENTROPY_COEFF=0.002`,
+`TRACE_PER_TICK=True`.
+
+## Next, in priority order
+
+1. Why the direction block at `IDX_DIR_START` is ignored in an open room.
+   Highest value by a distance; everything downstream inherits it.
+2. Detour ratio in the promotion test, so a rung cannot be passed by
+   wandering.
+3. Only then: the parent/child bootstrap, or the curriculum redesign.
