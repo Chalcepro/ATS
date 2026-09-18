@@ -248,18 +248,29 @@ def default_ladder(max_grid=12, with_trail=False):
     if with_trail:
         L.append(trail_rung(grid=5))
 
-    # 2. New thing: walls. Same goal, same respawn, still nothing that hurts.
-    #
-    #    NOTE: this rung and the three after it still use the respawn pattern
-    #    that rung 1 was just changed away from, and the same measurement says
-    #    respawn leaves goal-sensitivity indistinguishable from an untrained
-    #    network. They are left alone pending a decision, because changing
-    #    them is the ladder redesign that is on hold.
-    L.append(Stage("corridors", 5, walls=True, hazards=0, goals=1, respawn=True,
-                   damage=False, max_steps=160, target=3,
+    # 2. New thing: walls. One goal, no respawn, episode ends on reaching it,
+    #    exactly as rung 1 - so the only new variable is that the straight
+    #    line is now blocked.
+    L.append(Stage("corridors", 5, walls=True, hazards=0, goals=1, respawn=False,
+                   damage=False, max_steps=160, target=1,
                    pass_rate=0.80, window=50))
 
     # 3. New thing: size. Same maze, same rules, more of it.
+    #
+    #    Still respawning, and that is a measured decision rather than an
+    #    oversight. Converting this rung to one-goal-then-end - the change
+    #    that works at 5x5 - made every number worse at 7x7 (40k steps, two
+    #    seeds, fresh policy):
+    #
+    #      corridors  5x5  respawn  detour 10.4  sens 0.014  turns 53.5%
+    #      corridors  5x5  one goal detour  8.0  sens 0.050  turns 62.3%
+    #      corridors7 7x7  respawn  detour 10.5  sens 0.023  turns 51.0%
+    #      corridors7 7x7  one goal detour 14.1  sens 0.007  turns 49.0%
+    #
+    #    A single goal in a bigger maze is found by luck, so episodes ran
+    #    90 steps against 27 and the reward got sparse enough to drown the
+    #    signal the change exists to protect. Neither config teaches the
+    #    bearing here (chance is ~46%); the 5x5 rungs have to.
     L.append(Stage("corridors7", 7, walls=True, hazards=0, goals=1, respawn=True,
                    damage=False, max_steps=200, target=3,
                    pass_rate=0.75, window=50))
@@ -278,8 +289,14 @@ def default_ladder(max_grid=12, with_trail=False):
                    damage=True, hazard_damage=10, max_steps=200, target=3,
                    pass_rate=0.70, window=60))
 
-    # 4. New thing: scarcity. The goals no longer come back, so the room has to
+    # 6. New thing: scarcity. The goals no longer come back, so the room has to
     #    be cleared, and picking the wrong thing up costs.
+    #
+    #    Left at three simultaneous goals on purpose: clearing a room IS the
+    #    lesson, and it cannot be taught one goal at a time. Note that three
+    #    at once is the `no respawn x3` arm, which probed at 0.0451 - so this
+    #    rung is not expected to teach the bearing, only to rely on it. If
+    #    the bearing degrades from here, this is the first place to look.
     L.append(Stage("foraging", 7, walls=True, hazards=2, goals=3, respawn=False,
                    can_pick=True, damage=True, max_steps=240, target=2,
                    pass_rate=0.70, window=60))
