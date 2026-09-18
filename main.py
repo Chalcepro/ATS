@@ -247,11 +247,22 @@ def run_gui(args):
             # ---- Episode boundary -------------------------------------------
             if done:
                 sl.on_episode_end()
-                learner.flush()          # train on the tail of the episode before it rolls over
+                # flush() is a real PPO update, and in a curriculum rung it is
+                # the ONLY one: CONTINUAL_UPDATE_EVERY is 256 ticks, the rungs
+                # run 120-200, and flush resets the tick counter at every
+                # episode end — so maybe_update can never reach its threshold.
+                # Its losses were never handed to the panel, which is why the
+                # PPO history stayed empty while training was in fact running.
+                if learner.flush() and learner.last_losses:
+                    gui.record_loss(*learner.last_losses)
                 total_rew = sum(ep_rewards)
                 from rewards import RewardEngine
                 grade = RewardEngine.classify_score(total_rew)
                 prog_eff = env.rewards.compute_progression_efficiency(env.tick)
+                # None = this run has nothing to measure (a curriculum rung).
+                # Kept as None through record_episode so the history says so
+                # too, and rendered as "n/a" wherever it is printed.
+                eff_str = " n/a" if prog_eff is None else f"{prog_eff:.3f}"
                 caps_count = len(env.agent.capabilities)
 
                 if env.agent.health <= 0:
@@ -267,10 +278,10 @@ def run_gui(args):
                     f"### INPUT: ATS ep {ep} reward {total_rew:.2f} grade {grade}\n### OUTPUT:")
                 gui.record_narration(narration)
                 adapter.export_runtime_corpus([
-                    f"episode {ep} summary|reward {total_rew:.2f}|grade {grade}|efficiency {prog_eff:.3f}|caps {caps_count}|({reason})",
+                    f"episode {ep} summary|reward {total_rew:.2f}|grade {grade}|efficiency {eff_str}|caps {caps_count}|({reason})",
                     f"episode {ep} narration|{narration}",
                 ])
-                print(f"Episode {ep} done | reward={total_rew:.2f} | GRADE: {grade:4s} | Caps={caps_count} | Eff={prog_eff:.3f} | ticks={env.tick} | {reason}")
+                print(f"Episode {ep} done | reward={total_rew:.2f} | GRADE: {grade:4s} | Caps={caps_count} | Eff={eff_str} | ticks={env.tick} | {reason}")
 
                 # Check if target reached
                 if ep >= num_eps:
@@ -368,9 +379,10 @@ def run_headless(args):
         total = sum(ep_rewards)
         grade = RewardEngine.classify_score(total)
         prog_eff = env.rewards.compute_progression_efficiency(env.tick)
+        eff_str = " n/a" if prog_eff is None else f"{prog_eff:.3f}"
         caps_count = len(env.agent.capabilities)
         reason = "MaxTicks" if env.tick >= config_rl.MAX_TICKS else "Died"
-        print(f"Ep {ep:4d} | reward={total:+7.2f} | GRADE: {grade:4s} | Caps={caps_count} | Eff={prog_eff:.3f} | ticks={env.tick} | {reason}")
+        print(f"Ep {ep:4d} | reward={total:+7.2f} | GRADE: {grade:4s} | Caps={caps_count} | Eff={eff_str} | ticks={env.tick} | {reason}")
 
     _save_policy(policy)
 

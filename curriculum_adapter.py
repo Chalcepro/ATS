@@ -107,6 +107,12 @@ _GOAL_ID, _GOOD_ID, _TRASH_ID = -101, -102, -103
 class _Agent:
     """The agent surface: position, facing, health, and an empty inventory."""
 
+    # Which way the last move went. This was pinned to "N", so the panel read
+    # FACING: NORTH and drew [AI^] for every step the agent ever took, whatever
+    # it actually did — and a uniform policy looked like a policy stuck on one
+    # action. A readout that lies is worse than no readout.
+    _FACING = {0: "N", 1: "S", 2: "W", 3: "E"}
+
     def __init__(self, env: CurriculumEnv):
         self._env = env
         self.facing_dir = "N"
@@ -165,9 +171,10 @@ class _Clock:
 class _Rewards:
     """Enough of the reward engine for the readouts, and no more.
 
-    progression_points stays at zero because a rung has no progression system
-    to score — that belongs to the island. Reporting zero is honest; inventing
-    a number would put a plausible lie on the panel.
+    A rung has no progression system to score — that belongs to the island —
+    so efficiency is reported as "not applicable here" rather than as 0.000.
+    Zero is a measurement. This is the absence of one, and a panel that cannot
+    tell them apart sends you hunting a flatline that was never a number.
     """
 
     def __init__(self):
@@ -175,7 +182,7 @@ class _Rewards:
         self.progression_points = 0
 
     def compute_progression_efficiency(self, tick):
-        return 0.0
+        return None
 
 
 # --- the adapter ----------------------------------------------------------
@@ -213,6 +220,9 @@ class StageSession:
     # unchanged and keeps a rung honest — a toggle that silently rewrote the
     # curriculum's rewards would make best_case_return a lie.
     def step(self, action, disabled_actions=None, reward_rules=None):
+        face = _Agent._FACING.get(int(action))
+        if face:
+            self.agent.facing_dir = face
         state, reward, done, info = self._env.step(action)
         self.tick = self._env.steps
         self.rewards.total += reward

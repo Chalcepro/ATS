@@ -371,7 +371,9 @@ class TerminalGUI:
                     latest = self.episode_history[-1]
                     writer.writerow([
                         latest["ep"], latest["time"], f"{latest['reward']:.2f}",
-                        latest.get("grade", "MID"), f"{latest.get('efficiency', 0.0):.3f}",
+                        latest.get("grade", "MID"),
+                        ("n/a" if latest.get("efficiency") is None
+                         else f"{latest.get('efficiency', 0.0):.3f}"),
                         latest.get("capabilities", 0), latest["ticks"], latest["reason"],
                         config_rl.SPEED_MULTIPLIER, config_rl.LEARNING_RATE,
                         config_rl.ENTROPY_COEFF, config_rl.MIND_HIDDEN_SIZE
@@ -1106,8 +1108,12 @@ class TerminalGUI:
         self._hline(546)
         ent, _ = world.nearest_entity(agent.x, agent.y)
         ent_lbl = f"{entity_name(ent.entity_id)}(HP:{ent.hp})" if ent else "none"
+        # None means "this run has no progression to measure" — a curriculum
+        # rung, say. Formatting that as 0.000 made it look like a flatlined
+        # measurement rather than an absent one.
         eff_val = env.rewards.compute_progression_efficiency(env.tick)
-        self._blit(f"LAST: {agent.last_action_name:<12} | TARGET: {ent_lbl:<14} | TOTAL REW: {env.rewards.total:+7.2f} | EFF: {eff_val:.3f} | PTS: {env.rewards.progression_points:.1f}", 16, 550, self.f_body, FG_BOLD, max_w=1000)
+        eff_str = "  n/a" if eff_val is None else f"{eff_val:.3f}"
+        self._blit(f"LAST: {agent.last_action_name:<12} | TARGET: {ent_lbl:<14} | TOTAL REW: {env.rewards.total:+7.2f} | EFF: {eff_str} | PTS: {env.rewards.progression_points:.1f}", 16, 550, self.f_body, FG_BOLD, max_w=1000)
 
     def _fmt_events(self, log, n):
         if not log:
@@ -1217,7 +1223,9 @@ class TerminalGUI:
             grd = entry.get("grade", "MID")
             grd_col = FG_BOLD if grd == "GOOD" else (GOLD if grd == "MID" else (AMBER if grd == "FAIR" else RED))
             self._blit(grd, 195, y0, self.f_bold, grd_col)
-            self._blit(f"{entry.get('efficiency', 0.0):.3f}", 270, y0, self.f_body, CYAN)
+            _eff = entry.get("efficiency")
+            self._blit("n/a" if _eff is None else f"{_eff:.3f}",
+                       270, y0, self.f_body, CYAN)
             self._blit(f"{entry['ticks']:5d}", 370, y0, self.f_body, WHITE)
             rc2 = RED if "Perished" in entry["reason"] or "HP" in entry["reason"] else CYAN
             self._blit(entry["reason"], 440, y0, self.f_body, rc2, max_w=430)
