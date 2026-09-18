@@ -15,6 +15,7 @@ import torch
 
 import brain
 import config_rl
+import trace as pathtrace
 from ats_env import ATSEnvironment
 from ats_virus_adapter import VirusAdapter
 from debug_gui import (
@@ -246,9 +247,16 @@ def run_gui(args):
         env = _env_for_selection(gui)
         adapter.write_active_profile()
 
+        # Where it walked, and whether the walk made sense. Return alone
+        # cannot tell a two-tile solve from a sixty-tile accident that
+        # happened to end on the goal; the detour ratio can, and it moves
+        # long before return does. See trace.py.
+        tracer = pathtrace.PathTracer(per_tick=config_rl.TRACE_PER_TICK)
+
         num_eps = target_episodes if target_episodes is not None else config_rl.EPISODES
         ep      = 0
         state   = env.reset()
+        tracer.begin(env, ep + 1)
         done    = False
         ep_rewards = []
         info    = {}
@@ -281,6 +289,7 @@ def run_gui(args):
             if gui.sig_stop:
                 gui.sig_stop = False
                 sl.experience.save()
+                tracer.close()
                 gui.app_state = STATE_STOPPED
                 break
 
@@ -300,6 +309,7 @@ def run_gui(args):
                 # PPO history stayed empty while training was in fact running.
                 if learner.flush() and learner.last_losses:
                     gui.record_loss(*learner.last_losses)
+                walk = tracer.end(env, info)
                 total_rew = sum(ep_rewards)
                 from rewards import RewardEngine
                 grade = RewardEngine.classify_score(total_rew)
@@ -326,7 +336,15 @@ def run_gui(args):
                     f"episode {ep} summary|reward {total_rew:.2f}|grade {grade}|efficiency {eff_str}|caps {caps_count}|({reason})",
                     f"episode {ep} narration|{narration}",
                 ])
-                print(f"Episode {ep} done | reward={total_rew:.2f} | GRADE: {grade:4s} | Caps={caps_count} | Eff={eff_str} | ticks={env.tick} | {reason}")
+                # The walk, next to the score. A rising return with a flat
+                # detour ratio means it is collecting by accident; the two
+                # moving together is what learning looks like.
+                detour = walk.get("detour_ratio")
+                walk_str = ("no goal" if detour in ("", None)
+                            else f"x{detour:.2f} ({walk['walk_steps']}/{walk['optimal_steps']})")
+                print(f"Episode {ep} done | reward={total_rew:.2f} | GRADE: {grade:4s} | "
+                      f"Caps={caps_count} | Eff={eff_str} | walk={walk_str} | "
+                      f"bumps={walk['wall_bumps']} | ticks={env.tick} | {reason}")
 
                 # ---- Did this rung's own promotion test just pass? -------
                 # The same rule train_curriculum uses: a fraction `pass_rate`
@@ -354,11 +372,13 @@ def run_gui(args):
                               f"{stage.window} episodes (needed {stage.pass_rate:.0%})")
                         env = _env_for_selection(gui)
                         state, done, ep_rewards = env.reset(), False, []
+                        tracer.begin(env, ep + 1)
                         continue
 
                 # Check if target reached
                 if ep >= num_eps:
                     _save_brain(policy, learner, _progress(passed_rungs, base_episodes + ep))
+                    tracer.close()
                     sl.experience.save()
                     gui.app_state = STATE_STOPPED
                     break
@@ -367,6 +387,7 @@ def run_gui(args):
                 state      = env.reset()
                 done       = False
                 ep_rewards = []
+                tracer.begin(env, ep + 1)
 
             # ---- First tick of a new episode --------------------------------
             if not ep_rewards:      # fresh episode
@@ -382,6 +403,7 @@ def run_gui(args):
                 reward_rules=gui.reward_rules,
             )
             ep_rewards.append(reward)
+            tracer.record(env, action, reward, info)
 
             # Record step outcome in solution loop
             sl.record_outcome(action, reward, state)

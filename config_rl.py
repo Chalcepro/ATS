@@ -206,6 +206,12 @@ REWARD_SCHEME_VERSION = 3
 # ---------------------------------------------------------------------------
 # Logging / TensorBoard
 # ---------------------------------------------------------------------------
+# Path tracing. The per-tick CSV is one row per step - 700 episodes of a
+# 200-step rung is 140k rows, which is a few megabytes and worth it while the
+# question is "what is it actually doing". Turn it off for a long unattended
+# run; the per-episode summary and the map are written either way.
+TRACE_PER_TICK = True
+
 LOG_DIR = ROOT / "logs"
 LOG_INTERVAL = 10                      # print & log every N episodes
 

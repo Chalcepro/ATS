@@ -29,6 +29,7 @@ from collections import deque
 import torch
 
 import brain
+import trace as pathtrace
 import config_rl
 from curriculum import CurriculumEnv, best_case_return, default_ladder
 from mind.continual_learner import ContinualLearner
@@ -40,8 +41,10 @@ def rung_key(stage):
     return "%s %dx%d" % (stage.name, stage.grid, stage.grid)
 
 
-def run_episode(env, policy, learner):
+def run_episode(env, policy, learner, tracer=None, episode=0):
     state = env.reset()
+    if tracer:
+        tracer.begin(env, episode)
     done = False
     total = 0.0
     info = {}
@@ -56,16 +59,20 @@ def run_episode(env, policy, learner):
             logp = dist.log_prob(a)
         action = int(a.item())
         state, reward, done, info = env.step(action)
+        if tracer:
+            tracer.record(env, action, reward, info)
         total += reward
         learner.collect(state=state, action=action, reward=reward,
                         log_prob=logp, value=value.squeeze(0),
                         action_mask=mask, done=done)
         learner.maybe_update()
+    if tracer:
+        tracer.end(env, info)
     return total, info
 
 
 def train_stage(stage, policy, learner, max_episodes, seed=0, quiet=False,
-                on_tick=None):
+                on_tick=None, tracer=None):
     """Returns (passed, episodes_used, last_window_stats)."""
     env = CurriculumEnv(stage, seed=seed)
     wins = deque(maxlen=stage.window)
@@ -75,7 +82,7 @@ def train_stage(stage, policy, learner, max_episodes, seed=0, quiet=False,
     started = time.time()
 
     for ep in range(1, max_episodes + 1):
-        total, info = run_episode(env, policy, learner)
+        total, info = run_episode(env, policy, learner, tracer, ep)
         wins.append(1 if info.get("success") else 0)
         rewards.append(total)
         got.append(info.get("collected", 0))
@@ -85,11 +92,14 @@ def train_stage(stage, policy, learner, max_episodes, seed=0, quiet=False,
             # Over the window, not one episode: a single episode says nothing,
             # and "how is it failing" - starving for goals or dying - is the
             # thing that tells you which rung is wrong.
+            walk = ""
+            if tracer and tracer.last_row.get("detour_ratio") not in ("", None):
+                walk = "  walk x%.2f" % tracer.last_row["detour_ratio"]
             print("    ep %-5d  reward %+7.2f  success %3.0f%%  "
-                  "collected %.2f  died %3.0f%%"
+                  "collected %.2f  died %3.0f%%%s"
                   % (ep, statistics.mean(rewards),
                      100.0 * sum(wins) / len(wins),
-                     statistics.mean(got), 100.0 * sum(died) / len(died)))
+                     statistics.mean(got), 100.0 * sum(died) / len(died), walk))
 
         # Saved during the rung, not only at the end of it. A rung can take
         # an hour; losing an hour to a closed terminal is the thing this whole
@@ -135,10 +145,12 @@ def preflight(ladder):
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--stage", default=None, help="nursery | primary | junior")
-    ap.add_argument("--max-grid", type=int, default=13)
+    ap.add_argument("--max-grid", type=int, default=12)
     ap.add_argument("--episodes", type=int, default=4000,
                     help="cap per rung before giving up on it")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--no-trace", action="store_true",
+                    help="skip the per-tick path log (keeps the summaries)")
     ap.add_argument("--fresh", action="store_true", help="ignore any saved weights")
     ap.add_argument("--skip-preflight", action="store_true")
     ap.add_argument("--redo", action="store_true",
@@ -156,6 +168,10 @@ def main(argv=None):
         return 1
 
     torch.manual_seed(a.seed)
+    # The walk, not just the score. logs/trace/last_path.txt is the map of the
+    # most recent episode - the thing to look at when the reward is climbing
+    # and you want to know whether the route makes sense yet.
+    tracer = pathtrace.PathTracer(per_tick=not a.no_trace)
     policy = RLPolicy()
     learner = ContinualLearner(policy)
 
@@ -190,7 +206,7 @@ def main(argv=None):
                      rung.pass_rate * 100, rung.window))
             ok, used, (mr, wr, secs) = train_stage(
                 rung, policy, learner, a.episodes, seed=a.seed,
-                on_tick=lambda ep: stash())
+                on_tick=lambda ep: stash(), tracer=tracer)
             episodes_total += used
             print("    %s after %d episodes   reward %+.2f   success %.0f%%   %.0fs"
                   % ("PASSED" if ok else "gave up", used, mr, wr * 100, secs))
