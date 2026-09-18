@@ -115,11 +115,17 @@ MIND_MAX_HIDDEN_SIZE = 1024            # eventual upper bound (not a hard ceilin
 # ---------------------------------------------------------------------------
 EPISODES = 700
 MAX_TICKS = 4400
-LEARNING_RATE = 1e-4                   # half the PPO default. Slower than 3e-4 and
-                                       # chosen for it: a 700-episode run is long
-                                       # enough to afford stability. 5e-05 is the
-                                       # next step down and is where a from-scratch
-                                       # policy stops visibly moving.
+# 3e-4 (0.0003), not 1e-4. Measured 2026-09-18 on the fixed nursery, 3600
+# episodes, same seed and same everything else:
+#
+#   1e-4   41,159 ticks   detour 2.90   entropy 0.5569   commits ~ep 2500
+#   3e-4   33,341 ticks   detour 2.26   entropy 0.5723   commits ~ep 1400
+#
+# Both converge; 3e-4 does it in roughly half the episodes and ends better.
+# Note the tick counts: the same episode count cost FEWER environment steps
+# at the higher rate, because a policy that navigates finishes episodes
+# sooner. Faster learning is cheaper here, not more expensive.
+LEARNING_RATE = 3e-4
 GAMMA = 0.99
 GAE_LAMBDA = 0.95                      # advantage smoothing; raw n-step MC advantage was
                                       # too high-variance to give a stable policy gradient
