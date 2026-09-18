@@ -496,3 +496,68 @@ The unit-vector mismatch should still land as a correctness change — the two
 environments must agree on what an index means or nothing transfers between
 them — but it should be committed as correctness, not as a fix for the
 wandering, because it measurably is not one.
+
+---
+
+## 12. Respawn tested — this is the one
+
+Arms matched on **total environment steps**, not episodes, because removing
+respawn ends the episode early and equal episode counts would hand the
+respawn arm several times the gradient steps. 60,000 steps per arm, 2 seeds.
+
+Primary metric is the sensitivity probe rather than detour: park the trained
+agent in the centre, move the goal to each of the four neighbours, measure
+how far the action distribution moves and whether the argmax follows.
+
+```
+  arm                     eps   detour   entropy   sensitivity   argmax follows
+  respawn x1 (current)    500     8.56    1.3437      0.0155          1.0/4
+  no respawn x3          1775     6.20    1.2374      0.0451          1.0/4
+  no respawn x1          8066     1.98    0.5033      0.6311          4.0/4
+```
+
+An untrained policy probes at ~0.02-0.05. **The current nursery finishes at
+0.0155 — indistinguishable from untrained, and its argmax follows the goal
+at chance (1 in 4).** With a single non-respawning goal the same code, same
+network and same hyper-parameters reach sensitivity 0.6311, argmax 4/4,
+detour 1.98, and entropy 0.5033 — *below* the 0.624 target, meaning the
+policy actually committed.
+
+A factor of 40 on sensitivity, in both seeds. Not noise.
+
+### What it is really about
+
+Not respawn as such — **target stability**. `no respawn x3` barely helped,
+because `_nearest` picks the closest of three goals and which one is closest
+flips as the agent moves, so the bearing still jumps discontinuously
+mid-episode. Only the single-goal arm gives a bearing that points at one
+fixed thing for the whole episode.
+
+So the rule is: *the direction signal has to point at a stable target for
+the length of the episode, or the association it exists to teach cannot
+form.* Respawn destroys it at the exact instant of reward; multiple goals
+destroy it more slowly.
+
+### Confound, stated plainly
+
+The winning arm also ran 8,066 episodes against 500 — about 7.3 steps per
+episode versus a full 120 — so it saw roughly 16x more episode boundaries,
+and each boundary is a GAE terminal. Target stability and credit-assignment
+horizon are not separated by this experiment.
+
+Two things stop that undermining the conclusion. The §11 run took the
+respawn arm to 900 episodes and detour stayed flat at 8-9 with entropy
+rising, so it is not simply short of episodes. And the practical finding
+holds either way: **a nursery of "one goal, walk to it, episode ends"
+teaches directional navigation inside 60,000 steps, and the nursery as
+configured does not teach it at all.**
+
+### Recommendation, not yet implemented
+
+Nursery becomes `respawn=False, goals=1, target=1`. That is a change to the
+ladder, which is under the standing "do not implement the redesign"
+instruction, so it waits for a decision.
+
+Worth noting it lands exactly where the original intuition pointed: *"the
+model should be able to tell what is actually nearest to it... at least
+maybe not on the first try, but on the second try it should know."*
