@@ -165,7 +165,7 @@ STILL_GRACE = 4         # steps of stillness allowed before the penalty starts
 STILL_EVERY = 2         # ...then it lands this often
 
 
-def default_ladder(max_grid=13):
+def default_ladder(max_grid=12):
     """The ladder. Each rung adds **exactly one** new thing.
 
     The first version of this file went from nursery straight to "maze, plus
