@@ -176,7 +176,38 @@ STILL_GRACE = 4         # steps of stillness allowed before the penalty starts
 STILL_EVERY = 2         # ...then it lands this often
 
 
-def default_ladder(max_grid=12):
+def trail_rung(grid=5, sequence=5, max_steps=160):
+    """Bob's trail: one goal at a time, the next appearing when the current
+    is taken, `sequence` of them, and a penalty if the clock beats it.
+
+    Kept out of the ladder by measurement, not by opinion. 2026-09-18,
+    60k environment steps per arm, two seeds, matched on steps:
+
+        nursery only       detour 1.98  sensitivity 0.6311  argmax 4.0/4
+        trail only         detour 8.12  sensitivity 0.0210  argmax 1.0/4
+        nursery -> trail   detour 3.96  sensitivity 0.1297  argmax 1.5/4
+
+    (an untrained network probes at ~0.02-0.05)
+
+    Training it after the nursery drags goal-sensitivity from 0.63 back to
+    0.13 and the argmax from 4/4 to chance: it un-teaches the bearing. The
+    cause is not an ambiguous bearing - only one goal is ever on the floor -
+    but that the episode no longer ends at the reward, so the return from
+    any state carries four more legs whose bearings are unrelated, and the
+    critic learns "how many legs remain" rather than "how far to this goal".
+
+    Signalling a GAE terminal at each leg was tried and changed nothing
+    (0.1279 vs 0.1297), so it is not merely where the credit is cut.
+
+    To put it back:  default_ladder(with_trail=True)
+    """
+    return Stage("trail", grid, walls=False, hazards=0, sequence=sequence,
+                 respawn=False, damage=False, punitive=False, shaped=False,
+                 max_steps=max_steps, target=sequence,
+                 pass_rate=0.80, window=50)
+
+
+def default_ladder(max_grid=12, with_trail=False):
     """The ladder. Each rung adds **exactly one** new thing.
 
     The first version of this file went from nursery straight to "maze, plus
@@ -211,23 +242,11 @@ def default_ladder(max_grid=12):
                    max_steps=120, target=1,
                    pass_rate=0.85, window=50))
 
-    # A five-goal trail was built and measured here on 2026-09-18 and is
-    # deliberately NOT in the ladder. `sequence` remains supported by Stage
-    # and CurriculumEnv so it can be revisited, but as a rung it did harm:
-    #
-    #   nursery only       detour 1.98  sensitivity 0.6311  argmax 4.0/4
-    #   trail only         detour 8.12  sensitivity 0.0210  argmax 1.0/4
-    #   nursery -> trail   detour 3.96  sensitivity 0.1297  argmax 1.5/4
-    #
-    # Training the trail AFTER the nursery drags goal-sensitivity from 0.63
-    # back to 0.13 and the argmax from 4/4 to chance - it un-teaches the
-    # bearing. The cause is not an ambiguous bearing (only one goal is on the
-    # floor at a time) but that the episode does not end at the reward: the
-    # return from any state carries four more legs whose bearings are
-    # unrelated, so the value function learns "how many legs remain" instead
-    # of "how far to this goal". Signalling a GAE terminal at each leg was
-    # tried and changed nothing (0.1279 vs 0.1297), so the fix is not simply
-    # where the credit is cut.
+    # The five-goal trail sits behind a flag rather than in the ladder. It
+    # measured as actively harmful after the nursery - see trail_rung() for
+    # the numbers and the reason. One switch to bring it back.
+    if with_trail:
+        L.append(trail_rung(grid=5))
 
     # 2. New thing: walls. Same goal, same respawn, still nothing that hurts.
     #
