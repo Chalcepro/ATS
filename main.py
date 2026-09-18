@@ -95,6 +95,56 @@ def _save_policy(policy):
 
 
 # ---------------------------------------------------------------------------
+def _env_for_selection(gui):
+    """The environment the menu's current selection means.
+
+    A curriculum rung becomes a StageSession, which is a CurriculumEnv wearing
+    the full environment's surface so the panel has what it draws. Full World,
+    and anything whose rungs are not built yet, stays the island.
+
+    Also tells the GUI which stage is live and what it permits, so the action
+    toggles and the inventory grey out what this rung has not taught instead of
+    showing twenty-five live buttons — which is what active_stage and
+    active_mask were declared for and never given.
+    """
+    from debug_gui import TRACKS
+    from curriculum_adapter import StageSession, stage_by_name
+
+    name, rungs, _blurb, open_ = TRACKS[gui.selected_track]
+
+    stage = None
+    if open_ and rungs:
+        # The first rung of the track that the brain has not already passed,
+        # so PRIMARY resumes where it stopped rather than restarting at its
+        # easiest room every time.
+        # The brain records a rung as "name WxH", which is how the menu card
+        # counts them too — matching on the bare name would never hit, and
+        # every track would restart at its easiest room.
+        from debug_gui import brain_progress
+        passed = set(brain_progress().get("passed") or [])
+        for r in rungs:
+            st = stage_by_name(r)
+            if st is None:
+                continue
+            if f"{st.name} {st.grid}x{st.grid}" not in passed:
+                stage = st
+                break
+        if stage is None:
+            stage = stage_by_name(rungs[-1])
+
+    if stage is None:
+        gui.active_stage = None
+        gui.active_mask = None
+        print(f"[ATS] {name}: full island")
+        return ATSEnvironment()
+
+    session = StageSession(stage)
+    gui.active_stage = stage
+    gui.active_mask = session.action_mask()
+    print(f"[ATS] {name}: rung '{stage.name}', {stage.grid}x{stage.grid} room")
+    return session
+
+
 def run_gui(args):
 # ---------------------------------------------------------------------------
     gui = TerminalGUI()
@@ -142,7 +192,13 @@ def run_gui(args):
         if not args.fresh:
             sl.experience.load()
         learner = ContinualLearner(policy=policy)
-        env     = ATSEnvironment()
+
+        # Which rung the menu was sitting on when LAUNCH was pressed.
+        #
+        # This used to be ignored: the session built ATSEnvironment() whatever
+        # the button said, so picking NURSERY still dropped the agent on the
+        # island. selected_track was read nowhere outside the GUI.
+        env = _env_for_selection(gui)
         adapter.write_active_profile()
 
         num_eps = target_episodes if target_episodes is not None else config_rl.EPISODES
