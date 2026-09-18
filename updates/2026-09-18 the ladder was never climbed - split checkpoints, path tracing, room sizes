@@ -390,3 +390,109 @@ network. Open research problem, not an implementation detail.
 2. Detour ratio in the promotion test, so a rung cannot be passed by
    wandering.
 3. Only then: the parent/child bootstrap, or the curriculum redesign.
+
+---
+
+## 11. Direction-block investigation (later the same day)
+
+**Confirmed ignored.** Agent parked at the centre of the nursery, goal moved
+to each of the four neighbours:
+
+```
+  goal    dir block        P(N)   P(S)   P(W)   P(E)   argmax
+  N      (+0.00,-0.25)    0.263  0.229  0.331  0.176   left(W)
+  S      (+0.00,+0.25)    0.259  0.240  0.322  0.179   left(W)
+  W      (-0.25,+0.00)    0.259  0.230  0.338  0.173   left(W)
+  E      (+0.25,+0.00)    0.263  0.240  0.315  0.182   left(W)
+```
+
+Moving the goal to the opposite side changes any action probability by at
+most **0.023**. The argmax is West regardless. It has learned a constant
+bias, not a mapping.
+
+### Ruled out by measurement
+
+- **Not the learned weights.** The direction columns carry the *highest*
+  mean column norm in `fc1` (0.9827 vs the patch's 0.8914). The network is
+  trying to use them.
+- **Not the embedding branch drowning them.** `emb_feat` is 0.56x the norm
+  of `fc1(state)`; the two summed branches are comparable.
+- **Not entropy regularisation.** A 4-action mask is below
+  `ENTROPY_NARROW_MASK`, so the target is `0.45 * ln(4) = 0.624` nats.
+  Observed entropy is ~1.35, far above target, and the coefficient sits
+  pinned at its 0.002 floor for entire runs. Nothing is pushing it random.
+
+### Found, and a real inconsistency
+
+Input variance across 2400 nursery states: **patch 80.3%, direction 3.8%.**
+And the patch carries no goal information at all — only hazards are written
+into the grid (`self.grid[hy][hx] = T_HAZARD`); goals stay a coordinate
+list. So four fifths of the observation is wall geometry and the only goal
+signal is three numbers worth 4%.
+
+Contribution to `fc1`'s pre-activation on a live state: patch **194.72**,
+direction **3.87**. A 50x disadvantage from input scale, not from weights.
+
+The two environments also disagree about what indices 54..57 mean:
+
+| | island `agent.py:709` | curriculum `curriculum.py:398` |
+|---|---|---|
+| formula | `(dx,dy) / hypot(dx,dy)` | `(dx,dy) / (n-1)` |
+| adjacent goal | ±1.000 | ±0.250 in a 5x5 |
+| across room sizes | constant | shrinks with the room |
+
+`config_rl` documents these slots as "direction unit-vectors". The island
+writes unit vectors; the curriculum writes room-scaled displacement, 4x
+weaker and weakest in the nursery. **Not yet changed** — see below for why.
+
+### Three hypotheses tested, three negatives
+
+1. **Direction encoding.** Unit vector vs displacement/(n-1), 3 seeds x 150
+   episodes: mean detour 9.3 vs 10.7. Noise.
+2. **Reward design.** `shaped` / `punitive` / both, 2 seeds x 400 episodes:
+   every arm landed between 8.1 and 10.2. No arm broke out.
+3. **Is it slow rather than stuck?** 900 episodes: detour 10.00 -> 9.65,
+   flat throughout, entropy *rising* 1.3012 -> 1.3381. Stuck.
+
+### One real bug found on the way (fixed, `5ed75e2`)
+
+```python
+state, reward, done, info = env.step(action)
+learner.collect(state=state, ...)
+```
+
+`state` is rebound by `env.step` before it reaches `collect`, so every
+transition stored **s'** against the action taken in **s**. `log_prob` and
+`value` came from the correct pre-step state, so PPO compared
+`log pi(a|s')` against `log pi(a|s)` in `ratio = exp(new - old)` — the same
+corruption class as the Mind-hint bug in `updates/2026-09-05b`, reintroduced
+through a variable name. All three training loops were affected.
+
+Measured, 3 seeds x 500 episodes:
+
+```
+  stored s' (bug)    detour 8.83   goals/ep 6.70   entropy 1.3587
+  stored s  (fixed)  detour 9.01   goals/ep 7.09   entropy 1.3267
+```
+
+Entropy falls in 3/3 seeds and goals/ep gains ~6%, but **the detour does not
+move**. A single-seed run suggested a much larger effect and did not survive
+replication; recorded so nobody re-derives that claim.
+
+### Where this leaves it
+
+The detour sits at 8-9 under every configuration tried. The policy is
+measurably blind to the bearing, and the three obvious causes are eliminated.
+
+Next candidate, untested: **respawning goals may be breaking the association
+they are meant to teach.** `respawn=True` means the instant a goal is
+collected a new one appears somewhere random, so the moment "I moved toward
+it and got paid" would be learned, the target teleports. A single
+non-respawning goal per episode makes the direction/reward correlation
+unbroken, at the cost of a much sparser signal. Worth one experiment before
+anything structural.
+
+The unit-vector mismatch should still land as a correctness change — the two
+environments must agree on what an index means or nothing transfers between
+them — but it should be committed as correctness, not as a fix for the
+wandering, because it measurably is not one.
