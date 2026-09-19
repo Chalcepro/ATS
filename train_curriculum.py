@@ -91,6 +91,9 @@ def train_stage(stage, policy, learner, max_episodes, seed=0, quiet=False,
     for ep in range(1, max_episodes + 1):
         total, info = run_episode(env, policy, learner, tracer, ep)
         wins.append(1 if info.get("success") else 0)
+        # The growth check cannot tell "flat because solved" from "flat
+        # because impossible" without this.
+        learner.note_outcome(bool(info.get("success")))
         rewards.append(total)
         got.append(info.get("collected", 0))
         died.append(1 if info.get("dead") else 0)

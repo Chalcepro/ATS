@@ -762,15 +762,15 @@ class Agent:
 
             # Nearest object (2): dist normalized, obj_id normalized to same scale as inventory
             self._norm(obj_dist, day_night.perception_radius(self.torch_active)),
-            (int(obj_id) / config_rl.ITEM_VOCAB_SIZE) if obj_id.isdigit() and int(obj_id) > 0 else 0.0,
+            (int(obj_id) / config_rl.ITEM_ID_SCALE) if obj_id.isdigit() and int(obj_id) > 0 else 0.0,
         ]
 
         # Inventory: 7 slots × (norm_item_id, norm_count) = 14 values
-        # item_id: 0.0 = empty, else normalized to (id / ITEM_VOCAB_SIZE) so model sees ~0.01..0.99
+        # item_id: 0.0 = empty, else normalized to (id / ITEM_ID_SCALE) so model sees ~0.01..0.99
         # count:   normalized to count / 99, capped at 1.0
         for slot in self.inventory:
             raw_id = int(slot["id"]) if slot["id"] and slot["id"].isdigit() else 0
-            norm_id = raw_id / config_rl.ITEM_VOCAB_SIZE if raw_id > 0 else 0.0
+            norm_id = raw_id / config_rl.ITEM_ID_SCALE if raw_id > 0 else 0.0
             norm_cnt = min(1.0, slot["count"] / 99.0)
             state.append(norm_id)
             state.append(norm_cnt)

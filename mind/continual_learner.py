@@ -49,6 +49,12 @@ class ContinualLearner:
         self._last_growth_reward = 0.0
         self._reward_accumulator = 0.0
         self._reward_count = 0
+        self._outcomes: deque[bool] = deque(maxlen=60)
+        # None, not 0: a cooldown measured from tick zero would silently
+        # forbid the FIRST growth for its whole duration, and report it as
+        # "grew N ticks ago" about a growth that never happened.
+        self._last_growth_tick = None
+        self._last_growth_refusal = ''
 
     # ------------------------------------------------------------------
     # Collect — called once per tick
@@ -214,14 +220,40 @@ class ContinualLearner:
     # ------------------------------------------------------------------
     # Growth check
     # ------------------------------------------------------------------
-    def _maybe_grow(self):
-        """Check if the policy has plateaued and should expand.
+    def note_outcome(self, success: bool):
+        """Tell the learner whether an episode was won.
 
-        Disabled by default (``config_rl.MIND_GROWTH_ENABLED``).  The old
-        trigger fired on *any* low reward-delta — including a converged or
-        merely stuck policy — and doubling the hidden width resets Adam's
-        moments and injects a zero block, which destabilises more than it
-        helps.  Get the fixed-width policy learning first, then revisit.
+        The growth check needs this.  Reward alone cannot separate "flat
+        because it solved the problem" from "flat because it cannot" - both
+        are a small delta - and those two want opposite responses.  Callers
+        that never report an outcome get no autonomous growth, on purpose:
+        growing blind is how the old trigger doubled a healthy network.
+        """
+        self._outcomes.append(bool(success))
+
+    @property
+    def success_rate(self) -> float:
+        if not self._outcomes:
+            return -1.0
+        return sum(self._outcomes) / len(self._outcomes)
+
+    def _maybe_grow(self):
+        """Expand capacity only for the plateau that capacity can fix.
+
+        A flat reward curve is three different animals:
+
+          * mastered / converged and correct  -> growing resets Adam's
+            moments and injects a zero block into a network that was doing
+            fine.  This is what the original trigger did.
+          * collapsed entropy, acting deterministically and wrong -> the
+            policy has stopped exploring.  More neurons do not restore
+            exploration; they just make a stuck policy bigger.
+          * still exploring, still failing     -> this one, and only this
+            one, is a plausible capacity problem.
+
+        So all three conditions must hold together, and when they do not the
+        reason is recorded rather than silently dropped - not knowing WHY the
+        mind never grew is itself a bug worth fixing.
         """
         if not getattr(config_rl, "MIND_GROWTH_ENABLED", False):
             return
@@ -232,16 +264,44 @@ class ContinualLearner:
 
         avg_reward = self._reward_accumulator / max(self._reward_count, 1)
         delta = abs(avg_reward - self._last_growth_reward)
+        entropy = self.last_losses[3] if self.last_losses else None
+        rate = self.success_rate
+        since = (None if self._last_growth_tick is None
+                 else self._total_ticks - self._last_growth_tick)
 
-        if delta < config_rl.MIND_GROWTH_THRESHOLD:
+        why = None
+        if delta >= config_rl.MIND_GROWTH_THRESHOLD:
+            why = 'still improving (delta=%.4f)' % delta
+        elif len(self._outcomes) < config_rl.MIND_GROWTH_MIN_EPISODES:
+            why = ('only %d episodes reported (need %d)'
+                   % (len(self._outcomes), config_rl.MIND_GROWTH_MIN_EPISODES))
+        elif rate > config_rl.MIND_GROWTH_MAX_SUCCESS:
+            why = 'succeeding %.0f%% - converged, not cramped' % (rate * 100)
+        elif entropy is None:
+            why = 'no entropy measurement yet'
+        elif entropy < config_rl.MIND_GROWTH_MIN_ENTROPY:
+            why = ('entropy %.3f collapsed below %.2f - stuck, not cramped'
+                   % (entropy, config_rl.MIND_GROWTH_MIN_ENTROPY))
+        elif since is not None and since < config_rl.MIND_GROWTH_COOLDOWN_TICKS:
+            why = ('grew %d ticks ago, cooling down' % since)
+
+        if why is not None:
+            if why != self._last_growth_refusal:
+                print('[MIND GROWTH] holding at %d wide: %s'
+                      % (self.policy.hidden_size, why))
+                self._last_growth_refusal = why
+        else:
             new_size = min(self.policy.hidden_size * 2, config_rl.MIND_MAX_HIDDEN_SIZE)
-            print(f"[MIND GROWTH] plateau detected (delta={delta:.4f}).  "
-                  f"Expanding {self.policy.hidden_size} → {new_size}")
+            print('[MIND GROWTH] plateaued while still exploring and still '
+                  'failing (delta=%.4f, entropy=%.3f, success=%.0f%%).  '
+                  'Expanding %d -> %d'
+                  % (delta, entropy, rate * 100, self.policy.hidden_size, new_size))
             self.policy.expand(new_size)
-            # Re-create optimizer to pick up new parameters and flush buffer
             self.optimizer = optim.Adam(self.policy.parameters(), lr=config_rl.LEARNING_RATE)
             self.buffer.clear()
             self._ticks_since_update = 0
+            self._last_growth_tick = self._total_ticks
+            self._last_growth_refusal = ''
 
         self._last_growth_reward = avg_reward
         self._reward_accumulator = 0.0

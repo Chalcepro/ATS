@@ -473,7 +473,7 @@ class CurriculumEnv:
 
         goal, gd = self._nearest(self.goals)
         s[18] = min(1.0, gd / span)
-        s[config_rl.IDX_OBJ_ID] = 1.0 / config_rl.ITEM_VOCAB_SIZE if goal else 0.0
+        s[config_rl.IDX_OBJ_ID] = 1.0 / config_rl.ITEM_ID_SCALE if goal else 0.0
 
         # The direction block. This is the single most useful thing in the
         # vector: without a signed bearing to the goal the policy has to infer

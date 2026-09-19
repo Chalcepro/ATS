@@ -52,6 +52,13 @@ ACTION_SIZE = 25  # total action indices 0..24
 ITEM_EMBED_DIM    = 64
 ENTITY_EMBED_DIM  = 64
 ITEM_VOCAB_SIZE   = 100
+# The divisor used to normalise an item id into the state vector.  Deliberately
+# NOT ITEM_VOCAB_SIZE, even though they start equal: the vocab is a table size
+# that may grow, while this is an encoding contract.  Changing it silently
+# rescales every observation a trained brain has ever seen, so it must stay
+# fixed for the life of a checkpoint.  Growing the table past it is fine - ids
+# above it simply encode as >1.0, and the table lookup clamps to real rows.
+ITEM_ID_SCALE     = 100
 ENTITY_VOCAB_SIZE = 40
 # 16, not 64: there are thirteen tile types. A 64-wide table for thirteen
 # things is 51 columns of noise for the optimiser to push around, and tiles
@@ -125,6 +132,14 @@ MIND_GROWTH_ENABLED = False
 MIND_GROWTH_CHECK_EVERY = 500          # ticks between growth checks
 MIND_GROWTH_THRESHOLD = 0.02           # reward plateau delta that triggers growth
 MIND_MAX_HIDDEN_SIZE = 1024            # eventual upper bound (not a hard ceiling)
+# A flat reward plateau is three different situations wearing the same face:
+# mastered, stuck, and converged-correct.  Only ONE of them wants more
+# capacity.  These narrow the trigger to that one.
+MIND_GROWTH_MIN_ENTROPY = 0.30         # below this the policy has collapsed, not
+                                       # run out of room - capacity won't help
+MIND_GROWTH_MAX_SUCCESS = 0.50         # above this it is succeeding; leave it alone
+MIND_GROWTH_MIN_EPISODES = 30          # don't judge a plateau on a handful of tries
+MIND_GROWTH_COOLDOWN_TICKS = 20000     # let a widened net actually use its new room
 
 # ---------------------------------------------------------------------------
 # Training hyperparameters (PPO)

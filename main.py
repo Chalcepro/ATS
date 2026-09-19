@@ -352,6 +352,7 @@ def run_gui(args):
                 # into the brain and then re-selected, so clearing the nursery
                 # in the GUI actually moves the agent up a room instead of
                 # replaying the same one until the episode budget runs out.
+                learner.note_outcome(bool(info.get("success")))
                 stage = getattr(gui, "active_stage", None)
                 if stage is not None:
                     window.append(1.0 if info.get("success") else 0.0)
