@@ -203,7 +203,7 @@ _ACTION_TOGGLES = [
 _CONFIG_FIELDS = [
     ("EPISODES",          "Target Episodes",    10,   1,    9999, "{:d}"),
     ("MAX_TICKS",         "Max Ticks / Ep",    500, 100,   50000, "{:d}"),
-    ("SPEED_MULTIPLIER",  "Sim Speed",          1.0,  1.0,  50.0, "{:.1f}x"),
+    ("SPEED_MULTIPLIER",  "Sim Speed",         0.25, 0.05,  2.0, "{:.2f}x"),
     ("LEARNING_RATE",     "Learning Rate",     None, None,   None, "{:.2e}"),
     ("ENTROPY_COEFF",     "Entropy Coeff",     None, None,   None, "{:.3f}"),
     ("DAY_LENGTH_TICKS",  "Day Length (ticks)",100,  200,   5000, "{:d}"),
@@ -258,6 +258,8 @@ class TerminalGUI:
         self.sig_stop         = False
         self.sig_return_home  = False
         self.turbo_mode       = False
+        self._tick_times      = []
+        self.measured_tps     = 0.0
         self._confirm_fresh_armed = False
         self.is_fresh_mode    = False
 
@@ -537,7 +539,31 @@ class TerminalGUI:
             self._draw_sidebar_drawer()
 
         pygame.display.flip()
-        self.clock.tick(60)
+
+        # THE speed control. One sim step happens per render call, so capping
+        # the frame rate caps the tick rate: 60 * multiplier ticks per second.
+        #
+        # Turbo ignores the multiplier and runs at a flat 60, which is what
+        # this used to do by default. It also renders one frame in twenty, so
+        # the saving is drawing rather than simulating - and it is a CAP, so
+        # the loop can no longer run away to 370 ticks/sec and sit on both
+        # cores.
+        if self.turbo_mode:
+            self.clock.tick(60)
+        else:
+            rate = max(1.0, 60.0 * float(getattr(config_rl, 'SPEED_MULTIPLIER', 1.0)))
+            self.clock.tick(rate)
+
+        # Measured, not assumed. A speed control that silently does nothing is
+        # exactly what this one was, so the real rate is on screen.
+        now = time.time()
+        self._tick_times.append(now)
+        if len(self._tick_times) > 40:
+            self._tick_times.pop(0)
+        if len(self._tick_times) > 4:
+            span = self._tick_times[-1] - self._tick_times[0]
+            if span > 0:
+                self.measured_tps = (len(self._tick_times) - 1) / span
         return True
 
     # -----------------------------------------------------------------------
@@ -857,7 +883,7 @@ class TerminalGUI:
         params = [
             ("EPISODES",         "Target Episodes",     10,  "{:d}"),
             ("MAX_TICKS",        "Max Ticks / Ep",     500,  "{:d}"),
-            ("SPEED_MULTIPLIER", "Sim Speed",          2.0,  "{:.1f}x"),
+            ("SPEED_MULTIPLIER", "Sim Speed",         0.25,  "{:.2f}x"),
             ("DAY_LENGTH_TICKS", "Day Length",         100,  "{:d} ticks"),
         ]
         for attr, label, step, fmt in params:
@@ -975,6 +1001,8 @@ class TerminalGUI:
         cursor = "_" if (self.frame // 20) % 2 == 0 else " "
         ep_str = f"  |  EP: {env.episode}/{config_rl.EPISODES}  TICK: {env.tick}/{config_rl.MAX_TICKS}" if env else ""
         turbo_str = "  [TURBO ON]" if self.turbo_mode else ""
+        if self.measured_tps > 0:
+            turbo_str += "  %.0f ticks/s" % self.measured_tps
         self._blit(f"ATS MISSION CONTROL {cursor} [{self.app_state}]{turbo_str}{ep_str}", 16, 10, self.f_bold, st_col)
 
         # Top-Right Collapsible Sidebar Trigger

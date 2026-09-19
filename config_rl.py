@@ -196,7 +196,18 @@ CONTINUAL_MINI_EPOCHS = 4              # PPO epochs per online update
 # ---------------------------------------------------------------------------
 # Simulation
 # ---------------------------------------------------------------------------
-SPEED_MULTIPLIER = 9.0
+# Ticks per real second = 60 * this. It is a SPEED LIMIT, not a throttle to
+# push against: 0.25 means fifteen ticks a second, which is slow enough to
+# watch an agent decide rather than watch it blur.
+#
+# It used to be read by nothing at all. It was defined here, drawn as a
+# slider, written into every CSV row, and never once consulted by the loop -
+# so every run happened at the same 60 ticks/sec whatever it said, and the
+# CSV recorded a number that described nothing.
+#
+# Default 0.25 because watching is the point of having a GUI. Headless
+# training ignores this entirely and runs as fast as the machine allows.
+SPEED_MULTIPLIER = 0.25
 GUI_RENDER_EVERY = 1
 
 DAY_LENGTH_TICKS = 4000
