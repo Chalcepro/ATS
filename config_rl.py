@@ -128,7 +128,11 @@ MIND_HIDDEN_SIZE = 256                 # starting hidden width (increased from 1
 # switched on and off: RLPolicy.expand() exists and works, but this flag has
 # gated it out of every run so far. The observation that the dynamic sizing
 # does nothing is correct - it has never run.
-MIND_GROWTH_ENABLED = False
+# ON as of 2026-09-19.  Parked 2026-09-04 with the condition "until the
+# fixed-width policy is shown to work" - that condition is met (three rungs
+# cleared, 250k ticks), and the trigger no longer fires on any flat reward.
+# This one boolean is the whole switch: set it False to go back.
+MIND_GROWTH_ENABLED = True
 MIND_GROWTH_CHECK_EVERY = 500          # ticks between growth checks
 MIND_GROWTH_THRESHOLD = 0.02           # reward plateau delta that triggers growth
 MIND_MAX_HIDDEN_SIZE = 1024            # eventual upper bound (not a hard ceiling)
