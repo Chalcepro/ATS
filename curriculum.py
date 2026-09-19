@@ -609,14 +609,22 @@ class CurriculumEnv:
 def best_case_return(stage: Stage, trials: int = 40, seed: int = 0) -> float:
     """What a competent agent scores, by playing one greedily.
 
-    Not an optimal policy - just one that walks towards the nearest goal and
-    picks things up. If *that* comes out negative, the stage is unlearnable
-    and no amount of training will fix it, because the reward function is
-    telling the agent that the best thing it can do is stop playing.
+    Not an optimal policy - just one that walks towards the nearest goal,
+    picks things up, and does not deliberately walk into things that hurt.
+    If *that* comes out negative, the stage is unlearnable and no amount of
+    training will fix it, because the reward function is telling the agent
+    that the best thing it can do is stop playing.
+
+    It avoids hazards, and that is not a detail. The first version only
+    avoided walls, so on any rung with damage it measured a goal-seeker that
+    strolls through fire - the worst possible player of exactly those rungs.
+    It reported `hazards` at +0.12 and `junior` at +0.34 and both looked
+    barely learnable, when what it had actually measured was recklessness.
 
     This is the check the full ATS world never had.
     """
     total = 0.0
+    s = stage                      # `s` is what the reward code calls it
     for t in range(trials):
         env = CurriculumEnv(stage, seed=seed + t)
         env.reset()
@@ -635,14 +643,39 @@ def best_case_return(stage: Stage, trials: int = 40, seed: int = 0) -> float:
                 else:
                     order = [(0, 1) if dy > 0 else (0, -1), (1, 0) if dx > 0 else (-1, 0)]
                 order += [(1, 0), (-1, 0), (0, 1), (0, -1)]
-                for want in order:
-                    if env._tile(env.ax + want[0], env.ay + want[1]) == T_WALL:
-                        continue
+
+                def risky(nx, ny):
+                    """Would a competent player step here?"""
+                    if not s.damage:
+                        return False
+                    if env._tile(nx, ny) == T_HAZARD:
+                        return True
+                    # Standing next to something that bites is also a choice.
+                    for h in env.hostiles:
+                        if abs(h[0] - nx) + abs(h[1] - ny) <= 1:
+                            return True
+                    return False
+
+                # Two passes: prefer a safe step, and only accept a dangerous
+                # one when every option is dangerous - which does happen in a
+                # narrow corridor, and is exactly when taking the hit is right.
+                chosen = None
+                for allow_risk in (False, True):
+                    for want in order:
+                        nx, ny = env.ax + want[0], env.ay + want[1]
+                        if env._tile(nx, ny) == T_WALL:
+                            continue
+                        if not allow_risk and risky(nx, ny):
+                            continue
+                        chosen = want
+                        break
+                    if chosen:
+                        break
+                if chosen:
                     for a, mv in MOVES.items():
-                        if mv == want:
+                        if mv == chosen:
                             act = a
                             break
-                    break
             _, r, done, _ = env.step(act)
             ep += r
         total += ep

@@ -87,8 +87,18 @@ TRACKS = [
      "One room, one goal, nothing that can hurt you", True),
     ("PRIMARY",    ["corridors", "corridors7", "avoid", "hazards", "foraging", "primary"],
      "Walls, then danger, then scarcity, then size", True),
+    # Unlocked 2026-09-19. It was never unfinished - the stage has always
+    # been complete in curriculum.py. It was flagged "coming soon" because
+    # best_case_return scored it +0.34, which looked barely learnable; that
+    # number came from a reference policy that avoided walls but not hazards,
+    # so on a rung with damage it measured recklessness. With a hazard-aware
+    # reference it scores +1.95.
+    #
+    # NOTE: this track is one rung, so selecting it drops the agent straight
+    # into the hardest room with whatever brain it has. Use PRIMARY until
+    # that track is finished.
     ("JUNIOR SEC", ["junior"],
-     "Something in here with you - coming soon", False),
+     "Something in here with you - 9x9, one hostile, you can fight back", True),
     ("SENIOR SEC", [],
      "Tools, crafting, the long game - coming soon", False),
     ("FULL WORLD", [],
