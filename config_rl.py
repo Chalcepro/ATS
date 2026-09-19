@@ -94,11 +94,27 @@ ACID_POISON_TICKS = 10    # POISONED duration from TILE_ACID
 # ---------------------------------------------------------------------------
 # Growing mind / policy network
 # ---------------------------------------------------------------------------
-# The recalled-solution logit boost in mind/solution_loop.py.  Kept ON (this
-# is existing behaviour) but now gated so the Mind hint can be A/B'd against
-# a plain policy — roadmap step 2 is "empirically evaluate the hint
-# mechanism", which is impossible without an off switch.
-MIND_HINT_ENABLED = True
+# The recalled-solution logit boost in mind/solution_loop.py.
+#
+# OFF, and this is the empirical evaluation the roadmap asked for. Measured
+# 2026-09-19 through SolutionLoop - the path the GUI actually uses - two
+# seeds, 700 nursery episodes each:
+#
+#   hint ON    detour 10.04   success 87%
+#   hint off   detour  8.57   success 98%
+#
+# Eleven points of success rate, the same direction on both seeds. Detour is
+# noise between the arms, so this is not the whole story, but the hint is
+# not paying for itself.
+#
+# The cause is the need detector, not the boost. On a nursery state it
+# returns [0, 0, 0, 1.0] - one need pinned at maximum - so the recall fires
+# on EVERY tick rather than occasionally, and the same remembered action gets
+# +3.0 on its logit over and over. Three logits is roughly twenty times the
+# probability, which is not a hint, it is a decision.
+#
+# Turn it back on when the need detector reports something that varies.
+MIND_HINT_ENABLED = False
 
 MIND_HIDDEN_SIZE = 256                 # starting hidden width (increased from 128)
 # Still OFF, and this is why nothing has ever appeared to change when it was
