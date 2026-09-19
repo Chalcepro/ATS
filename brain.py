@@ -261,7 +261,15 @@ def describe(path: Path | None = None) -> str:
         "saved      %s" % blob.get("saved_at", "?"),
         "shape      %s" % blob.get("shape"),
         "ticks      %s" % format(blob.get("total_ticks", 0), ","),
-        "entropy    %.4f" % blob.get("entropy_coeff", float("nan")),
+        # Labelled as the COEFFICIENT, not "entropy".  They are different
+        # numbers that move in opposite directions - the controller pushes the
+        # coefficient DOWN when measured entropy is healthy - and a bare
+        # "entropy 0.0020" reads as total collapse when it actually means the
+        # opposite: the coefficient has relaxed to its floor.
+        "ent.coeff  %.4f%s" % (
+            blob.get("entropy_coeff", float("nan")),
+            "  (at floor - exploration was healthy)"
+            if abs(blob.get("entropy_coeff", -1) - config_rl.ENTROPY_COEFF) < 1e-9 else ""),
         "episodes   %s" % prog.get("episodes", 0),
         "passed     %s" % ", ".join(prog.get("passed") or ["(none)"]),
     ]
