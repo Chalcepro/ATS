@@ -144,6 +144,11 @@ MIND_MAX_HIDDEN_SIZE = 1024            # eventual upper bound (not a hard ceilin
 # only route 47% of the time on `avoid`/`hazards` and 82% on primary at 11x11.
 # False restores the old random placement.
 HAZARDS_LEAVE_A_SAFE_ROUTE = True
+# "Route around the lava" needs a room with a route around it.  Perfect-maze
+# corridors are one cell wide, so only 35% of route cells have an alternative;
+# hazard stages get extra openings to take that to 77%.  Stages with no
+# hazards keep the topology they were tuned and passed on.
+BRAID_MAZE_FOR_HAZARDS = True
 
 MIND_GROWTH_MIN_ENTROPY = 0.30         # below this the policy has collapsed, not
                                        # run out of room - capacity won't help

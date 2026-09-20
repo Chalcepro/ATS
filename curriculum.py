@@ -366,7 +366,24 @@ class CurriculumEnv:
         # A perfect maze has exactly one route anywhere, which makes a wrong
         # turn expensive and the credit assignment long. A few extra openings
         # keep it a maze without making it a punishment.
-        for _ in range(n // 2):
+        #
+        # A stage WITH hazards needs more than a few.  In a perfect maze only
+        # 35% of the cells on the route have any way round them, so "route
+        # around the lava" is usually not a thing the room permits - the
+        # hazard is either a wall or irrelevant, and neither teaches it.
+        # Braiding lifts that, and the detour rate with it - but openness is
+        # not free: `avoid` respawns its goals and does no damage, so a more
+        # open room just lets a competent agent farm more of them, and its
+        # best-case return runs 6.2 -> 10.3 -> 16.0 -> 18.4 -> 32.4 as the
+        # braid goes 0 -> n/3 -> n/2 -> n -> 1.5n.  That is the rung getting
+        # easier, not better.  n/3 roughly doubles the detour rate (24% ->
+        # 41%) for the smallest move in difficulty, so it is the setting.
+        # Stages with no hazards are untouched: that is the topology they
+        # were tuned on and already passed.
+        extra = n // 2
+        if self.stage.hazards and getattr(config_rl, 'BRAID_MAZE_FOR_HAZARDS', True):
+            extra += n // 3
+        for _ in range(extra):
             x = self.rng.randrange(1, n - 1)
             y = self.rng.randrange(1, n - 1)
             g[y][x] = T_FLOOR
@@ -397,6 +414,71 @@ class CurriculumEnv:
                 stack.append((nx, ny))
         return all(g in seen for g in self.goals)
 
+    def _route_len(self, block):
+        """Steps to the nearest goal, treating *block* as impassable."""
+        from collections import deque
+        n = self.stage.grid
+        start = (self.ax, self.ay)
+        goals = set(self.goals)
+        seen = {start}
+        q = deque([(start, 0)])
+        while q:
+            (x, y), d = q.popleft()
+            if (x, y) in goals:
+                return d
+            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                nx, ny = x + dx, y + dy
+                if not (0 <= nx < n and 0 <= ny < n) or (nx, ny) in seen:
+                    continue
+                if self.grid[ny][nx] == T_WALL or (nx, ny) in block:
+                    continue
+                seen.add((nx, ny))
+                q.append(((nx, ny), d + 1))
+        return None
+
+    def _direct_path(self):
+        """Cells on one shortest agent->goal route, excluding both ends."""
+        from collections import deque
+        n = self.stage.grid
+        start = (self.ax, self.ay)
+        goals = set(self.goals)
+        prev = {start: None}
+        q = deque([start])
+        end = None
+        while q and end is None:
+            x, y = q.popleft()
+            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                nx, ny = x + dx, y + dy
+                if not (0 <= nx < n and 0 <= ny < n) or (nx, ny) in prev:
+                    continue
+                if self.grid[ny][nx] == T_WALL:
+                    continue
+                prev[(nx, ny)] = (x, y)
+                if (nx, ny) in goals:
+                    end = (nx, ny)
+                    break
+                q.append((nx, ny))
+        if end is None:
+            return []
+        path = []
+        cur = prev[end]
+        while cur is not None and cur != start:
+            path.append(cur)
+            cur = prev[cur]
+        return path
+
+    def _detour_cost(self, hazards):
+        """Extra steps the safe route costs over walking straight through.
+
+        Zero means the hazards are decoration - the agent reaches the goal
+        just as fast whether or not it cares about them.
+        """
+        direct = self._route_len(set())
+        safe = self._route_len(set(hazards))
+        if direct is None or safe is None:
+            return 0
+        return safe - direct
+
     def _place_hazards(self, taken, n):
         """Hazards that leave at least one lava-free route to every goal.
 
@@ -413,18 +495,54 @@ class CurriculumEnv:
         the room genuinely has no room for that many hazards, place fewer -
         a rung with two avoidable hazards teaches avoidance; a rung with
         three unavoidable ones teaches that avoidance does not work.
+
+        But "avoidable" is not enough on its own.  Merely rejecting blocking
+        placements left the lava somewhere irrelevant 97% of the time, which
+        fails the rung from the other side: an agent that never meets a
+        hazard on its way anywhere learns nothing about hazards and then
+        walks into the first one that matters.  So among the placements that
+        DO leave a way round, prefer one that sits on the direct route and
+        makes the safe way round longer.  Costly to avoid, never impossible
+        to avoid - that is the whole lesson in one room.
         """
         if n <= 0:
             return []
+        # Seed one hazard directly onto the route first.  Sampling at random
+        # and hoping it lands on the path finds a detour in about a fifth of
+        # rooms; putting it there on purpose and then checking a way round
+        # still exists gets the lesson into most of them, and the safe-route
+        # check is what keeps it from becoming a wall.
+        best = None
+        on_path = [c for c in self._direct_path() if c not in taken]
+        self.rng.shuffle(on_path)
+        for seed_cell in on_path[:8]:
+            rest = [c for c in self._free_cells()
+                    if c not in taken and c != seed_cell]
+            self.rng.shuffle(rest)
+            pick = [seed_cell] + rest[:max(0, n - 1)]
+            if len(pick) < n or not self._safe_route_exists(pick):
+                continue
+            if self._detour_cost(pick) > 0:
+                taken.update(pick)
+                return pick
+
         for _ in range(24):
             free = [c for c in self._free_cells() if c not in taken]
             if len(free) < n:
                 break
             self.rng.shuffle(free)
             pick = free[:n]
-            if self._safe_route_exists(pick):
+            if not self._safe_route_exists(pick):
+                continue
+            detour = self._detour_cost(pick)
+            if detour > 0:
                 taken.update(pick)
                 return pick
+            if best is None:
+                best = pick
+        if best is not None:
+            taken.update(best)
+            return best
         # Could not fit n avoidable hazards; add them one at a time and stop
         # at the last one that still leaves a way round.
         out = []
