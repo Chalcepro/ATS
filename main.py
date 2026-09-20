@@ -256,6 +256,7 @@ def run_gui(args):
         num_eps = target_episodes if target_episodes is not None else config_rl.EPISODES
         ep      = 0
         state   = env.reset()
+        sl.reset_memory()
         tracer.begin(env, ep + 1)
         done    = False
         ep_rewards = []
@@ -373,6 +374,7 @@ def run_gui(args):
                               f"{stage.window} episodes (needed {stage.pass_rate:.0%})")
                         env = _env_for_selection(gui)
                         state, done, ep_rewards = env.reset(), False, []
+                        sl.reset_memory()
                         tracer.begin(env, ep + 1)
                         continue
 
@@ -386,6 +388,7 @@ def run_gui(args):
 
                 # Next episode
                 state      = env.reset()
+                sl.reset_memory()
                 done       = False
                 ep_rewards = []
                 tracer.begin(env, ep + 1)
@@ -416,7 +419,7 @@ def run_gui(args):
 
             learner.collect(state=prev_state, action=action, reward=reward,
                             log_prob=sl.last_log_prob, value=sl.last_value,
-                            action_mask=mask, done=done)
+                            action_mask=mask, done=done, hidden=sl.last_hidden)
             if learner.maybe_update() and learner.last_losses:
                 gui.record_loss(*learner.last_losses)
 
@@ -462,6 +465,7 @@ def run_headless(args):
 
     for ep in range(1, num_eps + 1):
         state      = env.reset()
+        sl.reset_memory()
         done       = False
         ep_rewards = []
 
@@ -473,7 +477,7 @@ def run_headless(args):
             ep_rewards.append(reward)
             learner.collect(state=prev_state, action=action, reward=reward,
                             log_prob=sl.last_log_prob, value=sl.last_value,
-                            action_mask=mask, done=done)
+                            action_mask=mask, done=done, hidden=sl.last_hidden)
             learner.maybe_update()
 
         learner.flush()

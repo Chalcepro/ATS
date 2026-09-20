@@ -78,7 +78,7 @@ def run(episodes: int, max_ticks: int, use_random: bool) -> None:
                 action = random.choice(valid) if valid else 0
             else:
                 with torch.no_grad():
-                    logits, _ = policy(
+                    logits, _, _ = policy(
                         torch.tensor(state, dtype=torch.float32).unsqueeze(0),
                         action_mask=torch.tensor(mask, dtype=torch.float32).unsqueeze(0),
                     )

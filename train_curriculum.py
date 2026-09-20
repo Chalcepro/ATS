@@ -48,12 +48,16 @@ def run_episode(env, policy, learner, tracer=None, episode=0):
     done = False
     total = 0.0
     info = {}
+    # Memory starts empty every episode.  Carrying it across is how an agent
+    # learns to be confused about which room it is in.
+    hx = policy.initial_hidden(1)
     while not done:
         mask = env.action_mask()
         st = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
         mt = torch.tensor(mask, dtype=torch.float32).unsqueeze(0)
         with torch.no_grad():
-            logits, value = policy(st, action_mask=mt)
+            hx_in = hx
+            logits, value, hx = policy(st, action_mask=mt, hx=hx)
             dist = torch.distributions.Categorical(logits=logits)
             a = dist.sample()
             logp = dist.log_prob(a)
@@ -71,11 +75,41 @@ def run_episode(env, policy, learner, tracer=None, episode=0):
         total += reward
         learner.collect(state=prev_state, action=action, reward=reward,
                         log_prob=logp, value=value.squeeze(0),
-                        action_mask=mask, done=done)
+                        action_mask=mask, done=done,
+                        hidden=hx_in.squeeze(0).tolist())
         learner.maybe_update()
     if tracer:
         tracer.end(env, info)
     return total, info
+
+
+def greedy_pass_rate(env, policy, stage, episodes=40, seed0=999000):
+    """Success rate with argmax actions - no sampling, no luck.
+
+    Separate seeds from training so this is not scored on rooms the agent
+    has just been walked through.
+    """
+    policy.eval()
+    try:
+        succ = 0
+        for k in range(episodes):
+            e = type(env)(stage, seed=seed0 + k)
+            state = e._state()
+            hx = policy.initial_hidden(1)
+            done = False
+            n = 0
+            info = {}
+            while not done and n < stage.max_steps:
+                st = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+                mt = torch.tensor(e.action_mask(), dtype=torch.float32).unsqueeze(0)
+                with torch.no_grad():
+                    logits, _, hx = policy(st, action_mask=mt, hx=hx)
+                state, _, done, info = e.step(int(torch.argmax(logits)))
+                n += 1
+            succ += bool(info.get("success"))
+        return succ / episodes
+    finally:
+        policy.train()
 
 
 def train_stage(stage, policy, learner, max_episodes, seed=0, quiet=False,
@@ -118,6 +152,22 @@ def train_stage(stage, policy, learner, max_episodes, seed=0, quiet=False,
             on_tick(ep)
 
         if len(wins) == stage.window and sum(wins) / len(wins) >= stage.pass_rate:
+            # The rolling window measures the SAMPLING policy, and sampling
+            # is exploration.  In a small room a near-uniform policy stumbles
+            # onto the goal most episodes: a freshly initialised net scored
+            # 98% on the nursery window at entropy 1.37 while scoring 14%
+            # under argmax and walking 1.3 cells.  That is how corridors7 got
+            # marked passed and then played at 12%.
+            #
+            # So the window only nominates.  Promotion is decided by greedy
+            # play, where exploration cannot help.
+            gr = greedy_pass_rate(env, policy, stage)
+            if gr < stage.pass_rate * config_rl.GREEDY_GATE_FRACTION:
+                if not quiet:
+                    print('    window says %.0f%% but greedy play gives %.0f%% '
+                          '- not promoting' % (100.0 * sum(wins) / len(wins), 100 * gr))
+                wins.clear()
+                continue
             return True, ep, (statistics.mean(rewards), sum(wins) / len(wins),
                               time.time() - started)
 

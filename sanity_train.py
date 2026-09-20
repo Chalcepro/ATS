@@ -60,7 +60,7 @@ def _train() -> list[tuple[float, bool]]:
             st = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
             mt = torch.tensor(mask, dtype=torch.float32).unsqueeze(0)
             with torch.no_grad():
-                logits, value = policy(st, action_mask=mt)
+                logits, value, _ = policy(st, action_mask=mt)
                 dist = torch.distributions.Categorical(logits=logits)
                 a = dist.sample()
                 logp = dist.log_prob(a)

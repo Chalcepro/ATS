@@ -182,6 +182,14 @@ MIND_MAX_HIDDEN_SIZE = 1024            # eventual upper bound (not a hard ceilin
 # Never hand the agent a room it cannot solve.  Every goal must be reachable
 # four-connected (no diagonal squeezes - the agent has no diagonal move) and
 # without crossing a hazard.  Rooms that fail are regenerated.
+# A rung is nominated by the training window and confirmed by greedy play.
+# The window scores the sampling policy, and sampling is exploration: a
+# freshly initialised net passed the nursery window at 98% while playing at
+# 14% under argmax. Greedy play has no luck in it. The fraction allows the
+# greedy bar to sit a little under the window's, since argmax gives up the
+# exploration that occasionally rescues an episode.
+GREEDY_GATE_FRACTION = 0.85
+
 VALIDATE_MAPS = True
 
 HAZARDS_LEAVE_A_SAFE_ROUTE = True

@@ -31,6 +31,12 @@ class Transition:
     value: float
     action_mask: list[int]
     done: bool = False
+    # The recurrent state the action was chosen FROM.  Stored rather than
+    # recomputed: PPO re-evaluates the old policy on the old inputs, and for
+    # a recurrent policy the hidden state is part of the input.  Replaying
+    # the rollout to regenerate it would be exact but costs a forward pass
+    # per transition per epoch; storing it is the standard trade.
+    hidden: list[float] | None = None
 
 
 class ContinualLearner:
@@ -59,7 +65,8 @@ class ContinualLearner:
     # ------------------------------------------------------------------
     # Collect — called once per tick
     # ------------------------------------------------------------------
-    def collect(self, state, action, log_prob, reward, value, action_mask, done=False):
+    def collect(self, state, action, log_prob, reward, value, action_mask,
+                done=False, hidden=None):
         """Store one transition in the rolling buffer."""
         self.buffer.append(Transition(
             state=list(state),
@@ -69,6 +76,7 @@ class ContinualLearner:
             value=float(value),
             action_mask=list(action_mask),
             done=bool(done),
+            hidden=None if hidden is None else [float(v) for v in hidden],
         ))
         self._ticks_since_update += 1
         self._total_ticks += 1
@@ -138,6 +146,14 @@ class ContinualLearner:
         masks = torch.tensor([t.action_mask for t in transitions], dtype=torch.float32)
         old_values = [t.value for t in transitions]
 
+        # Recurrent states, zero-filled for any transition collected by a
+        # caller that does not thread them (so an un-updated loop degrades
+        # to the memoryless behaviour rather than crashing).
+        h = self.policy.hidden_size
+        hxs = torch.tensor(
+            [t.hidden if t.hidden is not None else [0.0] * h for t in transitions],
+            dtype=torch.float32)
+
         # --- GAE(lambda): episode-boundary aware, bootstrapped at the buffer edge ---
         # `mask` zeroes both the bootstrap and the lambda-return propagation across
         # a `done` step, so one episode's advantage never leaks into the next.
@@ -154,7 +170,8 @@ class ContinualLearner:
         returns = advantages + torch.tensor(old_values, dtype=torch.float32)
 
         for _ in range(config_rl.CONTINUAL_MINI_EPOCHS):
-            log_probs, values, entropy = self.policy.evaluate(states, actions, action_masks=masks)
+            log_probs, values, entropy = self.policy.evaluate(
+                states, actions, action_masks=masks, hxs=hxs)
 
             adv_norm = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 

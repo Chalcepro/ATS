@@ -43,6 +43,12 @@ class RLPolicy(nn.Module):
 
         self.fc1 = nn.Linear(self.state_size, self.hidden_size)
         self.fc2 = nn.Linear(self.hidden_size, self.hidden_size)
+        # Recurrence.  The remembered map already carries most of what the
+        # agent needs to know about the room; this carries what it cannot
+        # draw on a map - what it has already tried, and how long it has
+        # been getting nowhere.  Initialised so it starts near pass-through
+        # rather than scrambling a freshly-learned trunk.
+        self.gru = nn.GRUCell(self.hidden_size, self.hidden_size)
         self.actor = nn.Linear(self.hidden_size, self.action_size)
         self.critic = nn.Linear(self.hidden_size, 1)
 
@@ -95,7 +101,15 @@ class RLPolicy(nn.Module):
     # ------------------------------------------------------------------
     # Forward pass
     # ------------------------------------------------------------------
-    def forward(self, state, action_mask=None):
+    def initial_hidden(self, batch=None):
+        """Zero recurrent state.  Call at every episode boundary - carrying
+        one episode's memory into the next is how an agent learns to be
+        confused."""
+        w = next(self.parameters())
+        return (w.new_zeros(self.hidden_size) if batch is None
+                else w.new_zeros(batch, self.hidden_size))
+
+    def forward(self, state, action_mask=None, hx=None):
         """Return (logits, value).
 
         If *action_mask* is provided (0/1 tensor same shape as logits),
@@ -142,28 +156,36 @@ class RLPolicy(nn.Module):
 
         x = torch.relu(self.fc1(state_in) + emb_feat)
         x = torch.relu(self.fc2(x))
+
+        h_in = self.initial_hidden(x.shape[0]) if hx is None else hx
+        if h_in.dim() == 1:
+            h_in = h_in.unsqueeze(0)
+        h_out = self.gru(x, h_in)
+        x = h_out
+
         logits = self.actor(x)
         value = self.critic(x).squeeze(-1)
 
         if state.dim() == 1:
             logits = logits.squeeze(0)
             value = value.squeeze(0)
+            h_out = h_out.squeeze(0)
 
         if action_mask is not None:
             logits = logits + (1.0 - action_mask) * (-1e8)
-        return logits, value
+        return logits, value, h_out
 
-    def act(self, state, action_mask=None):
+    def act(self, state, action_mask=None, hx=None):
         """Sample an action from the policy (used during rollouts)."""
-        logits, value = self.forward(state, action_mask=action_mask)
+        logits, value, h_out = self.forward(state, action_mask=action_mask, hx=hx)
         dist = torch.distributions.Categorical(logits=logits)
         action = dist.sample()
         log_prob = dist.log_prob(action)
-        return action, log_prob, value
+        return action, log_prob, value, h_out
 
-    def evaluate(self, states, actions, action_masks=None):
+    def evaluate(self, states, actions, action_masks=None, hxs=None):
         """Evaluate log-probs, values, entropy for a batch (PPO update)."""
-        logits, values = self.forward(states, action_mask=action_masks)
+        logits, values, _ = self.forward(states, action_mask=action_masks, hx=hxs)
         dist = torch.distributions.Categorical(logits=logits)
         log_probs = dist.log_prob(actions)
         entropy = dist.entropy()
@@ -213,6 +235,22 @@ class RLPolicy(nn.Module):
         new_actor.bias.data[:] = self.actor.bias.data
 
         # --- critic: (old → 1) → (new → 1) ---
+        # --- gru: (old -> old) -> (new -> new) ---
+        new_gru = nn.GRUCell(new_hidden_size, new_hidden_size)
+        for name in ('weight_ih', 'weight_hh', 'bias_ih', 'bias_hh'):
+            src = getattr(self.gru, name).data
+            dst = getattr(new_gru, name).data
+            dst.zero_()
+            if src.dim() == 2:
+                # GRUCell stacks 3 gates along dim 0; copy each gate block
+                # into the top-left of its new block rather than the top of
+                # the whole matrix, or reset and update swap places.
+                for g in range(3):
+                    dst[g*new_hidden_size:g*new_hidden_size+old, :old] =                         src[g*old:(g+1)*old, :old]
+            else:
+                for g in range(3):
+                    dst[g*new_hidden_size:g*new_hidden_size+old] = src[g*old:(g+1)*old]
+
         new_critic = nn.Linear(new_hidden_size, 1)
         nn.init.zeros_(new_critic.weight)
         nn.init.zeros_(new_critic.bias)
@@ -222,6 +260,7 @@ class RLPolicy(nn.Module):
         self.embed_proj = new_embed_proj
         self.fc1 = new_fc1
         self.fc2 = new_fc2
+        self.gru = new_gru
         self.actor = new_actor
         self.critic = new_critic
         self.hidden_size = new_hidden_size

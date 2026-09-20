@@ -30,6 +30,11 @@ _MAX_RECORDING_TICKS = 80
 class SolutionLoop:
     """Orchestrates  detect → recall → act → score → store."""
 
+    def reset_memory(self):
+        """Drop the recurrent state.  Call at every episode boundary."""
+        self._hx = None
+        self.last_hidden = None
+
     def __init__(self, policy, *, experience_memory: ExperienceMemory | None = None):
         self.policy = policy
         self.need_detector = NeedDetector()
@@ -41,6 +46,11 @@ class SolutionLoop:
         self._last_need_vec: list[float] = [0.0] * NUM_NEEDS
         self.last_log_prob = None
         self.last_value = None
+        # Recurrent state, owned here because this is what drives the policy
+        # in the GUI/world loop.  `last_hidden` is the state the action was
+        # chosen FROM, which is what PPO has to re-evaluate against.
+        self._hx = None
+        self.last_hidden = None
         self._trace = {}
 
     # ------------------------------------------------------------------
@@ -78,7 +88,10 @@ class SolutionLoop:
         mask_t = torch.tensor(action_mask, dtype=torch.float32).unsqueeze(0)
 
         with torch.no_grad():
-            logits, value = self.policy(state_t, action_mask=mask_t)
+            if self._hx is None:
+                self._hx = self.policy.initial_hidden(1)
+            self.last_hidden = self._hx.squeeze(0).tolist()
+            logits, value, self._hx = self.policy(state_t, action_mask=mask_t, hx=self._hx)
 
             # The *policy's own* distribution.  PPO's stored `old_log_prob`
             # MUST come from this one, not from the hint-boosted behaviour
