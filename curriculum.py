@@ -315,6 +315,13 @@ def default_ladder(max_grid=12, with_trail=False):
     return L
 
 
+def _unit(dx, dy):
+    """(dx, dy) scaled to length 1.  Shared definition so the curriculum and
+    the real world cannot drift apart again."""
+    m = (dx * dx + dy * dy) ** 0.5
+    return (0.0, 0.0) if m < 1e-9 else (dx / m, dy / m)
+
+
 class CurriculumEnv:
     """One room, at whatever difficulty the stage says.
 
@@ -507,25 +514,12 @@ class CurriculumEnv:
         """
         if n <= 0:
             return []
-        # Seed one hazard directly onto the route first.  Sampling at random
-        # and hoping it lands on the path finds a detour in about a fifth of
-        # rooms; putting it there on purpose and then checking a way round
-        # still exists gets the lesson into most of them, and the safe-route
-        # check is what keeps it from becoming a wall.
+        # NOTE: an earlier version deliberately seated one hazard ON the
+        # route so avoiding it cost something.  Removed on request: while the
+        # lesson is still "cross the room", a hazard on the only line to the
+        # goal is not a harder lesson, it is a different one the agent has
+        # not been taught yet.  ROUTE_MUST_BE_HAZARD_FREE brings it back.
         best = None
-        on_path = [c for c in self._direct_path() if c not in taken]
-        self.rng.shuffle(on_path)
-        for seed_cell in on_path[:8]:
-            rest = [c for c in self._free_cells()
-                    if c not in taken and c != seed_cell]
-            self.rng.shuffle(rest)
-            pick = [seed_cell] + rest[:max(0, n - 1)]
-            if len(pick) < n or not self._safe_route_exists(pick):
-                continue
-            if self._detour_cost(pick) > 0:
-                taken.update(pick)
-                return pick
-
         for _ in range(24):
             free = [c for c in self._free_cells() if c not in taken]
             if len(free) < n:
@@ -570,6 +564,49 @@ class CurriculumEnv:
     # -- episode -----------------------------------------------------------
 
     def reset(self):
+        """Build a room, and keep building until it is actually playable.
+
+        A map is only a training ground if a route from the agent to every
+        goal exists, is four-connected (the agent cannot move diagonally, so
+        a corner-to-corner gap is a wall), and is free of hazards.  Anything
+        else is a room the agent cannot solve, and an episode it can only
+        lose - which teaches it that trying does not work.
+
+        Measured before this: 1 room in 1000 on primary/junior had a region
+        cut off by a diagonal-only gap.  Rare, but it is exactly the case
+        that is invisible from the screen and impossible from inside.
+        """
+        for _ in range(40):
+            self._build()
+            if not getattr(config_rl, 'VALIDATE_MAPS', True):
+                return self._state()
+            if self._playable():
+                return self._state()
+        # Could not generate a playable room at this difficulty; fall back to
+        # one with no hazards at all rather than hand back an unwinnable map.
+        self._build(force_no_hazards=True)
+        return self._state()
+
+    def _playable(self):
+        """Every goal reachable from the agent, 4-connected, without lava."""
+        from collections import deque
+        n = self.stage.grid
+        block = set(self.hazards)
+        seen = {(self.ax, self.ay)}
+        q = deque([(self.ax, self.ay)])
+        while q:
+            x, y = q.popleft()
+            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                c = (x + dx, y + dy)
+                if not (0 <= c[0] < n and 0 <= c[1] < n) or c in seen or c in block:
+                    continue
+                if self.grid[c[1]][c[0]] == T_WALL:
+                    continue
+                seen.add(c)
+                q.append(c)
+        return all(g in seen for g in self.goals)
+
+    def _build(self, force_no_hazards=False):
         s = self.stage
         self.grid = self._blank()
         if s.walls:
@@ -582,9 +619,10 @@ class CurriculumEnv:
         # A trail starts with exactly one goal on the floor however many it
         # will eventually ask for; the rest arrive as it is walked.
         self.goals = self._place(taken, 1 if s.sequence else s.goals)
-        self.hazards = (self._place_hazards(taken, s.hazards)
+        want = 0 if force_no_hazards else s.hazards
+        self.hazards = (self._place_hazards(taken, want)
                         if getattr(config_rl, 'HAZARDS_LEAVE_A_SAFE_ROUTE', True)
-                        else self._place(taken, s.hazards))
+                        else self._place(taken, want))
         for (hx, hy) in self.hazards:
             self.grid[hy][hx] = T_HAZARD
         self.trash = self._place(taken, 2 if s.can_pick else 0)
@@ -597,7 +635,10 @@ class CurriculumEnv:
         self.still = 0
         self.last_pos = (self.ax, self.ay)
         self.dead = False
-        return self._state()
+        # What the agent knows, as opposed to what it can currently see.
+        self.seen = {}        # (x,y) -> tile id last observed
+        self.visit = {}       # (x,y) -> recency, 1.0 = standing here now
+        self._observe()
 
     def action_mask(self):
         """Only the actions this stage has taught.
@@ -632,6 +673,67 @@ class CurriculumEnv:
                 best, bd = (x, y), d
         return best, bd
 
+    def _observe(self):
+        """Reveal what is within sight, and mark where we are standing.
+
+        Sight is line-of-nothing - a plain radius, no occlusion.  The point
+        is not realism, it is that a tile once seen stays known; the previous
+        version re-encountered every cell as if for the first time.
+        """
+        r = config_rl.PATCH_RADIUS
+        n = self.stage.grid
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                x, y = self.ax + dx, self.ay + dy
+                if 0 <= x < n and 0 <= y < n:
+                    self.seen[(x, y)] = self.grid[y][x]
+        d = config_rl.MEM_VISIT_DECAY
+        for k in list(self.visit):
+            self.visit[k] *= d
+            if self.visit[k] < 0.01:
+                del self.visit[k]
+        self.visit[(self.ax, self.ay)] = 1.0
+
+    def _route_cells(self):
+        """Cells on a shortest hazard-free route from the agent to a goal.
+
+        The pathway, not the pointer.  A bearing is useless the moment a wall
+        stands between you and the thing it points at; this says which way to
+        turn.  Nothing obliges the agent to follow it - it is one more channel
+        of observation, and the stages that get it are listed in config.
+        """
+        if self.stage.name not in getattr(config_rl, 'ROUTE_HINT_STAGES', ()):
+            return set()
+        from collections import deque
+        n = self.stage.grid
+        block = set(self.hazards)
+        start = (self.ax, self.ay)
+        goals = set(self.goals)
+        prev = {start: None}
+        q = deque([start])
+        end = None
+        while q and end is None:
+            cur = q.popleft()
+            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                c = (cur[0] + dx, cur[1] + dy)
+                if not (0 <= c[0] < n and 0 <= c[1] < n) or c in prev or c in block:
+                    continue
+                if self.grid[c[1]][c[0]] == T_WALL:
+                    continue
+                prev[c] = cur
+                if c in goals:
+                    end = c
+                    break
+                q.append(c)
+        if end is None:
+            return set()
+        out = set()
+        cur = end
+        while cur is not None:
+            out.add(cur)
+            cur = prev[cur]
+        return out
+
     def _state(self):
         n = self.stage.grid
         span = max(1, 2 * (n - 1))
@@ -662,13 +764,17 @@ class CurriculumEnv:
         # vector: without a signed bearing to the goal the policy has to infer
         # direction from the patch alone, which it can only do once the goal is
         # already within two tiles.
+        # UNIT vector, to match agent.build_state.  These two encoders write
+        # the same four slots and used to disagree: the curriculum scaled the
+        # delta by the grid span (so magnitude carried distance) while the
+        # world normalised to length 1.  A policy trained on one read the
+        # other wrong.  Distance already has its own slot above, so direction
+        # alone is the honest content here.
         d = config_rl.IDX_DIR_START
         if goal:
-            s[d + 0] = (goal[0] - self.ax) / (n - 1)
-            s[d + 1] = (goal[1] - self.ay) / (n - 1)
+            s[d + 0], s[d + 1] = _unit(goal[0] - self.ax, goal[1] - self.ay)
         if host:
-            s[d + 2] = (host[0] - self.ax) / (n - 1)
-            s[d + 3] = (host[1] - self.ay) / (n - 1)
+            s[d + 2], s[d + 3] = _unit(host[0] - self.ax, host[1] - self.ay)
 
         # The 5x5 patch around the agent
         p = config_rl.IDX_PATCH_START
@@ -677,6 +783,24 @@ class CurriculumEnv:
         for dy in range(-r, r + 1):
             for dx in range(-r, r + 1):
                 s[p + i] = float(self._tile(self.ax + dx, self.ay + dy))
+                i += 1
+
+        # Remembered map: three channels over one window, agent-centred.
+        route = self._route_cells()
+        mr = config_rl.MEM_RADIUS
+        k0 = config_rl.IDX_MEM_KNOWN_START
+        v0 = config_rl.IDX_MEM_VISIT_START
+        r0 = config_rl.IDX_MEM_ROUTE_START
+        i = 0
+        for dy in range(-mr, mr + 1):
+            for dx in range(-mr, mr + 1):
+                c = (self.ax + dx, self.ay + dy)
+                if c in self.seen:
+                    # +1 so that 0 means "never seen", which is a different
+                    # thing from "seen, and it was empty floor".
+                    s[k0 + i] = (self.seen[c] + 1.0) / (config_rl.TILE_VOCAB_SIZE + 1.0)
+                s[v0 + i] = self.visit.get(c, 0.0)
+                s[r0 + i] = 1.0 if c in route else 0.0
                 i += 1
 
         s[config_rl.IDX_MASK_START:] = [float(v) for v in self.action_mask()]
@@ -781,6 +905,7 @@ class CurriculumEnv:
         else:
             done = self.dead or self.steps >= s.max_steps or (not s.respawn and not self.goals)
             success = self.collected >= s.target and not self.dead
+        self._observe()          # memory updates once per tick, after moving
         return self._state(), reward, done, {
             "collected": self.collected, "success": success,
             "dead": self.dead, "steps": self.steps, "health": self.health,

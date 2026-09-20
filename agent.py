@@ -714,6 +714,22 @@ class Agent:
             return (0.0, 0.0)
         return (dx / mag, dy / mag)
 
+    def _remember(self, world):
+        """Fold what is currently visible into the persistent map."""
+        if not hasattr(self, 'seen'):
+            self.seen, self.visit = {}, {}
+        r = config_rl.PATCH_RADIUS
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                c = (self.x + dx, self.y + dy)
+                self.seen[c] = world.tile_type_at(c[0], c[1])
+        d = config_rl.MEM_VISIT_DECAY
+        for k in list(self.visit):
+            self.visit[k] *= d
+            if self.visit[k] < 0.01:
+                del self.visit[k]
+        self.visit[(self.x, self.y)] = 1.0
+
     def build_state(self, world, day_night, memory_features, action_mask=None):
         if action_mask is None:
             action_mask = self.get_action_mask(world, day_night)
@@ -810,12 +826,43 @@ class Agent:
         state.extend(self._unit_delta(obj_pos[0], obj_pos[1]) if obj_pos else (0.0, 0.0))
         state.extend(self._unit_delta(ent.x, ent.y) if ent else (0.0, 0.0))
 
+        assert len(state) == config_rl.IDX_PATCH_START, (
+            'state layout drift: patch should start at %d, appends reached %d'
+            % (config_rl.IDX_PATCH_START, len(state)))
+
         # Egocentric tile patch (PATCH_TILES) — raw tile ids, embedded by the
         # policy.  Row-major, world-aligned, centred on the agent.
         r = config_rl.PATCH_RADIUS
         for dy in range(-r, r + 1):
             for dx in range(-r, r + 1):
                 state.append(float(world.tile_type_at(self.x + dx, self.y + dy)))
+
+        # Remembered map (3 x MEM_CELLS) — what the agent KNOWS, not what it
+        # can currently see.  Same three channels, same order, same window as
+        # curriculum._state: known tile, visit recency, route.  The world has
+        # no precomputed route, so that channel is zeros here; the curriculum
+        # uses it as a fading teaching aid and the world is where the skill
+        # has to stand on its own.
+        assert len(state) == config_rl.IDX_MEM_KNOWN_START, (
+            'state layout drift: memory should start at %d, appends reached %d'
+            % (config_rl.IDX_MEM_KNOWN_START, len(state)))
+        self._remember(world)
+        mr = config_rl.MEM_RADIUS
+        known, visit = [], []
+        for dy in range(-mr, mr + 1):
+            for dx in range(-mr, mr + 1):
+                c = (self.x + dx, self.y + dy)
+                t = self.seen.get(c)
+                known.append(0.0 if t is None
+                             else (t + 1.0) / (config_rl.TILE_VOCAB_SIZE + 1.0))
+                visit.append(self.visit.get(c, 0.0))
+        state.extend(known)
+        state.extend(visit)
+        state.extend([0.0] * config_rl.MEM_CELLS)      # route: not in the world
+
+        assert len(state) == config_rl.IDX_MASK_START, (
+            'state layout drift: mask should start at %d, appends reached %d'
+            % (config_rl.IDX_MASK_START, len(state)))
 
         # Action mask (ACTION_SIZE) — must stay at the tail of the vector
         state.extend(float(v) for v in action_mask)

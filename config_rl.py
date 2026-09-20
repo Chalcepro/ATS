@@ -71,7 +71,7 @@ TILE_VOCAB_SIZE   = 16     # world.py defines TILE_EMPTY..TILE_SPORE = 0..12
 # with NO direction — so "walk toward the food" was not a learnable function
 # of the observation, and a straight line (which maximises new-tile
 # exploration reward) was close to optimal.  See updates/2026-09-05b ... .
-PATCH_RADIUS = 2                              # 2 -> 5x5 window centred on the agent
+PATCH_RADIUS = 3                              # 3 -> 7x7 window centred on the agent
 PATCH_SIZE   = PATCH_RADIUS * 2 + 1
 PATCH_TILES  = PATCH_SIZE * PATCH_SIZE        # 25
 
@@ -90,8 +90,44 @@ IDX_OBJ_ID     = 19        # nearest object id, NORMALISED (id/ITEM_VOCAB_SIZE)
 IDX_INV_START  = 20        # 7 slots x (norm_item_id, norm_count)
 IDX_DIR_START  = 54        # obj_dx, obj_dy, hostile_dx, hostile_dy
 IDX_PATCH_START = IDX_DIR_START + 4
-IDX_MASK_START  = IDX_PATCH_START + PATCH_TILES
-STATE_SIZE = IDX_MASK_START + ACTION_SIZE     # 108
+
+# ---------------------------------------------------------------------------
+# Remembered map  (added 2026-09-19)
+# ---------------------------------------------------------------------------
+# The agent could see PATCH_RADIUS cells and remember nothing.  Measured
+# consequence: success tracked sight range almost exactly - 86% when the goal
+# spawned 1 step away, 7% at 8+ - because outside the patch all it had was a
+# straight-line bearing, and a straight line in a maze points into a wall.
+# With no memory it then walked into that wall again, and again; one cell was
+# entered 98 times in a single episode.
+#
+# So: a larger window carrying what the agent KNOWS rather than what it can
+# currently see.  Three channels over the same grid:
+#
+#   MEM_KNOWN  what tile was last seen here, 0 = never seen
+#   MEM_VISIT  how recently the agent itself stood here, 0 = never
+#   MEM_ROUTE  is this cell on a route to the goal
+#
+# MEM_ROUTE is the pathway rather than the compass.  A bearing says "the gold
+# is that way" while you stand at the ocean; a route says which turn to take.
+# It is information, not instruction - nothing forces the agent to follow it,
+# and ROUTE_HINT_STAGES fades it out so later rungs run without it.
+MEM_RADIUS = 5                                # 5 -> 11x11 remembered window
+MEM_SIZE   = MEM_RADIUS * 2 + 1
+MEM_CELLS  = MEM_SIZE * MEM_SIZE              # 121
+MEM_VISIT_DECAY = 0.97                        # per tick; ~30 ticks of usable trail
+
+IDX_MEM_KNOWN_START = IDX_PATCH_START + PATCH_TILES
+IDX_MEM_VISIT_START = IDX_MEM_KNOWN_START + MEM_CELLS
+IDX_MEM_ROUTE_START = IDX_MEM_VISIT_START + MEM_CELLS
+
+IDX_MASK_START  = IDX_MEM_ROUTE_START + MEM_CELLS
+STATE_SIZE = IDX_MASK_START + ACTION_SIZE     # 495
+
+# The route channel is a teaching aid, not a permanent sense.  Stages named
+# here get it; everything else sees zeros, so the skill has to survive its
+# removal rather than depend on it.
+ROUTE_HINT_STAGES = ('nursery', 'corridors', 'corridors7', 'avoid')
 
 # Hazard & Ocean constants
 OCEAN_SHARK_TICKS = 3     # ticks before lethal shark arrives
@@ -143,6 +179,11 @@ MIND_MAX_HIDDEN_SIZE = 1024            # eventual upper bound (not a hard ceilin
 # The maze carves one-cell-wide corridors, so an unchecked hazard sits on the
 # only route 47% of the time on `avoid`/`hazards` and 82% on primary at 11x11.
 # False restores the old random placement.
+# Never hand the agent a room it cannot solve.  Every goal must be reachable
+# four-connected (no diagonal squeezes - the agent has no diagonal move) and
+# without crossing a hazard.  Rooms that fail are regenerated.
+VALIDATE_MAPS = True
+
 HAZARDS_LEAVE_A_SAFE_ROUTE = True
 # "Route around the lava" needs a room with a route around it.  Perfect-maze
 # corridors are one cell wide, so only 35% of route cells have an alternative;
