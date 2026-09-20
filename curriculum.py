@@ -881,10 +881,23 @@ class CurriculumEnv:
                 reward += R_CLEAR
 
         # Hazards and hostiles only bite once damage is on the syllabus.
+        # The reward penalty is OUTSIDE the damage guard on purpose.
+        #
+        # It used to be inside, so on `avoid` - damage=False, the rung whose
+        # entire stated lesson is "tile 6 is bad" - standing in lava cost
+        # nothing whatsoever. No health, no reward. The rung did not teach
+        # avoidance; it spent 737 episodes teaching that lava is a free
+        # shortcut, and then `hazards` turned damage on and the agent died
+        # 47% of the time and failed the rung at the 8000-episode cap.
+        #
+        # The comment on `avoid` says damage is off so the agent survives
+        # long enough to form the association. That reasoning is right - it
+        # just also removed the only signal the association could form from.
+        if self._tile(self.ax, self.ay) == T_HAZARD:
+            reward += R_HAZARD
         if s.damage:
             if self._tile(self.ax, self.ay) == T_HAZARD:
                 self.health -= s.hazard_damage
-                reward += R_HAZARD
             for h in self.hostiles:
                 if abs(h[0] - self.ax) + abs(h[1] - self.ay) <= 1:
                     self.health -= max(1, s.hazard_damage // 2)
@@ -954,10 +967,15 @@ def best_case_return(stage: Stage, trials: int = 40, seed: int = 0) -> float:
 
                 def risky(nx, ny):
                     """Would a competent player step here?"""
-                    if not s.damage:
-                        return False
+                    # Lava is worth avoiding even where it cannot kill: the
+                    # reward penalty applies on every rung, which is what
+                    # makes `avoid` teach anything at all. Keying this on
+                    # s.damage made the reference walk straight through it
+                    # on that rung and score -26.
                     if env._tile(nx, ny) == T_HAZARD:
                         return True
+                    if not s.damage:
+                        return False
                     # Standing next to something that bites is also a choice.
                     for h in env.hostiles:
                         if abs(h[0] - nx) + abs(h[1] - ny) <= 1:
