@@ -139,6 +139,12 @@ MIND_MAX_HIDDEN_SIZE = 1024            # eventual upper bound (not a hard ceilin
 # A flat reward plateau is three different situations wearing the same face:
 # mastered, stuck, and converged-correct.  Only ONE of them wants more
 # capacity.  These narrow the trigger to that one.
+# A rung that teaches "avoid the lava" has to leave a way round the lava.
+# The maze carves one-cell-wide corridors, so an unchecked hazard sits on the
+# only route 47% of the time on `avoid`/`hazards` and 82% on primary at 11x11.
+# False restores the old random placement.
+HAZARDS_LEAVE_A_SAFE_ROUTE = True
+
 MIND_GROWTH_MIN_ENTROPY = 0.30         # below this the policy has collapsed, not
                                        # run out of room - capacity won't help
 MIND_GROWTH_MAX_SUCCESS = 0.50         # above this it is succeeding; leave it alone
