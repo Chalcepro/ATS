@@ -21,6 +21,7 @@ file's own ladder on its first run.
 from __future__ import annotations
 
 import argparse
+import random
 import statistics
 import sys
 import time
@@ -113,9 +114,30 @@ def greedy_pass_rate(env, policy, stage, episodes=40, seed0=999000):
 
 
 def train_stage(stage, policy, learner, max_episodes, seed=0, quiet=False,
-                on_tick=None, tracer=None):
-    """Returns (passed, episodes_used, last_window_stats)."""
+                on_tick=None, tracer=None, rehearse=(), rehearse_rate=0.25):
+    """Returns (passed, episodes_used, last_window_stats).
+
+    `rehearse` is the rungs already behind this one. One episode in four is
+    drawn from them, because nothing else in this file protects them.
+
+    Why that is needed: ContinualLearner is online PPO with a rolling buffer.
+    There is no replay, no EWC, no penalty for moving away from the old
+    weights - so training a new rung overwrites the last one and the "passed"
+    list becomes a historical claim rather than a current one. Measured after
+    training the senior tier with no rehearsal, on rungs that had all passed:
+
+        primary  9x9   70%  ok
+        junior   9x9   18%  against a 60% bar   (had passed)
+        junior  11x11  30%  against a 60% bar   (had passed)
+
+    Junior was traded for senior and neither was kept. The rehearsed episodes
+    do not count toward promotion - only the rung being trained does - they
+    are there to stop the weights drifting off everything underneath.
+    """
     env = CurriculumEnv(stage, seed=seed)
+    rehearsal_envs = [CurriculumEnv(s, seed=seed + 7000 + i)
+                      for i, s in enumerate(rehearse)]
+    rng = random.Random(seed + 991)
     wins = deque(maxlen=stage.window)
     rewards = deque(maxlen=stage.window)
     got = deque(maxlen=stage.window)
@@ -123,6 +145,11 @@ def train_stage(stage, policy, learner, max_episodes, seed=0, quiet=False,
     started = time.time()
 
     for ep in range(1, max_episodes + 1):
+        if rehearsal_envs and rng.random() < rehearse_rate:
+            # Trained on, not scored on: an old rung the policy still clears
+            # would otherwise inflate the window and promote it off this one.
+            run_episode(rng.choice(rehearsal_envs), policy, learner, None, ep)
+
         total, info = run_episode(env, policy, learner, tracer, ep)
         wins.append(1 if info.get("success") else 0)
         # The growth check cannot tell "flat because solved" from "flat
@@ -209,6 +236,10 @@ def main(argv=None):
     ap.add_argument("--episodes", type=int, default=4000,
                     help="cap per rung before giving up on it")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--rehearse", type=float, default=0.25,
+                    help="fraction of episodes drawn from earlier rungs, "
+                         "so climbing does not undo what is below. 0 for "
+                         "the old behaviour")
     ap.add_argument("--no-trace", action="store_true",
                     help="skip the per-tick path log (keeps the summaries)")
     ap.add_argument("--fresh", action="store_true", help="ignore any saved weights")
@@ -264,9 +295,25 @@ def main(argv=None):
             print("\n=== %s   goals=%d hazards=%d hostiles=%d  pass %.0f%% of %d"
                   % (key, rung.goals, rung.hazards, rung.hostiles,
                      rung.pass_rate * 100, rung.window))
+            # Everything underneath this rung, so climbing does not cost
+            # what was already climbed. Built from the ladder rather than
+            # from `passed`, so a --stage run rehearses too.
+            behind = []
+            for earlier in default_ladder(max_grid=a.max_grid):
+                e = earlier
+                while e is not None:
+                    if rung_key(e) == key:
+                        break
+                    behind.append(e)
+                    e = e.grown()
+                else:
+                    continue
+                break
+
             ok, used, (mr, wr, secs) = train_stage(
                 rung, policy, learner, a.episodes, seed=a.seed,
-                on_tick=lambda ep: stash(), tracer=tracer)
+                on_tick=lambda ep: stash(), tracer=tracer,
+                rehearse=behind, rehearse_rate=a.rehearse)
             episodes_total += used
             print("    %s after %d episodes   reward %+.2f   success %.0f%%   %.0fs"
                   % ("PASSED" if ok else "gave up", used, mr, wr * 100, secs))
