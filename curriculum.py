@@ -63,7 +63,8 @@ class Stage:
                  goals=1, respawn=True, can_pick=False, can_attack=False,
                  damage=False, max_steps=150, target=3,
                  pass_rate=0.80, window=50, grow_to=None, goals_scale=False,
-                 hazard_damage=10, punitive=True, shaped=True, sequence=0):
+                 hazard_damage=10, punitive=True, shaped=True, sequence=0,
+                 grow_goals=True, clock_growth=1.5):
         self.name = name
         self.grid = grid
         self.walls = walls
@@ -106,6 +107,20 @@ class Stage:
         # it simply also earns nothing, and an episode ends eventually.
         self.punitive = punitive
         self.shaped = shaped
+        # Growing a rung normally means more to find and more time to find it.
+        # On a rung whose whole lesson is "one goal, a long way off, follow
+        # the bearing", both of those undo the lesson. Measured on the senior
+        # compass rung before these existed:
+        #
+        #   15x15  route 18.0  clock  7.0x  random walker wins 11%
+        #   17x17  route 12.1  clock 15.7x  random walker wins 22%
+        #   19x19  route  6.0  clock 47.3x  random walker wins 49%
+        #
+        # The room got bigger and the rung got easier: goals_scale put four
+        # goals in the 19x19 room so the nearest was six tiles away, while
+        # 1.5x per step had turned the clock into forty-seven times the route.
+        self.grow_goals = grow_goals
+        self.clock_growth = clock_growth
         # A bigger room gets proportionally more to find, so the reward on
         # offer grows with the walking required.
         if goals_scale:
@@ -137,10 +152,13 @@ class Stage:
                     damage=self.damage, hazard_damage=self.hazard_damage,
                     # Room for the longer walk a bigger maze needs, or the
                     # episode ends before a good policy could have finished.
-                    max_steps=int(self.max_steps * 1.5),
-                    goals_scale=True,
+                    max_steps=int(self.max_steps * self.clock_growth),
+                    goals_scale=self.grow_goals,
                     target=self.target, pass_rate=self.pass_rate,
-                    window=self.window, grow_to=self.grow_to)
+                    window=self.window, grow_to=self.grow_to,
+                    sequence=self.sequence,
+                    grow_goals=self.grow_goals,
+                    clock_growth=self.clock_growth)
         return nxt
 
     def __repr__(self):
@@ -207,7 +225,8 @@ def trail_rung(grid=5, sequence=5, max_steps=160):
                  pass_rate=0.80, window=50)
 
 
-def default_ladder(max_grid=12, with_trail=False):
+def default_ladder(max_grid=12, with_trail=False, senior_grid=15,
+                   senior_to=19):
     """The ladder. Each rung adds **exactly one** new thing.
 
     The first version of this file went from nursery straight to "maze, plus
@@ -312,7 +331,100 @@ def default_ladder(max_grid=12, with_trail=False):
                    respawn=False, can_pick=True, can_attack=True, damage=True,
                    max_steps=320, target=3, pass_rate=0.60, window=60,
                    grow_to=max_grid))
+
+    L.extend(senior_tier(grid=senior_grid, grow_to=senior_to))
     return L
+
+
+def senior_tier(grid=15, grow_to=19):
+    """Senior: a room too big to find the goal in by accident.
+
+    Everything below junior is small enough that luck is a strategy. Measured
+    with a random walker, 160-200 episodes per cell:
+
+        nursery-like   5x5    finds the goal 95.0%
+        corridors7     7x7                   71.5%
+        9x9                                  63.0%
+        15x15                                20.0%
+        21x21                                13.5%
+
+    Size alone never gets that floor to zero, because max_steps was being
+    scaled up with the room. The clock is the real lever:
+
+        single goal, random success vs how generous the clock is
+        grid    route     2x     3x     4x     6x    10x    20x
+        13x13    16.8   6.9%   9.4%  11.9%  15.6%  23.1%  34.4%
+        15x15    15.8   6.9%   8.8%  10.0%  13.1%  15.6%  21.2%
+        19x19    23.6   3.1%   3.1%   4.4%   6.9%   8.1%  16.9%
+
+    So the senior rungs are big AND on a short clock - about four times the
+    optimal route, where the floor sits near 10% and a 60% bar still means
+    something.
+
+    The shape of the tier
+    ---------------------
+    Bob's design: the first round keeps the trail, the last round is the
+    compass alone. The compass is what the real world map uses, so it is the
+    thing that has to survive.
+
+    The trail earns its place here for a reason it did not have lower down.
+    Measured above: a random walker completes a five-leg trail **0.0%** of the
+    time, at every size tried. It cannot be stumbled through at all, while
+    handing out reward often enough that there is a gradient to climb in a
+    room where a single goal is found once in five episodes. That is the
+    opposite of how it behaved next to the nursery.
+
+    The risk, stated plainly
+    ------------------------
+    The trail is still the thing that un-taught the bearing. See trail_rung():
+    after the nursery it dragged goal-sensitivity from 0.6311 to 0.1297 and
+    the argmax from 4/4 to chance, because the episode no longer ends at the
+    reward and the critic learns "how many legs remain" instead of "how far to
+    this goal".
+
+    The middle rung exists to attack exactly that mechanism: the same room,
+    the same everything, with the trail cut from five legs to two. Fewer legs
+    remaining is less for the critic to confuse with distance, so the value
+    function is walked back toward distance before the compass rung asks for
+    it alone.
+
+    That last part is a hypothesis, not a measurement. It follows from the
+    recorded cause, but nobody has trained it yet. diag_senior.py reports
+    goal-sensitivity at each of the three rungs; if it falls across them, the
+    trail is doing here what it did there and the first rung should go.
+    """
+    steps = _senior_clock(grid)
+    return [
+        # 1. The trail, on a room that cannot be crossed by luck.
+        Stage("senior-trail", grid, walls=True, hazards=3, hostiles=1,
+              sequence=5, respawn=False, can_pick=True, can_attack=True,
+              damage=True, max_steps=steps, target=5,
+              pass_rate=0.55, window=60, grow_to=grow_to,
+              grow_goals=False, clock_growth=1.2),
+
+        # 2. New thing: less trail. Same room, two legs instead of five.
+        Stage("senior-short", grid, walls=True, hazards=3, hostiles=1,
+              sequence=2, respawn=False, can_pick=True, can_attack=True,
+              damage=True, max_steps=steps, target=2,
+              pass_rate=0.55, window=60, grow_to=grow_to,
+              grow_goals=False, clock_growth=1.2),
+
+        # 3. New thing: nothing to follow. One goal, the episode ends on it,
+        #    and the only thing pointing at it is the bearing. This is the
+        #    rung the whole tier is for, and it is the one the real world
+        #    resembles.
+        Stage("senior", grid, walls=True, hazards=3, hostiles=1, goals=1,
+              sequence=0, respawn=False, can_pick=True, can_attack=True,
+              damage=True, max_steps=steps, target=1,
+              pass_rate=0.50, window=60, grow_to=grow_to,
+              grow_goals=False, clock_growth=1.2),
+    ]
+
+
+def _senior_clock(grid):
+    """About four times the optimal route, which is where the random floor
+    sits near 10% rather than the 20-34% a twenty-times clock allows."""
+    return int(4.2 * (2.0 * grid))
 
 
 def _unit(dx, dy):
