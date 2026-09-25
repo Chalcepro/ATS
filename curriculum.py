@@ -439,28 +439,35 @@ def senior_tier(grid=15, grow_to=19):
     # what keeps luck out on the first two, and by the last one the bearing
     # has to do it instead.
     return [
-        # 1. The trail, on a room that cannot be crossed by luck.
-        Stage("senior-trail", grid, walls=True, hazards=3, hostiles=1,
-              sequence=5, respawn=False, can_pick=True, can_attack=True,
-              damage=True, max_steps=_senior_clock(grid, 12), target=5,
-              pass_rate=0.55, window=60, grow_to=grow_to,
+        # 1. New thing: size, and nothing else. One goal, the episode ends on
+        #    reaching it - exactly the structure of the nursery and corridors,
+        #    in a room three times the width. Measured at 50% and passed in
+        #    125 episodes from the junior brain, which is why it is first: by
+        #    this ladder's own rule a rung adds one new thing, and size is all
+        #    this one adds.
+        Stage("senior", grid, walls=True, hazards=3, hostiles=1, goals=1,
+              sequence=0, respawn=False, can_pick=True, can_attack=True,
+              damage=True, max_steps=_senior_clock(grid, 4), target=1,
+              pass_rate=0.50, window=60, grow_to=grow_to,
               grow_goals=False, clock_growth=1.2),
 
-        # 2. New thing: less trail. Same room, two legs instead of five.
+        # 2. New thing: a second thing to find, and an order to find them in.
+        #    Two legs, so the critic has little "how many legs remain" to
+        #    confuse with distance. Measured at 28% after 200 episodes.
         Stage("senior-short", grid, walls=True, hazards=3, hostiles=1,
               sequence=2, respawn=False, can_pick=True, can_attack=True,
               damage=True, max_steps=_senior_clock(grid, 6), target=2,
               pass_rate=0.55, window=60, grow_to=grow_to,
               grow_goals=False, clock_growth=1.2),
 
-        # 3. New thing: nothing to follow. One goal, the episode ends on it,
-        #    and the only thing pointing at it is the bearing. This is the
-        #    rung the whole tier is for, and it is the one the real world
-        #    resembles.
-        Stage("senior", grid, walls=True, hazards=3, hostiles=1, goals=1,
-              sequence=0, respawn=False, can_pick=True, can_attack=True,
-              damage=True, max_steps=_senior_clock(grid, 4), target=1,
-              pass_rate=0.50, window=60, grow_to=grow_to,
+        # 3. New thing: a long route. Five legs, which is the hardest rung on
+        #    the ladder and measured hardest - 7% after 200 episodes, 1.23 of
+        #    5 legs collected. It goes last because it is hardest, which is
+        #    the only reason any rung should go anywhere.
+        Stage("senior-trail", grid, walls=True, hazards=3, hostiles=1,
+              sequence=5, respawn=False, can_pick=True, can_attack=True,
+              damage=True, max_steps=_senior_clock(grid, 12), target=5,
+              pass_rate=0.55, window=60, grow_to=grow_to,
               grow_goals=False, clock_growth=1.2),
     ]
 
