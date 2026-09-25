@@ -388,10 +388,42 @@ def senior_tier(grid=15, grow_to=19):
     function is walked back toward distance before the compass rung asks for
     it alone.
 
-    That last part is a hypothesis, not a measurement. It follows from the
-    recorded cause, but nobody has trained it yet. diag_senior.py reports
-    goal-sensitivity at each of the three rungs; if it falls across them, the
-    trail is doing here what it did there and the first rung should go.
+    What happened when it was trained
+    ---------------------------------
+    200 episodes a rung, from the junior brain:
+
+        senior-trail  15x15  5 legs  success  7%  collected 1.23/5  died 3%
+        senior-short  15x15  2 legs  success 28%  collected 0.73/2  died 0%
+        senior        15x15  1 goal  success 50%  PASSED at 125 episodes
+        senior        17x17  1 goal  success 42%  (needs 50%)
+
+    The compass rung - the one this whole tier exists for - is the EASIEST of
+    the three, not the hardest. It passed in 125 episodes from a brain that
+    had never seen a 15x15 room.
+
+    So the premise above is wrong, and it is left standing so the correction
+    is legible. The trail was put first to provide a gradient in a room where
+    a single goal is found once in five episodes, on the assumption that the
+    compass rung would need the help. It does not: one goal with the episode
+    ending at the reward is the structure the ladder already established
+    works, and it goes on working at 15x15.
+
+    What the trail rungs actually are is *harder rungs placed first* - five
+    sequential finds, or two, with the critic's "how many legs remain" problem
+    on top. That front-loads the difficulty, which is the one thing this file
+    was written to stop doing. By the ladder's own rule, exactly one new thing
+    per rung, `senior` is the correct first senior rung: the only thing it
+    adds is size.
+
+    The bearing did survive, which was the open question. argmax 3.23/4 before
+    the tier and 3.24/4 after, sensitivity 0.0510 -> 0.0583. The trail did not
+    un-teach it this time. (diag_senior.py prints the same figure for all
+    three rungs because only the bearing varies in what the probe shows the
+    policy - it is one measurement of the brain, not three independent ones.)
+
+    On the numbers, `senior` should come first and the two trail rungs after
+    it, if they are wanted at all. That reorder is not done here; this is the
+    measurement, recorded before anything is moved on the strength of it.
     """
     # The clock tightens as the trail shortens, and each multiple is measured
     # (diag_clock.py, oracle = BFS shortest route, 120 episodes a cell):
