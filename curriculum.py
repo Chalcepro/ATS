@@ -421,9 +421,29 @@ def senior_tier(grid=15, grow_to=19):
     three rungs because only the bearing varies in what the probe shows the
     policy - it is one measurement of the brain, not three independent ones.)
 
-    On the numbers, `senior` should come first and the two trail rungs after
-    it, if they are wanted at all. That reorder is not done here; this is the
-    measurement, recorded before anything is moved on the strength of it.
+    Where it got to
+    ---------------
+    Reordered easiest-first, on the numbers above:
+
+        senior 15x15   passed at 125 episodes, 50%
+        senior 17x17   passed at  60 episodes, 52%
+        senior 19x19   plateaus around 38% over 900 episodes (23-50%, noisy)
+
+    19x19 is the frontier and it is not a bug in the rung. A BFS oracle clears
+    it 100% at the clock it has, the reward is positive, and when the policy
+    does succeed it walks near-optimal routes (walk ratio 1.0-1.5) - so it is
+    not wandering, it simply fails to find the goal at all in about 60% of
+    episodes.
+
+    Nor is it the bearing degrading with distance: the bearing is a unit
+    vector, direction only, so it reads the same at 32 tiles as at 5. What
+    19x19 actually asks for is routing a 32-tile path through a maze the agent
+    can only see locally, steering by compass alone. That is the limit worth
+    knowing about, and it is the same wall as the rung-4 stall - perception
+    range, not curriculum.
+
+    The bearing survived the tier, measured before and after: argmax 3.19/4 ->
+    3.25/4, sensitivity 0.0581 -> 0.0602.
     """
     # The clock tightens as the trail shortens, and each multiple is measured
     # (diag_clock.py, oracle = BFS shortest route, 120 episodes a cell):
