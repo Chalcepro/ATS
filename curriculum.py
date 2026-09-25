@@ -393,19 +393,31 @@ def senior_tier(grid=15, grow_to=19):
     goal-sensitivity at each of the three rungs; if it falls across them, the
     trail is doing here what it did there and the first rung should go.
     """
-    steps = _senior_clock(grid)
+    # The clock tightens as the trail shortens, and each multiple is measured
+    # (diag_clock.py, oracle = BFS shortest route, 120 episodes a cell):
+    #
+    #   rung            clock   oracle   random walker
+    #   trail, 5 legs     12x     100%       0%
+    #   short, 2 legs      6x     100%       1%
+    #   compass, 1 goal    4x     100%      11%
+    #
+    # The trail rungs can afford a generous clock because five sequential legs
+    # cannot be stumbled into at any clock - the floor is 0% even at 24x. Only
+    # the compass rung has to be tight, and that is the point: the trail is
+    # what keeps luck out on the first two, and by the last one the bearing
+    # has to do it instead.
     return [
         # 1. The trail, on a room that cannot be crossed by luck.
         Stage("senior-trail", grid, walls=True, hazards=3, hostiles=1,
               sequence=5, respawn=False, can_pick=True, can_attack=True,
-              damage=True, max_steps=steps, target=5,
+              damage=True, max_steps=_senior_clock(grid, 12), target=5,
               pass_rate=0.55, window=60, grow_to=grow_to,
               grow_goals=False, clock_growth=1.2),
 
         # 2. New thing: less trail. Same room, two legs instead of five.
         Stage("senior-short", grid, walls=True, hazards=3, hostiles=1,
               sequence=2, respawn=False, can_pick=True, can_attack=True,
-              damage=True, max_steps=steps, target=2,
+              damage=True, max_steps=_senior_clock(grid, 6), target=2,
               pass_rate=0.55, window=60, grow_to=grow_to,
               grow_goals=False, clock_growth=1.2),
 
@@ -415,16 +427,19 @@ def senior_tier(grid=15, grow_to=19):
         #    resembles.
         Stage("senior", grid, walls=True, hazards=3, hostiles=1, goals=1,
               sequence=0, respawn=False, can_pick=True, can_attack=True,
-              damage=True, max_steps=steps, target=1,
+              damage=True, max_steps=_senior_clock(grid, 4), target=1,
               pass_rate=0.50, window=60, grow_to=grow_to,
               grow_goals=False, clock_growth=1.2),
     ]
 
 
-def _senior_clock(grid):
-    """About four times the optimal route, which is where the random floor
-    sits near 10% rather than the 20-34% a twenty-times clock allows."""
-    return int(4.2 * (2.0 * grid))
+def _senior_clock(grid, multiple):
+    """`multiple` times the optimal route for a room this size.
+
+    Route length measured at about 1.3 tiles per row of grid: 19.5 on 15x15,
+    20.9 on 17x17, 26.8 on 19x19.
+    """
+    return int(multiple * 1.3 * grid)
 
 
 def _unit(dx, dy):
@@ -1039,6 +1054,70 @@ class CurriculumEnv:
 
 # ---- the guard that stops the original bug coming back -------------------
 
+def oracle_step(env, stage):
+    """One step along a shortest route to the nearest goal, avoiding harm.
+
+    This replaced a greedy "walk the bigger axis first" chooser, which had no
+    pathfinding and so measured the maze rather than the reward. It cleared
+    only 32% of junior 9x9 and about 0% of a 15x15 room, so every senior rung
+    came back negative and preflight refused to train rungs that were in fact
+    fine.
+
+    Re-planned every step rather than followed as a fixed path, because a
+    trail moves the goal the instant the current one is taken.
+
+    The two passes preserve what the greedy version got right: prefer a route
+    that never touches lava or stands next to something that bites, and only
+    accept one that does when there is no other - which happens in a narrow
+    corridor, and is exactly when taking the hit is correct.
+    """
+    from collections import deque
+
+    n = stage.grid
+    start = (env.ax, env.ay)
+    goals = set(env.goals)
+    if not goals:
+        return config_rl.ACT_WAIT
+
+    bite = set()
+    if stage.damage:
+        for h in env.hostiles:
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    if abs(dx) + abs(dy) <= 1:
+                        bite.add((h[0] + dx, h[1] + dy))
+
+    for careful in (True, False):
+        prev = {start: None}
+        q = deque([start])
+        end = None
+        while q and end is None:
+            x, y = q.popleft()
+            for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+                nx, ny = x + dx, y + dy
+                if not (0 <= nx < n and 0 <= ny < n) or (nx, ny) in prev:
+                    continue
+                if env.grid[ny][nx] == T_WALL:
+                    continue
+                if careful and (env.grid[ny][nx] == T_HAZARD
+                                or (nx, ny) in bite):
+                    continue
+                prev[(nx, ny)] = (x, y)
+                if (nx, ny) in goals:
+                    end = (nx, ny)
+                    break
+                q.append((nx, ny))
+        if end is not None:
+            cur = end
+            while prev[cur] != start:
+                cur = prev[cur]
+            want = (cur[0] - start[0], cur[1] - start[1])
+            for act, d in MOVES.items():
+                if d == want:
+                    return act
+    return config_rl.ACT_WAIT
+
+
 def best_case_return(stage: Stage, trials: int = 40, seed: int = 0) -> float:
     """What a competent agent scores, by playing one greedily.
 
@@ -1064,56 +1143,12 @@ def best_case_return(stage: Stage, trials: int = 40, seed: int = 0) -> float:
         done = False
         ep = 0.0
         while not done:
-            goal, _ = env._nearest(env.goals)
-            act = config_rl.ACT_WAIT
-            if goal:
-                dx, dy = goal[0] - env.ax, goal[1] - env.ay
-                # Try the bigger axis first, then the other, then anything that
-                # is not a wall - enough to get through a maze most of the time.
-                order = []
-                if abs(dx) >= abs(dy):
-                    order = [(1, 0) if dx > 0 else (-1, 0), (0, 1) if dy > 0 else (0, -1)]
-                else:
-                    order = [(0, 1) if dy > 0 else (0, -1), (1, 0) if dx > 0 else (-1, 0)]
-                order += [(1, 0), (-1, 0), (0, 1), (0, -1)]
-
-                def risky(nx, ny):
-                    """Would a competent player step here?"""
-                    # Lava is worth avoiding even where it cannot kill: the
-                    # reward penalty applies on every rung, which is what
-                    # makes `avoid` teach anything at all. Keying this on
-                    # s.damage made the reference walk straight through it
-                    # on that rung and score -26.
-                    if env._tile(nx, ny) == T_HAZARD:
-                        return True
-                    if not s.damage:
-                        return False
-                    # Standing next to something that bites is also a choice.
-                    for h in env.hostiles:
-                        if abs(h[0] - nx) + abs(h[1] - ny) <= 1:
-                            return True
-                    return False
-
-                # Two passes: prefer a safe step, and only accept a dangerous
-                # one when every option is dangerous - which does happen in a
-                # narrow corridor, and is exactly when taking the hit is right.
-                chosen = None
-                for allow_risk in (False, True):
-                    for want in order:
-                        nx, ny = env.ax + want[0], env.ay + want[1]
-                        if env._tile(nx, ny) == T_WALL:
-                            continue
-                        if not allow_risk and risky(nx, ny):
-                            continue
-                        chosen = want
-                        break
-                    if chosen:
-                        break
-                if chosen:
-                    for a, mv in MOVES.items():
-                        if mv == chosen:
-                            act = a
-                            break
+            # A pathfinder, not a greedy axis-walker. The old chooser
+            # had no route planning and cleared 32% of junior 9x9 and
+            # almost none of a 15x15 room, so every senior rung scored
+            # negative and preflight refused to train rungs that were
+            # in fact fine. It was measuring the maze, not the reward.
+            act = oracle_step(env, s)
             _, r, done, _ = env.step(act)
             ep += r
         total += ep
