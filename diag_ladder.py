@@ -97,12 +97,28 @@ def main(argv=None):
         # a rung missing from it is one the GUI will grind on however well
         # the brain plays it - 600 episodes went into `avoid 7x7` at 90%
         # for exactly that reason. This makes the list say what was measured.
+        # Edited in place, NOT re-saved from the policy.
+        #
+        # brain.save(policy, learner=None) writes the weights and drops the
+        # optimizer state, the adapted entropy coefficient and the tick
+        # count, because those live on the learner. Calling it from a
+        # read-only diagnostic therefore threw away Adam's moments and two
+        # million ticks of history to change one list. Loading the blob and
+        # putting back exactly one key cannot do that.
+        import torch as _torch
+
         import brain as _brain
         now = sorted(ok_now)
         added = [k for k in now if k not in passed]
         dropped = [k for k in passed if k not in ok_now]
-        progress["passed"] = now
-        _brain.save(policy, None, progress)
+        blob = _torch.load(_brain.DEFAULT_PATH, map_location="cpu",
+                           weights_only=False)
+        prog = dict(blob.get("progress") or {})
+        prog["passed"] = now
+        blob["progress"] = prog
+        tmp = _brain.DEFAULT_PATH.with_suffix(".pt.tmp")
+        _torch.save(blob, tmp)
+        tmp.replace(_brain.DEFAULT_PATH)
         print("")
         print("  repaired: %d rungs recorded" % len(now))
         for k in added:
