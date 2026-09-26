@@ -15,6 +15,7 @@ goal in a small room often enough to look like competence.
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 
 import brain
@@ -49,7 +50,7 @@ def main(argv=None):
           % ("rung", "greedy", "bar", "claimed", ""))
     print("  " + "-" * 60)
 
-    lost = []
+    lost, near = [], []
     for st in C.default_ladder():
         r = st
         while r is not None:
@@ -60,8 +61,23 @@ def main(argv=None):
             g = greedy_pass_rate(C.CurriculumEnv(r, seed=0), policy, r,
                                  episodes=a.episodes)
             claim = "passed" if name in passed else "-"
+            # How many standard errors below the bar, so a reading is not
+            # called a loss when it is a coin-flip.
+            #
+            # A greedy rate is a binomial proportion: at 40 episodes the
+            # standard error near 45% is 7.9 points, so a rung reading 40%
+            # against a 45% bar is indistinguishable from one sitting exactly
+            # on it. The first version of this file called every such rung
+            # LOST and printed "that is catastrophic forgetting" underneath,
+            # which is a confident claim built on a coin-flip - and it sent
+            # me chasing drift that was mostly sampling.
+            se = math.sqrt(max(g * (1.0 - g), 1e-9) / max(1, a.episodes))
+            short = (r.pass_rate - g) / se if se > 0 else 0.0
             if g >= r.pass_rate:
                 verdict = "ok"
+            elif short < 1.5:
+                verdict = "close (%.1f SE)" % short
+                near.append((name, g, r.pass_rate))
             elif name in passed:
                 verdict = "LOST"
                 lost.append((name, g, r.pass_rate))
@@ -72,14 +88,27 @@ def main(argv=None):
             r = r.grown()
 
     print("")
+    if near:
+        print("  %d rung(s) sit within sampling noise of their bar:" % len(near))
+        for name, g, bar in near:
+            print("     %-20s %.0f%% against a %.0f%%" % (name, 100 * g, 100 * bar))
+        print("  At %d episodes the error on a rate near 45%% is %.0f points, so"
+              % (a.episodes, 100 * math.sqrt(0.45 * 0.55 / max(1, a.episodes))))
+        print("  these are not distinguishable from passing. Re-run one with")
+        print("  --episodes 150 --only <name> before treating it as a loss.")
+        print("")
     if lost:
-        print("  %d rung(s) are marked passed and are not being played:" % len(lost))
+        print("  %d rung(s) are marked passed and are clearly not being played:"
+              % len(lost))
         for name, g, bar in lost:
             print("     %-20s %.0f%% against a %.0f%% bar" % (name, 100 * g, 100 * bar))
         print("")
-        print("  That is catastrophic forgetting, not a hard rung. Rehearsal")
-        print("  (train_stage's `rehearse`) is what is supposed to stop it.")
+        print("  Beyond 1.5 standard errors, so this is drift rather than a")
+        print("  coin-flip. Rehearsal (train_stage's `rehearse`) is what is")
+        print("  supposed to stop it; consolidate.py is what repairs it.")
         return 1
+    if near:
+        return 0
     print("  every rung it claims, it still plays.")
     return 0
 
