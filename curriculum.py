@@ -161,9 +161,37 @@ class Stage:
         # that made this necessary.
         self.guards = bool(guards)
         # While unarmed, the object slots and the shaping point at the
-        # nearest weapon instead of the goal. Without it ACT_PICK_UP has
-        # no gradient anywhere on the ladder - see CurriculumEnv._aim for
-        # the 0%-armed measurement that made this necessary.
+        # nearest weapon instead of the goal.
+        #
+        # OFF by default, measured harmful - and it is worth being precise
+        # about why, because it looked like the fix for a real problem and
+        # was itself a worse one.
+        #
+        # The real problem: ACT_PICK_UP had no gradient anywhere on this
+        # ladder, so a sword was one tile in a 15x15 maze found by luck.
+        # This pointed the compass at it, which did make the sword findable
+        # - the agent walked onto one in 28 rooms of 50 instead of 9.
+        #
+        # What it also did: the aim only leaves the sword when the sword is
+        # PICKED UP. A policy that walks onto one and does not press the
+        # button is then steered at the tile it is already standing on, for
+        # the rest of the episode, and is never redirected to the goal.
+        # Measured: reached a sword in 28 rooms of 50, armed itself in 4,
+        # cleared 8, and spent 76% of its ticks stepping forward and back.
+        # Not wandering - held.
+        #
+        # By this ladder's own rule it was never allowed anyway: a rung adds
+        # exactly one new thing, `armed` adds a weapon, and this quietly
+        # added a second by overriding the compass that the thirteen rungs
+        # below it exist to teach. It is the trail rungs' mistake in a new
+        # costume - see trail_rung() - and the ladder keeps being right
+        # about this.
+        #
+        # The sword is findable without it: it renders as TILE_OBJECT in the
+        # patch and the remembered map, one is seeded early on the direct
+        # route, and the hand rungs teach pressing the button while standing
+        # on an object. Opportunistic rather than compelled, which is also
+        # how the real world presents an item on the floor.
         self.weapon_first = bool(weapon_first)
         # The goal is taken with ACT_PICK_UP while standing on it, not by
         # standing on it. This exists because no rung on this ladder ever
@@ -635,7 +663,7 @@ def senior_tier(grid=15, grow_to=19):
     ]
 
 
-def combat_tier(grid=15, grow_to=19):
+def combat_tier(grid=15, grow_to=19, weapon_first=False):
     """Senior, but the room fights back.
 
     Bob's ask: "it can pick up items, it can pick up swords, all this stuff,
@@ -720,7 +748,10 @@ def combat_tier(grid=15, grow_to=19):
                   target=1, window=60, grow_to=grow_to,
                   grow_goals=False, clock_growth=1.2,
                   hostile_hp=3, hostile_damage=8, aggro=6, guards=True,
-                  weapon_first=True)
+                  # OFF, measured harmful. See Stage.weapon_first and
+                  # CurriculumEnv._aim. combat_tier(weapon_first=True) to
+                  # put it back.
+                  weapon_first=weapon_first)
     return tier + [
         # 1. New thing: a weapon. Hostiles stand still exactly as they have
         #    since junior, so nothing about avoiding them has changed - but
