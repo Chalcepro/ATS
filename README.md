@@ -125,38 +125,60 @@ policy correctly learned to end episodes early.
 
 ### Where it got to
 
-Greedy play, 40 episodes a rung, measured 2026-09-25 (`python diag_ladder.py`):
+Greedy play, 40 episodes a rung, after consolidation (2026-09-26):
 
 | rung | greedy | bar | | rung | greedy | bar |
 |------|-------:|----:|-|------|-------:|----:|
-| nursery 5x5 | 100% | 85% | | senior 15x15 | 57% | 50% |
-| corridors 5x5 | 100% | 80% | | senior 17x17 | 65% | 50% |
-| corridors7 7x7 | 98% | 75% | | senior 19x19 | 55% | 50% |
-| avoid 7x7 | 75% | 75% | | satchel 5x5 | 95% | 85% |
-| hazards 7x7 | 75% | 70% | | satchel7 7x7 | 95% | 75% |
-| foraging 7x7 | 95% | 70% | | armed 15x15 | 65% | 50% |
-| primary 9x9 | 78% | 65% | | armed 17x17 | 57% | 50% |
-| primary 11x11 | 82% | 65% | | hunted 15x15 | 65% | 50% |
-| junior 9x9 | 88% | 60% | | hunted 17x17 | 62% | 50% |
-| junior 11x11 | 90% | 60% | | warden 15x15 | 70% | 45% |
-| | | | | warden 17x17 | 52% | 45% |
+| nursery 5x5 | 100% | 85% | | senior 15x15 | 72% | 50% |
+| corridors 5x5 | 100% | 80% | | senior 17x17 | 75% | 50% |
+| corridors7 7x7 | 100% | 75% | | senior 19x19 | 62% | 50% |
+| avoid 7x7 | 90% | 75% | | satchel 5x5 | 98% | 85% |
+| hazards 7x7 | 75% | 70% | | satchel7 7x7 | 92% | 75% |
+| foraging 7x7 | 98% | 70% | | armed 15x15 | 62% | 50% |
+| primary 9x9 | 95% | 65% | | armed 17x17 | 70% | 50% |
+| primary 11x11 | 95% | 65% | | armed 19x19 | 57% | 50% |
+| junior 9x9 | 98% | 60% | | hunted 15/17/19 | 78/72/68% | 50% |
+| junior 11x11 | 90% | 60% | | warden 15/17/19 | 72/62/62% | 45% |
 
-`senior 19x19` is worth calling out: this file used to record it as the
-frontier, "plateaus around 38% over 900 episodes". It passes now, and what
-changed was not the rung - it was a crash. See the growth bug below.
-
-What the combat rungs actually do, 50 episodes each:
+Every rung the brain claims, it plays. What the combat rungs do, 60
+episodes each:
 
 | rung | success | arms itself | kills/ep | meets a hostile |
 |------|--------:|------------:|---------:|----------------:|
-| armed | 46% | 32% | 1.02 | 94% |
-| hunted | 60% | 42% | 1.30 | 98% |
-| warden | 54% | 50% | 2.32 | 96% |
+| armed | 73% | 68% | 1.28 | 95% |
+| hunted | 73% | 60% | 1.48 | 100% |
+| warden | 70% | 67% | 2.83 | 97% |
 
-Still below bar: the three `senior-short` and `senior-trail` rungs, which
-have never been trained (they are the sequential-goal rungs, and the ladder
-reaches combat without them), and the three 19x19 variants of the combat
-rungs at 40-45%. 19x19 remains where the difficulty is.
+Still below bar: the `senior-short` and `senior-trail` rungs, which have
+never been trained - they are the sequential-goal rungs and the ladder
+reaches combat without them. They improved anyway while everything else was
+being consolidated (senior-short 15x15 22% -> 45%, senior-trail 15x15 2% ->
+18%), which is the clearest single piece of evidence that these rooms share
+more than the one-new-thing framing suggests.
+
+`senior 19x19` is worth calling out twice. This file used to record it as
+the frontier - "plateaus around 38% over 900 episodes" - and it plays at
+62%. What changed was not the rung. It was a crash (below) and then
+consolidation.
+
+### Climbing, then holding
+
+Two different jobs, two commands:
+
+    python train_curriculum.py     # climb: one rung at a time, promote, move on
+    python consolidate.py          # hold: every rung interleaved, all scored
+
+Climbing ratchets. Each pass gains the rung it is on and gives back a little
+of the rungs below, because the thing being *scored* is always one room and
+the rest are only defended by rehearsal. After enough passes `passed` is a
+history rather than a description - six of nineteen rungs were below bar
+when this was noticed.
+
+Consolidating fixed all six and improved every rung in the ladder, several
+by twenty points. The expected cost of interleaving - that no single rung
+goes as high as training it alone - did not appear.
+
+    python diag_ladder.py          # what it actually plays, with error bars
 
 ### Two bugs worth knowing about
 
