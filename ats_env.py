@@ -22,7 +22,14 @@ from world import World
 
 
 class ATSEnvironment:
-    def __init__(self):
+    def __init__(self, max_ticks: int | None = None):
+        # The cap is a parameter, not a constant read at the point of use.
+        # It is earned now (survival.py): short episodes while the agent is
+        # bad, because that is when episodes-per-hour matters most, and long
+        # ones once it can use them. A fixed MAX_TICKS cannot express that,
+        # and raising the constant to ten days would only make each failure
+        # take ten times longer to watch.
+        self.max_ticks = int(max_ticks or config_rl.MAX_TICKS)
         self.world = World()
         self.agent = Agent(self.world)
         self.day_night = DayNight()
@@ -198,9 +205,12 @@ class ATSEnvironment:
             self.agent.log_event("Agent fell in battle / perished.")
             self.done = True
             self.memory.decay()
-        elif self.tick >= config_rl.MAX_TICKS:
+        elif self.tick >= self.max_ticks:
             self.done = True
-            self.rewards.on_survive_bonus()
+            # Paid for the length actually survived, not a flat amount. With
+            # an earned cap the easiest rung and the hardest would otherwise
+            # pay identically - see rewards.on_survive_bonus.
+            self.rewards.on_survive_bonus(self.tick)
             self.agent.log_event("Day/Night survival complete!")
             self.memory.decay()
 

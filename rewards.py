@@ -7,6 +7,7 @@ Reward rules can be toggled on/off via the ``rules`` dict — the GUI
 exposes keyboard shortcuts so the user can flip them at runtime.
 """
 
+import config_rl
 from item_ids import REGISTRY
 
 
@@ -387,9 +388,28 @@ class RewardEngine:
             return 0.0
         return self.add(R_DEATH, "death")
 
-    def on_survive_bonus(self) -> float:
+    def on_survive_bonus(self, ticks: int | None = None) -> float:
+        """Paid for reaching the end of an episode, scaled by how long it was.
+
+        A flat bonus is a cliff. Under it, surviving a one-day episode and a
+        ten-day episode both pay exactly +10, so once the cap is reached
+        there is nothing left to want - and with an earned, growing cap
+        (survival.py) the agent would be paid the same for clearing the
+        easiest rung as the hardest.
+
+        Scaled by days, it is worth more to reach the end of a longer
+        episode, which is the thing being asked for. R_ALIVE already pays
+        per tick and gives the gradient WITHIN an episode; this is what
+        makes a longer episode worth wanting in the first place.
+
+        `ticks` omitted keeps the old flat behaviour, so nothing that has
+        not been updated changes its arithmetic.
+        """
         self.progression_points += 5.0
-        return self.add(R_SURVIVE_EPISODE, "survive_bonus")
+        if ticks is None:
+            return self.add(R_SURVIVE_EPISODE, "survive_bonus")
+        days = max(1.0, float(ticks) / float(config_rl.DAY_LENGTH_TICKS))
+        return self.add(R_SURVIVE_EPISODE * days, "survive_bonus")
 
     # ------------------------------------------------------------------
     # Standing-still detection — call once per tick from env
