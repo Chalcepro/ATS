@@ -68,7 +68,8 @@ class Stage:
                  hazard_damage=10, punitive=True, shaped=True, sequence=0,
                  grow_goals=True, clock_growth=1.5,
                  swords=0, hostile_hp=1, hostile_damage=0, chase=0,
-                 aggro=0, grow_hostiles=False, guards=False):
+                 aggro=0, grow_hostiles=False, guards=False,
+                 weapon_first=False):
         self.name = name
         self.grid = grid
         self.walls = walls
@@ -159,6 +160,11 @@ class Stage:
         # anywhere. See CurriculumEnv._place_guards for the measurement
         # that made this necessary.
         self.guards = bool(guards)
+        # While unarmed, the object slots and the shaping point at the
+        # nearest weapon instead of the goal. Without it ACT_PICK_UP has
+        # no gradient anywhere on the ladder - see CurriculumEnv._aim for
+        # the 0%-armed measurement that made this necessary.
+        self.weapon_first = bool(weapon_first)
         # Goals scaling with room size undoes a compass rung (see grow_goals).
         # Hostiles scaling is the opposite: on a combat rung the encounter
         # rate IS the lesson, and a bigger room with the same two hostiles is
@@ -238,7 +244,7 @@ class Stage:
                     swords=self.swords, hostile_hp=self.hostile_hp,
                     hostile_damage=self.hostile_damage, chase=self.chase,
                     aggro=self.aggro, grow_hostiles=self.grow_hostiles,
-                    guards=self.guards)
+                    guards=self.guards, weapon_first=self.weapon_first)
         return nxt
 
     def __repr__(self):
@@ -655,7 +661,8 @@ def combat_tier(grid=15, grow_to=19):
                   can_pick=True, can_attack=True, damage=True,
                   target=1, window=60, grow_to=grow_to,
                   grow_goals=False, clock_growth=1.2,
-                  hostile_hp=3, hostile_damage=8, aggro=6, guards=True)
+                  hostile_hp=3, hostile_damage=8, aggro=6, guards=True,
+                  weapon_first=True)
     return [
         # 1. New thing: a weapon. Hostiles stand still exactly as they have
         #    since junior, so nothing about avoiding them has changed - but
@@ -1211,6 +1218,42 @@ class CurriculumEnv:
             return T_OBJECT
         return raw
 
+    def _aim(self):
+        """What the agent is currently trying to reach, and how far it is.
+
+        Unarmed in a room that has a weapon in it, the thing to head for is
+        the weapon; after that, the goal. This is one target at a time, never
+        two, because the object slots hold one object.
+
+        Why this is needed at all
+        -------------------------
+        The sword was visible in the patch and remembered on the map, and
+        that was not enough. Trained 400 episodes on `armed` from a brain
+        that had passed every senior rung, the policy picked up a sword in
+        **0%** of episodes and killed **0.00** hostiles - it walked out the
+        clock at 13% success while a competent agent cleared 100%.
+
+        It was not losing fights. It never had one. ACT_PICK_UP had no
+        gradient anywhere on the ladder: seeing a tile two squares away does
+        not tell a policy to walk to it, and finding one exact tile in a
+        15x15 maze by chance and then pressing the right button on it is the
+        "single goal found by luck" problem this file already documents as
+        unlearnable. The goal is learnable because it has a bearing and
+        shaping; the sword had neither.
+
+        Pointing the OBJECT slots at it is also the more faithful reading of
+        the real world, not a curriculum-only hack: IDX_OBJ_ID and the first
+        direction pair are `nearest object` in agent.build_state, and a
+        sword lying on the floor is an object. The curriculum has been
+        putting an abstract goal in them.
+        """
+        if (self.stage.weapon_first and self.swords and not self.armed
+                and self.stage.hostiles):
+            pos, d = self._nearest(self.swords)
+            return pos, d, "sword"
+        pos, d = self._nearest(self.goals)
+        return pos, d, "goal"
+
     def _nearest(self, items):
         if not items:
             return None, 999
@@ -1314,9 +1357,14 @@ class CurriculumEnv:
         s[14] = min(1.0, hd / span)
         s[config_rl.IDX_ENT_TYPE] = 1.0 if host else 0.0
 
-        goal, gd = self._nearest(self.goals)
-        s[18] = min(1.0, gd / span)
-        s[config_rl.IDX_OBJ_ID] = 1.0 / config_rl.ITEM_ID_SCALE if goal else 0.0
+        aim, ad, kind = self._aim()
+        s[18] = min(1.0, ad / span)
+        if aim is None:
+            s[config_rl.IDX_OBJ_ID] = 0.0
+        elif kind == "sword":
+            s[config_rl.IDX_OBJ_ID] = STONE_SWORD / float(config_rl.ITEM_ID_SCALE)
+        else:
+            s[config_rl.IDX_OBJ_ID] = 1.0 / config_rl.ITEM_ID_SCALE
 
         # What we are carrying, in the real inventory slots. Until now the
         # curriculum left all seven of them at zero, so a policy trained here
@@ -1361,8 +1409,8 @@ class CurriculumEnv:
         # other wrong.  Distance already has its own slot above, so direction
         # alone is the honest content here.
         d = config_rl.IDX_DIR_START
-        if goal:
-            s[d + 0], s[d + 1] = _unit(goal[0] - self.ax, goal[1] - self.ay)
+        if aim:
+            s[d + 0], s[d + 1] = _unit(aim[0] - self.ax, aim[1] - self.ay)
         if host:
             s[d + 2], s[d + 3] = _unit(host[0] - self.ax, host[1] - self.ay)
 
@@ -1401,7 +1449,7 @@ class CurriculumEnv:
     def step(self, action):
         s = self.stage
         action = int(action)
-        _, before = self._nearest(self.goals)
+        _, before, aimed_at = self._aim()
         reward = s.step_cost
         self.steps += 1
 
@@ -1465,9 +1513,17 @@ class CurriculumEnv:
             self.still = 0
         self.last_pos = (self.ax, self.ay)
 
-        # Shaping, after the move: progress towards the nearest goal.
-        _, after = self._nearest(self.goals)
-        if self.goals and s.shaped:
+        # Shaping, after the move: progress towards whatever is being aimed
+        # at - the weapon while unarmed, the goal after that.
+        #
+        # Skipped on the tick the aim CHANGES. Picking a sword up switches
+        # the target from a tile underfoot to a goal across the room, and
+        # shaping that as though it were movement would charge the agent
+        # twenty tiles of "progress away" for doing exactly the right thing.
+        # This is the same trap as respawning a goal at the instant of
+        # reward, which is what made the first nursery unlearnable.
+        _, after, now_aimed = self._aim()
+        if s.shaped and now_aimed == aimed_at and (self.goals or self.swords):
             reward += R_TOWARDS * (before - after)
 
         # Reaching a goal
