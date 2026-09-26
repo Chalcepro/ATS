@@ -86,6 +86,61 @@ py -3 export_virus_corpus.py data\runtime_log.txt
 Active profile metadata is written to `ATS/data/active_virus_profile.json`.
 Runtime narration/corpus appends to `Virus/data_ats/ats_runtime_corpus.txt`.
 
+## The training ladder
+
+`curriculum.py` is the thing the agent is actually trained on. One network the
+whole way; only the room changes, and it grows back up as the policy earns it.
+A rung is passed when greedy play - not sampled play - clears its bar.
+
+    python train_curriculum.py                    # the whole ladder
+    python train_curriculum.py --stage warden     # one rung
+
+Each rung adds **exactly one** new thing. That rule is the whole design: an
+earlier version went from the nursery straight to "maze + hazards + damage +
+items + goals that do not come back", trained to 32% and then decayed to 10%.
+
+| rung | the one new thing |
+|------|-------------------|
+| `nursery` 5x5 | a goal exists and reaching it ends the episode |
+| `corridors` 5x5 | walls |
+| `corridors7` 7x7 | size |
+| `avoid` 7x7 | something to avoid that cannot yet kill |
+| `hazards` 7x7 | now it can kill |
+| `foraging` 7x7 | scarcity - the room has to be cleared |
+| `primary` 9x9 -> 11x11 | size, with everything above |
+| `junior` 9x9 -> 11x11 | something in the room with you |
+| `senior` 15x15 -> 19x19 | a room too big to find the goal by luck |
+| `senior-short` | two goals, in order |
+| `senior-trail` | five goals, in order |
+| `armed` 15x15 -> 19x19 | a weapon, and a reason to carry it |
+| `hunted` | they come to you |
+| `warden` | more of them, and more again as the room grows |
+
+Every rung is checked before a second of training is spent on it
+(`best_case_return`): if a competent agent playing well would still score
+negative, the reward is the bug and no amount of training will find it. That
+check is here because the full world did not have it - an episode that
+survived to max ticks scored -3281 while dying outright cost -10, so the
+policy correctly learned to end episodes early.
+
+### Diagnostics
+
+These measure the rungs, not the agent, and each exists because something
+looked fine and was not:
+
+| tool | question |
+|------|----------|
+| `diag_combat.py` | is the combat tier a fight, and a winnable one? |
+| `diag_clock.py` | how much does the clock decide the rung? |
+| `diag_stumble.py` | can a random walker stumble into the goal? |
+| `diag_senior.py` | did training the top un-teach the bearing? |
+
+`diag_combat.py` gates on four numbers a rung can fail while still running:
+how often a hostile is actually met, what a competent agent scores, what a
+random walker scores, and how often the competent one dies. It is what caught
+the first combat tier clearing 100% of its rooms while picking up a sword in
+under a third of them.
+
 ## Modding assets (no hardcoding)
 
 Add/edit JSON component files:

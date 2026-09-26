@@ -1106,7 +1106,11 @@ class TerminalGUI:
                         cc = RED if ent.data.get("type") == "hostile" else AMBER
                     elif t.object_id:
                         raw = item_name(t.object_id)
-                        mapping = {"Tree": "Tree", "Bush": "Bush", "Log": "Log", "Stone": "Rock", "Boulder": "Rock", "Coal": "Coal", "Stick": "Stck", "Apple": "Appl", "Mushroom": "Mush", "Flower": "Flow", "Cactus": "Cact"}
+                        # "Sword" before "Stone", because next() takes the first key that
+                        # matches and "Stone" is in "Stone Sword" - a sword on the
+                        # ground drew as "Rock".
+                        mapping = {"Sword": "SWRD", "Blade": "SWRD", "Shield": "SHLD",
+                                   "Tree": "Tree", "Bush": "Bush", "Log": "Log", "Stone": "Rock", "Boulder": "Rock", "Coal": "Coal", "Stick": "Stck", "Apple": "Appl", "Mushroom": "Mush", "Flower": "Flow", "Cactus": "Cact"}
                         cs = next((v for k, v in mapping.items() if k in raw), raw[:5])
                         cc = GOLD if cs in ("Appl", "Mush") else FG
                     elif t.tile_type == 1: cs, cc = "#WALL", DIM

@@ -96,12 +96,20 @@ class _World:
             return _Tile(0, object_id=_GOOD_ID)
         if (x, y) in getattr(e, "trash", []):
             return _Tile(0, object_id=_TRASH_ID)
+        # A weapon on the floor. Without this the combat rungs look like the
+        # agent is walking over bare ground and then killing things faster
+        # for no visible reason.
+        if (x, y) in getattr(e, "swords", []):
+            return _Tile(0, object_id=_SWORD_ID)
         return _Tile(0)
 
 
 # Item ids only used for their names in the 7x7 view. Picked so the mapping in
 # _draw_sim falls through to its raw[:5] branch and prints something readable.
 _GOAL_ID, _GOOD_ID, _TRASH_ID = -101, -102, -103
+# A real registry id, not a sentinel: item_name gives "Stone Sword" and
+# the panel names it without the adapter carrying its own table.
+_SWORD_ID = "0013"
 
 
 class _Agent:
@@ -121,8 +129,26 @@ class _Agent:
         self.event_log = []
         # Shown greyed by the panel, because active_mask says pick-up is off in
         # the rungs that cannot pick anything up.
-        self.inventory = [{"id": None, "count": 0}
-                          for _ in range(config_rl.INVENTORY_SLOTS)]
+        self._inventory = [{"id": None, "count": 0}
+                           for _ in range(config_rl.INVENTORY_SLOTS)]
+
+    @property
+    def inventory(self):
+        """Slot 0 holds the sword once it has been picked up.
+
+        A property rather than a plain list because the panel reads this on
+        every frame and the agent arms itself mid-episode. As a list set once
+        in __init__, an agent that had armed itself looked identical to one
+        that had not - which on a combat rung is the single most important
+        thing on the screen.
+
+        0013 is the real registry's Stone Sword, so the panel names it
+        without the adapter carrying its own table.
+        """
+        armed = bool(getattr(self._env, "armed", False))
+        self._inventory[0]["id"] = "0013" if armed else None
+        self._inventory[0]["count"] = 1 if armed else 0
+        return self._inventory
 
     @property
     def x(self): return self._env.ax
@@ -148,6 +174,8 @@ class _Agent:
             return "GOAL"
         if (e.ax, e.ay) in getattr(e, "hazards", []):
             return "HAZARD"
+        if (e.ax, e.ay) in getattr(e, "swords", []):
+            return "SWORD"
         return "floor"
 
     # Numbers the island tracks and a rung does not. Reported at their resting
