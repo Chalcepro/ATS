@@ -99,8 +99,17 @@ TRACKS = [
     # that track is finished.
     ("JUNIOR SEC", ["junior"],
      "Something in here with you - 9x9, one hostile, you can fight back", True),
-    ("SENIOR SEC", [],
-     "Tools, crafting, the long game - coming soon", False),
+    # Unlocked 2026-09-25, when the tier was trained through. Greedy play,
+    # 40 episodes a rung: senior 57/65/55% against a 50% bar, satchel 95%,
+    # satchel7 95%, armed 65/57%, hunted 65/62%, warden 70/52%.
+    #
+    # The order is the ladder's: cross a big room first, then learn the hand,
+    # then use it. `satchel` and `satchel7` look trivial next to the rest and
+    # are not - nothing below them on this ladder had ever required
+    # ACT_PICK_UP, and a brain that had passed all thirteen chose it in 2% of
+    # ticks and ACT_ATTACK in none at all.
+    ("SENIOR SEC", ["senior", "satchel", "satchel7", "armed", "hunted", "warden"],
+     "A room too big for luck, then a weapon, then things that fight back", True),
     ("FULL WORLD", [],
      "The island. Everything at once", True),
 ]
