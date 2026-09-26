@@ -11,6 +11,7 @@ App-state flow:
 
 import argparse
 import time
+from collections import deque
 import torch
 
 import brain
@@ -557,6 +558,8 @@ def run_headless(args):
 
     from rewards import RewardEngine
 
+    reached = deque()
+    base_eps = int(progress.get("episodes") or 0)
     for ep in range(1, num_eps + 1):
         state      = env.reset()
         sl.reset_memory()
@@ -580,8 +583,31 @@ def run_headless(args):
         prog_eff = env.rewards.compute_progression_efficiency(env.tick)
         eff_str = " n/a" if prog_eff is None else f"{prog_eff:.3f}"
         caps_count = len(env.agent.capabilities)
-        reason = "MaxTicks" if env.tick >= config_rl.MAX_TICKS else "Died"
-        print(f"Ep {ep:4d} | reward={total:+7.2f} | GRADE: {grade:4s} | Caps={caps_count} | Eff={eff_str} | ticks={env.tick} | {reason}")
+        hit_cap = env.tick >= env.max_ticks
+        reason = "Survived" if hit_cap else "Died"
+        print(f"Episode {ep} done | reward={total:+7.2f} | GRADE: {grade:4s} | "
+              f"Caps={caps_count} | Eff={eff_str} | ticks={env.tick}/{env.max_ticks} | {reason}")
+
+        # Earning a longer episode. run_gui grew the cap and this did not, so
+        # the fast path - the one an actual long run uses - would have held
+        # the agent at half a day forever however good it got.
+        reached.append(hit_cap)
+        while len(reached) > survival.WINDOW:
+            reached.popleft()
+        if survival.earned(progress, reached):
+            env.max_ticks = survival.promote(progress)
+            reached.clear()
+            print("[ATS] survived %d of the last %d - episode cap is now %s"
+                  % (survival.WINDOW, survival.WINDOW, survival.label(progress)))
+
+        # Saved periodically, because a long run that loses everything to a
+        # closed terminal is the thing all of this exists to avoid. Counting
+        # from `base` rather than adding 25 each time, since the last save is
+        # rarely a multiple of 25 and adding a flat 25 would inflate the
+        # lifetime episode count a little on every run.
+        if ep % 25 == 0 or ep == num_eps:
+            progress["episodes"] = base_eps + ep
+            _save_brain(policy, learner, progress)
 
     _save_brain(policy, learner, progress)
 
@@ -592,9 +618,21 @@ def main():
 # ---------------------------------------------------------------------------
     args = parse_args()
     if args.train:
-        from train_rl import train
-        train(fresh=args.fresh)
-        return
+        # --train used to jump into train_rl.train(), which is the old
+        # standalone trainer and has been broken since the policy started
+        # returning a hidden state:
+        #
+        #     logits, value = model(tensor_state, action_mask=tensor_mask)
+        #     ValueError: too many values to unpack (expected 2)
+        #
+        # It also knows nothing about the earned episode cap or the rung
+        # ladder. Nobody typing --train wants that; they want to train. So
+        # it now means the headless loop, which is the one that is
+        # maintained, and the old path is left in the file for reference
+        # rather than left in the way.
+        print("[ATS] --train runs the headless trainer "
+              "(train_rl.py is legacy and no longer wired in)")
+        args.no_gui = True
     if args.no_gui:
         run_headless(args)
     else:
