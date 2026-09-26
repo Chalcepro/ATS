@@ -25,7 +25,17 @@ from train_curriculum import greedy_pass_rate, rung_key
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--episodes", type=int, default=25)
+    # 40, matching greedy_pass_rate's own default, because that is the number
+    # the trainer promotes and skips on - a reading taken at a different
+    # sample size is not comparable with the decision it is meant to inform.
+    #
+    # Measured the hard way: a 20-episode pass called `avoid 7x7` lost at 65%
+    # against a 75% bar, and the trainer immediately re-measured it at 80% and
+    # skipped it. One rung of six was sampling noise. The rungs that were
+    # genuinely gone - senior 15x15 at 35%, satchel7 at 5% - sat far enough
+    # below their bars that no sample size would have rescued them, which is
+    # the difference to look for.
+    ap.add_argument("--episodes", type=int, default=40)
     ap.add_argument("--only", default=None, help="substring of a rung name")
     a = ap.parse_args(argv)
 

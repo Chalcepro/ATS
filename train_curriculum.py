@@ -79,6 +79,23 @@ def run_episode(env, policy, learner, tracer=None, episode=0):
                         action_mask=mask, done=done,
                         hidden=hx_in.squeeze(0).tolist())
         learner.maybe_update()
+        # The update can WIDEN the network (RLPolicy.expand), and the hidden
+        # state being carried through this loop was made at the old width.
+        # Feeding it back kills the run:
+        #
+        #   RuntimeError: hidden0 has inconsistent hidden_size:
+        #                 got 256, expected 512
+        #
+        # It had been doing exactly that, silently, because the outer grep on
+        # these runs filtered stderr out - `senior 19x19` and `armed` both
+        # ended with no result line at all and the shell moved on to the next
+        # rung as though the rung had merely finished.
+        #
+        # Starting the memory over is the honest response: there is no
+        # meaningful way to carry a 256-wide recollection into a 512-wide
+        # network mid-episode, and episodes already begin with empty memory.
+        if hx.shape[-1] != policy.hidden_size:
+            hx = policy.initial_hidden(1)
     if tracer:
         tracer.end(env, info)
     return total, info
