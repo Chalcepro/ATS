@@ -114,11 +114,12 @@ def greedy_pass_rate(env, policy, stage, episodes=40, seed0=999000):
 
 
 def train_stage(stage, policy, learner, max_episodes, seed=0, quiet=False,
-                on_tick=None, tracer=None, rehearse=(), rehearse_rate=0.25):
+                on_tick=None, tracer=None, rehearse=(), rehearse_rate=0.40):
     """Returns (passed, episodes_used, last_window_stats).
 
-    `rehearse` is the rungs already behind this one. One episode in four is
-    drawn from them, because nothing else in this file protects them.
+    `rehearse` is the rungs already behind this one. Two episodes in five
+    are drawn from them, weighted toward the nearest, because nothing else
+    in this file protects them.
 
     Why that is needed: ContinualLearner is online PPO with a rolling buffer.
     There is no replay, no EWC, no penalty for moving away from the old
@@ -137,6 +138,29 @@ def train_stage(stage, policy, learner, max_episodes, seed=0, quiet=False,
     env = CurriculumEnv(stage, seed=seed)
     rehearsal_envs = [CurriculumEnv(s, seed=seed + 7000 + i)
                       for i, s in enumerate(rehearse)]
+    # Weighted toward the rungs nearest this one, not uniform.
+    #
+    # Uniform was the bug. With 25% of episodes spread evenly over thirteen
+    # rungs, each one is rehearsed in about 2% of episodes, which is not
+    # rehearsal - it is a rounding error. Measured after training the hand
+    # and combat rungs, on a brain claiming fifteen rungs passed:
+    #
+    #     avoid     7x7    65% against a 75% bar
+    #     junior    9x9    55% against a 60% bar
+    #     senior  15x15    35% against a 50% bar
+    #     senior  19x19    15% against a 50% bar
+    #     satchel   5x5    35% against an 85% bar
+    #     satchel7  7x7     5% against a 75% bar
+    #
+    # Six of the fifteen were gone, including the two that had been passed
+    # twice that same hour. senior 15x15 at 35% is the one that mattered:
+    # `armed` IS senior 15x15 plus a sword, so every combat rung was being
+    # trained on a brain that could no longer cross the room, and no amount
+    # of tuning the combat would have shown up as anything but a flat line.
+    #
+    # Linear weights: the rung directly below gets the most, the nursery the
+    # least, and nothing gets zero.
+    rehearsal_weights = [i + 1 for i in range(len(rehearsal_envs))]
     rng = random.Random(seed + 991)
     wins = deque(maxlen=stage.window)
     rewards = deque(maxlen=stage.window)
@@ -148,7 +172,8 @@ def train_stage(stage, policy, learner, max_episodes, seed=0, quiet=False,
         if rehearsal_envs and rng.random() < rehearse_rate:
             # Trained on, not scored on: an old rung the policy still clears
             # would otherwise inflate the window and promote it off this one.
-            run_episode(rng.choice(rehearsal_envs), policy, learner, None, ep)
+            pick = rng.choices(rehearsal_envs, weights=rehearsal_weights)[0]
+            run_episode(pick, policy, learner, None, ep)
 
         total, info = run_episode(env, policy, learner, tracer, ep)
         wins.append(1 if info.get("success") else 0)
@@ -236,7 +261,7 @@ def main(argv=None):
     ap.add_argument("--episodes", type=int, default=4000,
                     help="cap per rung before giving up on it")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--rehearse", type=float, default=0.25,
+    ap.add_argument("--rehearse", type=float, default=0.40,
                     help="fraction of episodes drawn from earlier rungs, "
                          "so climbing does not undo what is below. 0 for "
                          "the old behaviour")
