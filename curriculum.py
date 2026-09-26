@@ -192,7 +192,40 @@ class Stage:
         # route, and the hand rungs teach pressing the button while standing
         # on an object. Opportunistic rather than compelled, which is also
         # how the real world presents an item on the floor.
-        self.weapon_first = bool(weapon_first)
+        #
+        # THEN measured the other way. With it off, `armed` passes - 53%
+        # against a 50% bar, 0.75 kills an episode, ATTACK 6% of ticks - and
+        # the agent arms itself in **0 rooms of 60**. It fights bare-handed,
+        # three swings a kill, and walks over swords without taking them.
+        #
+        # The same transfer problem in its third costume. Standing on a sword
+        # with this off, the object slots describe the distant goal:
+        #
+        #     satchel, on the object    objid 0.13   dist 0.00
+        #     armed,   on a sword       objid 0.01   dist 0.60
+        #
+        # Removing the trap took the sword's signal out with it, and the only
+        # feature the two situations still share is the patch centre.
+        #
+        # So it is a RADIUS now rather than a switch, and the bound is what
+        # makes it safe. A weapon within a few tiles is worth a detour and
+        # reproduces the situation the hand rung taught; one across the room
+        # is not, and the compass goes on pointing at the goal. Bounded, it
+        # cannot hold an agent that fails to press the button: walk a few
+        # tiles and the aim is back on the goal.
+        #
+        # `declined` closes the last hole. A sword stood on and not taken is
+        # one the agent has refused, and refusing it must not re-target it on
+        # the next tick - otherwise a policy can still shuffle on and off one
+        # tile for a whole episode, which is the trap in miniature.
+        #
+        # True keeps the old unbounded behaviour, for the A/B.
+        if not weapon_first:
+            self.weapon_first = 0
+        elif weapon_first is True:
+            self.weapon_first = 10 ** 6
+        else:
+            self.weapon_first = int(weapon_first)
         # The goal is taken with ACT_PICK_UP while standing on it, not by
         # standing on it. This exists because no rung on this ladder ever
         # taught the hand: every one of them is solved by moving alone, and
@@ -663,7 +696,7 @@ def senior_tier(grid=15, grow_to=19):
     ]
 
 
-def combat_tier(grid=15, grow_to=19, weapon_first=False):
+def combat_tier(grid=15, grow_to=19, weapon_first=4):
     """Senior, but the room fights back.
 
     Bob's ask: "it can pick up items, it can pick up swords, all this stuff,
@@ -748,9 +781,10 @@ def combat_tier(grid=15, grow_to=19, weapon_first=False):
                   target=1, window=60, grow_to=grow_to,
                   grow_goals=False, clock_growth=1.2,
                   hostile_hp=3, hostile_damage=8, aggro=6, guards=True,
-                  # OFF, measured harmful. See Stage.weapon_first and
-                  # CurriculumEnv._aim. combat_tier(weapon_first=True) to
-                  # put it back.
+                  # A radius, not a switch: a weapon within four tiles is
+                  # worth a detour, one across the room is not. Unbounded
+                  # (True) held the agent on a sword it would not pick up;
+                  # 0 left it never arming at all. See Stage.weapon_first.
                   weapon_first=weapon_first)
     return tier + [
         # 1. New thing: a weapon. Hostiles stand still exactly as they have
@@ -1253,6 +1287,10 @@ class CurriculumEnv:
                          else self._place(taken, s.hostiles))
         self.hostile_hp = [s.hostile_hp] * len(self.hostiles)
         self.armed = False
+        # Swords the agent stood on, bare-handed, and walked away from. The
+        # aim stops offering them: a refusal that is re-offered every tick is
+        # not a choice, it is a loop.
+        self.declined = set()
         self.kills = 0
         self.hits_taken = 0
         self.met = False          # did a hostile ever come within sight?
@@ -1373,8 +1411,10 @@ class CurriculumEnv:
         """
         if (self.stage.weapon_first and self.swords and not self.armed
                 and self.stage.hostiles):
-            pos, d = self._nearest(self.swords)
-            return pos, d, "sword"
+            want = [c for c in self.swords if c not in self.declined]
+            pos, d = self._nearest(want)
+            if pos is not None and d <= self.stage.weapon_first:
+                return pos, d, "sword"
         pos, d = self._nearest(self.goals)
         return pos, d, "goal"
 
@@ -1589,6 +1629,10 @@ class CurriculumEnv:
             if self._tile(nx, ny) == T_WALL:
                 reward += R_WALL if s.punitive else 0.0
             else:
+                # Stepping off a weapon without having taken it is a refusal.
+                was = (self.ax, self.ay)
+                if not self.armed and was in self.swords:
+                    self.declined.add(was)
                 self.ax, self.ay = nx, ny
 
         # On a pick_goals rung the goal is taken with the hand rather than by

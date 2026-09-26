@@ -223,6 +223,28 @@ check("while reaching for the goal pays", "%+.2f" % r2, r2 > 0)
 check("so pressing it is worth it only on something",
       "%+.2f vs %+.3f" % (r2, r), r2 > 0 > r)
 
+print("\n=== the weapon aim is bounded, and cannot hold the agent ===")
+# Unbounded, the aim only left a sword when the sword was picked up, so a
+# policy that walked onto one and did not press the button was steered at
+# the tile it stood on for the rest of the episode: 28 of 50 rooms reached a
+# sword, 4 armed, 8 cleared, 76% of ticks stepping forward and back.
+st = rung("armed")
+check("it is a radius, not a switch", st.weapon_first, st.weapon_first == 4)
+e = C.CurriculumEnv(st, seed=4100)
+e.ax, e.ay = e.swords[0]
+check("standing on one, the aim is the sword", e._aim()[2], e._aim()[2] == "sword")
+e.step(config_rl.ACT_MOVE_FORWARD)
+check("walking off declines it", len(e.declined), len(e.declined) == 1)
+check("and the aim goes back to the goal", e._aim()[2], e._aim()[2] == "goal")
+# Far from any sword, the compass belongs to the goal - the thirteen rungs
+# below this one are what taught it, and a rung adds one new thing.
+e2 = C.CurriculumEnv(st, seed=4100)
+far = max(e2._free_cells(),
+          key=lambda c: min(abs(c[0] - s[0]) + abs(c[1] - s[1]) for s in e2.swords))
+e2.ax, e2.ay = far
+check("a sword across the room is not worth a detour", e2._aim()[2],
+      e2._aim()[2] == "goal")
+
 print("\n=== the tier is winnable by a competent agent ===")
 for st in C.combat_tier():
     v = C.best_case_return(st, trials=12)
