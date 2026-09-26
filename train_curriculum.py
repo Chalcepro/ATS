@@ -288,9 +288,22 @@ def main(argv=None):
         while rung is not None:
             key = rung_key(rung)
             if key in passed and not a.redo:
-                print("\n=== %s   already passed, skipping" % key)
-                rung = rung.grown()
-                continue
+                # Check before trusting it. `passed` records what was true
+                # when the rung was cleared, and training anything above it
+                # moves the same weights. junior sat in this list at 18%
+                # against a 60% bar while the trainer skipped it on every
+                # run - so the one rung that needed the work was the one rung
+                # that could never get it.
+                still = greedy_pass_rate(CurriculumEnv(rung, seed=a.seed),
+                                         policy, rung)
+                if still >= rung.pass_rate:
+                    print("\n=== %s   still plays at %.0f%%, skipping"
+                          % (key, still * 100))
+                    rung = rung.grown()
+                    continue
+                print("\n=== %s   was passed, now plays at %.0f%% - retraining"
+                      % (key, still * 100))
+                passed.remove(key)
 
             print("\n=== %s   goals=%d hazards=%d hostiles=%d  pass %.0f%% of %d"
                   % (key, rung.goals, rung.hazards, rung.hostiles,
