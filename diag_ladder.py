@@ -38,6 +38,10 @@ def main(argv=None):
     # the difference to look for.
     ap.add_argument("--episodes", type=int, default=40)
     ap.add_argument("--only", default=None, help="substring of a rung name")
+    ap.add_argument("--repair", action="store_true",
+                    help="write the measured truth back into the brain's "
+                         "`passed` list, adding rungs it clears and removing "
+                         "ones it does not")
     a = ap.parse_args(argv)
 
     policy = RLPolicy()
@@ -50,7 +54,7 @@ def main(argv=None):
           % ("rung", "greedy", "bar", "claimed", ""))
     print("  " + "-" * 60)
 
-    lost, near = [], []
+    lost, near, ok_now = [], [], set()
     for st in C.default_ladder():
         r = st
         while r is not None:
@@ -75,6 +79,7 @@ def main(argv=None):
             short = (r.pass_rate - g) / se if se > 0 else 0.0
             if g >= r.pass_rate:
                 verdict = "ok"
+                ok_now.add(name)
             elif short < 1.5:
                 verdict = "close (%.1f SE)" % short
                 near.append((name, g, r.pass_rate))
@@ -86,6 +91,26 @@ def main(argv=None):
             print("  %-20s %6.0f%% %5.0f%%  %-9s %s"
                   % (name, 100 * g, 100 * r.pass_rate, claim, verdict))
             r = r.grown()
+
+    if a.repair:
+        # `passed` is what the GUI uses to choose the next rung to train, so
+        # a rung missing from it is one the GUI will grind on however well
+        # the brain plays it - 600 episodes went into `avoid 7x7` at 90%
+        # for exactly that reason. This makes the list say what was measured.
+        import brain as _brain
+        now = sorted(ok_now)
+        added = [k for k in now if k not in passed]
+        dropped = [k for k in passed if k not in ok_now]
+        progress["passed"] = now
+        _brain.save(policy, None, progress)
+        print("")
+        print("  repaired: %d rungs recorded" % len(now))
+        for k in added:
+            print("     + %s (clears its bar, was not listed)" % k)
+        for k in dropped:
+            print("     - %s (listed, does not clear it)" % k)
+        if not added and not dropped:
+            print("     nothing to change - the list already matched")
 
     print("")
     if near:

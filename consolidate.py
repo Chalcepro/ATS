@@ -167,8 +167,25 @@ def main(argv=None):
                 g = greedy_pass_rate(C.CurriculumEnv(rr, seed=a.seed), policy,
                                      rr, episodes=a.check_episodes)
                 se = math.sqrt(max(g * (1.0 - g), 1e-9) / max(1, a.check_episodes))
+                key = rung_key(rr)
                 if g + se < rr.pass_rate:
-                    short.append((rung_key(rr), g, rr.pass_rate))
+                    short.append((key, g, rr.pass_rate))
+                elif g >= rr.pass_rate and key not in passed:
+                    # Record what was just measured.
+                    #
+                    # This loop had the answer and threw it away, and the
+                    # cost was not bookkeeping. `passed` is what the GUI uses
+                    # to choose which rung to train next, so a rung that is
+                    # being played fine but is missing from the list is a
+                    # rung the GUI will grind on forever. 600 episodes went
+                    # into `avoid 7x7` - a rung the brain already cleared at
+                    # 90% - for exactly this reason.
+                    #
+                    # A rung leaves the list only by being measured below its
+                    # bar, so `passed` means "measured at or above it", not
+                    # "trained once and not since removed".
+                    passed.append(key)
+                    print("  %s now clears its bar - recorded" % key)
             brain.save(policy, learner,
                        {"passed": passed, "episodes": episodes_total})
             if not short:

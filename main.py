@@ -133,6 +133,43 @@ def _save_brain(policy, learner=None, progress=None):
 
 
 # ---------------------------------------------------------------------------
+_REHEARSE_RATE = 0.40
+
+
+def _rehearsal_env(gui, current):
+    """Now and then, an earlier rung instead of the one being trained.
+
+    Two episodes in five, weighted toward the rungs nearest this one - the
+    same rate and the same weighting train_curriculum uses, for the same
+    reason. Uniform over the whole ladder rehearses each rung about 2% of
+    the time, which is a rounding error rather than rehearsal.
+
+    Returns the environment to play next. Rehearsed episodes still train the
+    policy; they are simply not the rung being scored for promotion, which
+    is handled by `gui.active_stage` staying put.
+    """
+    import random
+
+    from curriculum_adapter import StageSession, stage_by_name
+    from debug_gui import TRACKS
+
+    stage = getattr(gui, "active_stage", None)
+    if stage is None:
+        return current                    # the island, which has no ladder
+    _name, rungs, _blurb, _open = TRACKS[gui.selected_track]
+    here = [stage_by_name(r) for r in rungs]
+    here = [s for s in here if s is not None]
+    behind = []
+    for s in here:
+        if s.name == stage.name:
+            break
+        behind.append(s)
+    if not behind or random.random() >= _REHEARSE_RATE:
+        return current
+    weights = [i + 1 for i in range(len(behind))]
+    return StageSession(random.choices(behind, weights=weights)[0])
+
+
 def _env_for_selection(gui):
     """The environment the menu's current selection means.
 
@@ -386,7 +423,30 @@ def run_gui(args):
                     gui.app_state = STATE_STOPPED
                     break
 
-                # Next episode
+                # Next episode, on this rung or on one below it.
+                #
+                # Rehearsal, which this loop did not have. train_curriculum
+                # mixes earlier rungs into every rung's training because
+                # ContinualLearner is online PPO with no replay - train one
+                # room long enough and the weights leave every other room
+                # behind. The GUI trained a single stage, episode after
+                # episode, with nothing protecting the rest of the ladder.
+                #
+                # Measured, 600 GUI episodes on `avoid 7x7`:
+                #
+                #     rung        before   after
+                #     satchel      98%      38%
+                #     satchel7     92%      30%
+                #     armed 15x15  62%      40%
+                #     warden 17x17 62%      32%
+                #     senior 19x19 62%      32%
+                #     avoid 7x7    90%      48%   <- the rung being trained
+                #
+                # The last line is the one that matters: six hundred episodes
+                # of training `avoid` made `avoid` worse. That is not
+                # forgetting, it is thrashing, and rehearsal is what holds a
+                # rung still long enough to converge.
+                env = _rehearsal_env(gui, env)
                 state      = env.reset()
                 sl.reset_memory()
                 done       = False
