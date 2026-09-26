@@ -1194,7 +1194,20 @@ class CurriculumEnv:
         # teach: the agent meets the guard bare-handed every time, and the
         # sword becomes a reward for having already won the fight.
         self.swords = []
-        if s.swords:
+        if s.pick_goals:
+            # On a hand rung the thing to be picked up IS a sword. Not
+            # decoration: it makes "standing on the object" the identical
+            # observation here and on the combat rungs - same tile in the
+            # patch, same object id, same distance - so what the rung teaches
+            # is a situation the agent will actually meet again.
+            #
+            # Measured before this. satchel passed at 100% and `armed` still
+            # armed itself in 1 room of 50, having walked onto a sword in 22
+            # of them. The hand was trained on an apple and asked about a
+            # sword, and argmax is deterministic: on a sword tile it chose a
+            # move every time.
+            self.swords = list(self.goals)
+        elif s.swords:
             early = [c for c in self._direct_path() if c not in taken]
             if early:
                 c = early[max(0, len(early) // 4)]
@@ -1440,9 +1453,14 @@ class CurriculumEnv:
 
         aim, ad, kind = self._aim()
         s[18] = min(1.0, ad / span)
+        # What the thing being aimed at actually IS, not which list it came
+        # from. A sword reads as a sword whether it is the weapon on a combat
+        # rung or the object a hand rung asks for, which is the whole point:
+        # standing on the thing to be picked up has to look the same on both,
+        # or the hand rung teaches a situation that never recurs.
         if aim is None:
             s[config_rl.IDX_OBJ_ID] = 0.0
-        elif kind == "sword":
+        elif aim in self.swords:
             s[config_rl.IDX_OBJ_ID] = STONE_SWORD / float(config_rl.ITEM_ID_SCALE)
         else:
             s[config_rl.IDX_OBJ_ID] = 1.0 / config_rl.ITEM_ID_SCALE
