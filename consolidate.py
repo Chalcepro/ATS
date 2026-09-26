@@ -49,7 +49,7 @@ away. Use it after the ladder is climbed - it holds the claim true and, on
 this evidence, makes it truer.
 
     python consolidate.py                    # hold everything it claims
-    python consolidate.py --also warden      # ...and anything matching this
+    python consolidate.py --also satchel,armed   # ...and these too
     python consolidate.py --episodes 4000
 """
 from __future__ import annotations
@@ -86,7 +86,8 @@ def main(argv=None):
     ap.add_argument("--episodes", type=int, default=3000,
                     help="total interleaved episodes before giving up")
     ap.add_argument("--also", default=None,
-                    help="also hold rungs whose name contains this")
+                    help="also hold rungs whose name contains any of these, "
+                         "comma separated: --also satchel,armed,hunted")
     ap.add_argument("--check-every", type=int, default=400)
     ap.add_argument("--check-episodes", type=int, default=40)
     ap.add_argument("--seed", type=int, default=0)
@@ -98,10 +99,20 @@ def main(argv=None):
     passed = list(progress.get("passed") or [])
     episodes_total = int(progress.get("episodes") or 0)
 
+    # What to hold. `passed` plus anything named, and `--also` takes a list
+    # because needing several is the normal case, not the exception.
+    #
+    # The trap this exists for: consolidate holds what it is GIVEN, so a rung
+    # that has fallen off `passed` is invisible to the tool meant to recover
+    # it. Measured - 16,583 episodes of consolidation ran while satchel and
+    # satchel7 were unlisted, and they went to 3% and 0% against 85% and 75%
+    # bars. The run reported success the whole time, correctly, because it
+    # was holding everything it had been asked to hold.
+    wanted = [w.strip().lower() for w in (a.also or "").split(",") if w.strip()]
     keep = []
     for r in all_rungs():
         name = rung_key(r)
-        if name in passed or (a.also and a.also in name):
+        if name in passed or any(w in name.lower() for w in wanted):
             keep.append(r)
     if not keep:
         print("nothing claimed as passed - climb the ladder first")
