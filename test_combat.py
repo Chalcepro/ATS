@@ -203,6 +203,26 @@ print("\n=== hunting pays worse than going home ===")
 check("a kill is worth less than the goal", "%.2f < %.2f" % (C.R_KILL, C.R_GOAL),
       C.R_KILL < C.R_GOAL)
 
+print("\n=== reaching for nothing is not free, even where nothing else is ===")
+# satchel is punitive=False. Before this, ACT_PICK_UP was free on every tile
+# and correct on exactly one, so the rung taught "always press": carried into
+# `armed` the policy chose it in 64% of all ticks, barely moved, and cleared
+# 1 room in 40 - having previously cleared 13 by ignoring the hand entirely.
+st = rung("satchel")
+check("the hand rung charges nothing for time", st.step_cost, st.step_cost == 0.0)
+e = C.CurriculumEnv(st, seed=1)
+empty = [c for c in e._free_cells() if c not in e.goals]
+e.ax, e.ay = empty[0]
+_, r, _, _ = e.step(config_rl.ACT_PICK_UP)
+check("but reaching for bare floor still costs", "%+.3f" % r, r < 0)
+check("and it is exactly R_GRAB", "%+.3f" % r, abs(r - C.R_GRAB) < 1e-9)
+e = C.CurriculumEnv(st, seed=1)
+e.ax, e.ay = e.goals[0]
+_, r2, _, info = e.step(config_rl.ACT_PICK_UP)
+check("while reaching for the goal pays", "%+.2f" % r2, r2 > 0)
+check("so pressing it is worth it only on something",
+      "%+.2f vs %+.3f" % (r2, r), r2 > 0 > r)
+
 print("\n=== the tier is winnable by a competent agent ===")
 for st in C.combat_tier():
     v = C.best_case_return(st, trials=12)

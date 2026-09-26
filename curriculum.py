@@ -299,6 +299,25 @@ R_HIT = 0.15            # landing a blow. Shaping: at hostile_hp > 1 a kill
 R_KILL = 1.0            # finishing one off
 R_SWING = -0.05         # swinging at empty air. Small, but ATTACK is free
                         # otherwise and a policy that mashes it loses nothing.
+R_GRAB = -0.05          # reaching for a tile with nothing on it.
+#
+# These two are charged whatever `punitive` says, and that is the opposite of
+# how every other cost on this ladder works. The reason is that they are not
+# penalties for playing - they are the only feedback that the action did
+# nothing, and without them "press it" is a strictly better policy than
+# "press it when you are standing on something".
+#
+# Measured, and it is not a small effect. `satchel` is punitive=False, so
+# reaching for empty air cost nothing there: pressing ACT_PICK_UP was free on
+# every tile and correct on one, so the rung taught "always press". Carried
+# into `armed`, the policy chose ACT_PICK_UP in **64% of all ticks**, barely
+# moved, and cleared 1 room in 40 - having previously cleared 13 in 40 by
+# ignoring the hand entirely.
+#
+# punitive=False exists to remove the *time*, *wall* and *standing still*
+# costs, so a first rung can teach one association without three others
+# competing with it. It was never meant to remove the answer to "did that do
+# anything", which is the association a hand rung exists to form.
 
 SWORD_DAMAGE = 3        # blows to kill: 1 at hp 3 with a sword, 3 without
 FIST_DAMAGE = 1
@@ -1548,6 +1567,10 @@ class CurriculumEnv:
                 self.trash.remove(here)
                 reward += R_TRASH
                 self.seen.pop(here, None)
+            else:
+                # Reaching for bare floor. Charged whatever `punitive` says -
+                # see R_GRAB for the 64%-of-ticks measurement.
+                reward += R_GRAB
 
         elif action == config_rl.ACT_ATTACK and s.can_attack:
             here = (self.ax, self.ay)
@@ -1567,7 +1590,7 @@ class CurriculumEnv:
             else:
                 # Swinging at nothing. Free otherwise, and an action that
                 # costs nothing gets mashed.
-                reward += R_SWING if s.punitive else 0.0
+                reward += R_SWING
 
         # Standing still. The point is to stop the policy parking itself
         # somewhere safe and running the clock out - which is exactly what the
