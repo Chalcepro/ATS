@@ -40,6 +40,8 @@ import config_rl
 # thing here as it does in the real world.
 T_FLOOR = 0
 T_WALL = 1
+T_HOSTILE = 2         # TILE_HOSTILE  - something standing there
+T_OBJECT = 3          # TILE_OBJECT   - something lying there to be picked up
 T_HAZARD = 6          # TILE_LAVA in world.py
 
 MOVES = {
@@ -64,7 +66,9 @@ class Stage:
                  damage=False, max_steps=150, target=3,
                  pass_rate=0.80, window=50, grow_to=None, goals_scale=False,
                  hazard_damage=10, punitive=True, shaped=True, sequence=0,
-                 grow_goals=True, clock_growth=1.5):
+                 grow_goals=True, clock_growth=1.5,
+                 swords=0, hostile_hp=1, hostile_damage=0, chase=0,
+                 aggro=0, grow_hostiles=False, guards=False):
         self.name = name
         self.grid = grid
         self.walls = walls
@@ -121,10 +125,69 @@ class Stage:
         # 1.5x per step had turned the clock into forty-seven times the route.
         self.grow_goals = grow_goals
         self.clock_growth = clock_growth
+
+        # ---- combat ------------------------------------------------------
+        #
+        # Everything below junior treats a hostile as furniture: it is placed
+        # once, it never moves, one ACT_ATTACK deletes it, and there is no
+        # weapon anywhere in the room. That is not something to fight, it is
+        # a pot-hole that bites, and raising `hostiles` on such a rung raises
+        # the number of pot-holes rather than teaching combat.
+        #
+        # These four fields are what turn it into a fight, and they are
+        # deliberately separable so a rung can add exactly one of them:
+        #
+        #   hostile_hp      how many blows it takes. >1 is what makes a
+        #                   weapon worth carrying; at 1 the sword is decor.
+        #   swords          how many are on the floor to be picked up.
+        #   chase           how often it steps toward the agent, as one move
+        #                   every `chase` ticks. 0 is the old furniture.
+        #   aggro           how close you must be before it notices. Outside
+        #                   this radius it wanders, so the room is not one
+        #                   long pursuit from tick zero.
+        #
+        # `hostile_damage` splits from hazard_damage because they are two
+        # different lessons - lava is stood in, a hostile comes to you - and
+        # tuning one used to silently move the other. 0 keeps the old
+        # behaviour (half of hazard_damage).
+        self.swords = int(swords)
+        self.hostile_hp = int(hostile_hp)
+        self.hostile_damage = int(hostile_damage)
+        self.chase = int(chase)
+        self.aggro = int(aggro)
+        # Hostiles seated on the route to the goal rather than dropped
+        # anywhere. See CurriculumEnv._place_guards for the measurement
+        # that made this necessary.
+        self.guards = bool(guards)
+        # Goals scaling with room size undoes a compass rung (see grow_goals).
+        # Hostiles scaling is the opposite: on a combat rung the encounter
+        # rate IS the lesson, and a bigger room with the same two hostiles is
+        # a rung that quietly teaches less as it grows.
+        self.grow_hostiles = grow_hostiles
+
         # A bigger room gets proportionally more to find, so the reward on
         # offer grows with the walking required.
         if goals_scale:
             self.goals = max(goals, round(goals * grid / 5.0))
+
+    @property
+    def bite(self):
+        """What one blow from a hostile takes."""
+        return self.hostile_damage or max(1, self.hazard_damage // 2)
+
+    @property
+    def tempo(self):
+        """One hostile turn every this many agent ticks.
+
+        A hostile's move and its blow are the same turn. Before this they
+        were not: `chase` gated movement while damage was applied on every
+        single tick a hostile stood adjacent, so a pursuer that could only
+        step every other tick was still hitting twice as often as it could
+        act. Three of them meant 24 health a tick against a 100-health
+        agent, and the oracle - a competent player, by construction - died
+        in up to 38% of rooms.
+        """
+        return max(1, self.chase)
 
     @property
     def step_cost(self):
@@ -145,9 +208,18 @@ class Stage:
         """The next size up, or None when this stage has nothing left to give."""
         if not self.grow_to or self.grid + 2 > self.grow_to:
             return None
+        # More room, more of them. Without this a combat rung gets easier
+        # every time it grows: the same two hostiles spread over 19x19 are
+        # met half as often as over 15x15, so the rung that exists to teach
+        # fighting would teach progressively less of it. Off by default, so
+        # nothing below the combat tier changes.
+        more = self.hostiles
+        if self.grow_hostiles:
+            more = max(self.hostiles,
+                       round(self.hostiles * (self.grid + 2) / float(self.grid)))
         nxt = Stage(self.name, self.grid + 2, walls=self.walls,
                     hazards=min(self.hazards + 1, 4),
-                    hostiles=self.hostiles, goals=self.goals, respawn=self.respawn,
+                    hostiles=more, goals=self.goals, respawn=self.respawn,
                     can_pick=self.can_pick, can_attack=self.can_attack,
                     damage=self.damage, hazard_damage=self.hazard_damage,
                     # Room for the longer walk a bigger maze needs, or the
@@ -158,7 +230,15 @@ class Stage:
                     window=self.window, grow_to=self.grow_to,
                     sequence=self.sequence,
                     grow_goals=self.grow_goals,
-                    clock_growth=self.clock_growth)
+                    clock_growth=self.clock_growth,
+                    # Carried explicitly. A field added to __init__ and not
+                    # added here does not raise - it silently defaults, so a
+                    # grown rung loses the one thing it was built to teach
+                    # and still reports the same name.
+                    swords=self.swords, hostile_hp=self.hostile_hp,
+                    hostile_damage=self.hostile_damage, chase=self.chase,
+                    aggro=self.aggro, grow_hostiles=self.grow_hostiles,
+                    guards=self.guards)
         return nxt
 
     def __repr__(self):
@@ -189,6 +269,32 @@ R_GOOD = 0.5            # picking up a useful thing
 R_DEATH = -3.0
 R_CLEAR = 3.0           # collecting everything the room had
 R_INCOMPLETE = -2.0     # running out of steps with a trail unfinished
+
+# ---- combat --------------------------------------------------------------
+#
+# Fighting is never the point. On every combat rung success is still
+# "reach the goal", and the hostiles are in the way of it - so these
+# numbers only have to make fighting the better answer when something is
+# blocking the route, and never make hunting more profitable than walking.
+#
+# R_KILL under R_GOAL is that rule stated in arithmetic: clearing the room
+# of hostiles and going home empty must score below simply going home.
+R_SWORD = 0.5           # picking up a weapon
+R_HIT = 0.15            # landing a blow. Shaping: at hostile_hp > 1 a kill
+                        # is several ticks away, and without this the first
+                        # two swings look identical to swinging at nothing.
+R_KILL = 1.0            # finishing one off
+R_SWING = -0.05         # swinging at empty air. Small, but ATTACK is free
+                        # otherwise and a policy that mashes it loses nothing.
+
+SWORD_DAMAGE = 3        # blows to kill: 1 at hp 3 with a sword, 3 without
+FIST_DAMAGE = 1
+
+# Item 0013 in the real registry - crafting.py makes it from Stick + Stone.
+# The curriculum does not craft, but it writes the same id into the same
+# inventory slot, so a policy that learns "slot 0 holds 0.13 -> my swing
+# kills" reads the real world's inventory the same way.
+STONE_SWORD = 13
 
 STILL_GRACE = 4         # steps of stillness allowed before the penalty starts
 STILL_EVERY = 2         # ...then it lands this often
@@ -226,7 +332,7 @@ def trail_rung(grid=5, sequence=5, max_steps=160):
 
 
 def default_ladder(max_grid=12, with_trail=False, senior_grid=15,
-                   senior_to=19):
+                   senior_to=19, with_combat=True):
     """The ladder. Each rung adds **exactly one** new thing.
 
     The first version of this file went from nursery straight to "maze, plus
@@ -333,6 +439,11 @@ def default_ladder(max_grid=12, with_trail=False, senior_grid=15,
                    grow_to=max_grid))
 
     L.extend(senior_tier(grid=senior_grid, grow_to=senior_to))
+    # Last, because it is hardest and because it depends on everything the
+    # senior rungs teach: a room this size has to be navigated before it is
+    # worth learning to fight your way across one.
+    if with_combat:
+        L.extend(combat_tier(grid=senior_grid, grow_to=senior_to))
     return L
 
 
@@ -489,6 +600,88 @@ def senior_tier(grid=15, grow_to=19):
               damage=True, max_steps=_senior_clock(grid, 12), target=5,
               pass_rate=0.55, window=60, grow_to=grow_to,
               grow_goals=False, clock_growth=1.2),
+    ]
+
+
+def combat_tier(grid=15, grow_to=19):
+    """Senior, but the room fights back.
+
+    Bob's ask: "it can pick up items, it can pick up swords, all this stuff,
+    and then battle... the chances of encountering an enemy are higher... you
+    should be able to fend for yourself."
+
+    What was already there, and why it was not combat
+    -------------------------------------------------
+    `hostiles` has existed since junior, and junior, primary and all three
+    senior rungs carry one. It was never a fight:
+
+      * the hostile is placed at reset and never moves again
+      * one ACT_ATTACK deletes it, whatever it is
+      * there is no weapon anywhere in the curriculum
+      * items on the floor are not in the observation at all, so the only
+        way to find one is to walk over it by accident
+
+    That is a pot-hole that bites, and turning `hostiles` up on such a rung
+    adds pot-holes. Four things had to change in the environment before a
+    combat rung could mean anything, and they are in Stage as `hostile_hp`,
+    `swords`, `chase` and `aggro`, plus the TILE_OBJECT/TILE_HOSTILE overlay
+    that makes both visible.
+
+    The shape of the tier - one new thing per rung, as everywhere else
+    -----------------------------------------------------------------
+    1. `armed`   a weapon exists and is worth carrying. Hostiles still do
+                 not move, so the ONLY new thing is the sword: three swings
+                 bare-handed, one with it.
+    2. `hunted`  they come to you. Same numbers, same sword, but avoidance
+                 stops being free and disengaging becomes a decision.
+    3. `warden`  more of them, and more again as the room grows. This is the
+                 "higher chance of encountering an enemy" rung, and it is
+                 last because it is hardest.
+
+    Success is still reaching the goal
+    ----------------------------------
+    Not "clear the room". R_KILL is deliberately below R_GOAL so that
+    hunting pays worse than walking home, and the hostiles are an obstacle
+    between the agent and the thing it was sent for. This keeps the reward
+    structure the ladder has already proved learnable, and avoids handing
+    the critic a second objective to confuse with distance - which is
+    exactly what the trail rungs did to the bearing (see trail_rung).
+
+    The clock is looser than the compass rung's 4x because fighting costs
+    ticks that walking does not: arming yourself is a detour, and every
+    exchange is a tick not spent travelling.
+    """
+    common = dict(walls=True, hazards=3, goals=1, sequence=0, respawn=False,
+                  can_pick=True, can_attack=True, damage=True,
+                  target=1, window=60, grow_to=grow_to,
+                  grow_goals=False, clock_growth=1.2,
+                  hostile_hp=3, hostile_damage=8, aggro=6, guards=True)
+    return [
+        # 1. New thing: a weapon. Hostiles stand still exactly as they have
+        #    since junior, so nothing about avoiding them has changed - but
+        #    they now take three blows bare-handed and one with the sword,
+        #    which is the first time in this curriculum that carrying
+        #    something has altered what an action does.
+        Stage("armed", grid, swords=2, hostiles=2, chase=0,
+              max_steps=_senior_clock(grid, 5), pass_rate=0.50, **common),
+
+        # 2. New thing: they move. Walking past is no longer a plan, and the
+        #    sword stops being optional. `chase=2` is one hostile move per
+        #    two agent ticks on purpose: at 1 it is a perfect pursuer and
+        #    fleeing is impossible, which makes the rung a fight simulator
+        #    rather than a choice between fighting and leaving.
+        Stage("hunted", grid, swords=2, hostiles=2, chase=2,
+              max_steps=_senior_clock(grid, 6), pass_rate=0.50, **common),
+
+        # 3. New thing: numbers. Four in the room instead of two, and
+        #    `grow_hostiles` keeps that density as the room grows to 19x19 -
+        #    without it the rung would get easier every time it grew, since
+        #    the same two hostiles in a room 1.6x the area are met far less
+        #    often. This is the rung that answers "higher chance of
+        #    encountering an enemy".
+        Stage("warden", grid, swords=3, hostiles=4, chase=2,
+              grow_hostiles=True,
+              max_steps=_senior_clock(grid, 7), pass_rate=0.45, **common),
     ]
 
 
@@ -738,6 +931,59 @@ class CurriculumEnv:
                 break
         return out
 
+    def _place_guards(self, taken, n):
+        """Hostiles that stand between the agent and where it is going.
+
+        Measured before this existed, on the `armed` rung - two hostiles and
+        two swords in a 15x15 maze, played by the oracle:
+
+            armed 15x15   met 82%   armed 39%   kills 0.39   success 100%
+            armed 17x17   met 59%   armed 32%   kills 0.34   success 100%
+            armed 19x19   met 62%   armed 30%   kills 0.34   success 100%
+
+        A competent player cleared every room while picking up a sword in
+        under a third of them and killing almost nothing. That is not a rung
+        about weapons with a hard bit; it is a rung about walking that has
+        some swords lying in it, and the bigger the room got the more
+        thoroughly the whole mechanic could be ignored.
+
+        The mistake was assuming "a weapon" and "a reason to use it" are two
+        separate things that could go on two rungs. They are not: nothing
+        on a static-hostile rung ever forces an exchange, so the weapon has
+        no effect that the agent can be rewarded for noticing.
+
+        So a guard is placed the way a hazard is - preferring the direct
+        route, because that is where it is a decision - and the same rule
+        applies as for hazards: never make the goal unreachable. A hostile
+        can always be fought through, so 'blocked' here means only that the
+        agent cannot get by without an exchange, which is the point.
+        """
+        if n <= 0:
+            return []
+        path = [c for c in self._direct_path() if c not in taken]
+        out = []
+        if path:
+            # Spread along the route, not clustered at its midpoint. The
+            # first version seated every guard as near the middle as it
+            # could, which on the four- and six-hostile rungs put the whole
+            # garrison in one place: they then converged into a mob, landed
+            # four bites a tick, and killed a competent player 31-38% of the
+            # time. Spacing them is the difference between three fights and
+            # one unwinnable one.
+            #
+            # Half-way along the first gap, so nothing stands on the agent's
+            # doorstep before a sword could possibly have been found.
+            step = len(path) / float(n + 1)
+            for k in range(n):
+                idx = min(len(path) - 1, int(step * (k + 1)))
+                c = path[idx]
+                if c not in taken:
+                    out.append(c)
+                    taken.add(c)
+        if len(out) < n:
+            out.extend(self._place(taken, n - len(out)))
+        return out
+
     def _place(self, taken, n):
         out = []
         free = [c for c in self._free_cells() if c not in taken]
@@ -746,6 +992,71 @@ class CurriculumEnv:
             out.append(c)
             taken.add(c)
         return out
+
+    def _step_hostiles(self):
+        """Hostiles take a turn: chase if they have noticed you, else wander.
+
+        This is the difference between "there are enemies in the room" and
+        "you will be attacked". With static hostiles the encounter rate is
+        whatever the agent's route happens to blunder into - measured at 15x15
+        with two of them, a competent agent walking to the goal met one in
+        under a third of episodes, and adding more just added more furniture
+        to walk around.
+
+        Two deliberate limits, because a perfect pursuer makes the rung
+        unwinnable rather than hard:
+
+        `chase` is a period, not a speed - one hostile move every `chase`
+        agent ticks. At 2 the agent outruns it and disengaging is a real
+        option, which is what makes choosing to fight a choice.
+
+        `aggro` is a leash on noticing, not on following. Outside it they
+        wander, so a room is not one unbroken pursuit from tick one; inside
+        it they commit. They do not path around walls - they take the better
+        of the two axis steps and stall on corners, which is the behaviour
+        the full world's entities have and is also what makes a corridor a
+        defensible place to stand.
+        """
+        s = self.stage
+        if not s.chase or not self.hostiles:
+            return
+        if self.steps % s.tempo:
+            return
+        taken = {(h[0], h[1]) for h in self.hostiles}
+        for i, (hx, hy) in enumerate(self.hostiles):
+            d = abs(hx - self.ax) + abs(hy - self.ay)
+            # Already in reach: hold and fight. It cannot step onto the
+            # agent, so without this it took the next-best step - sideways,
+            # out of reach - and a pursuer that had cornered the agent
+            # wandered off instead of pressing. Measured: four ticks stood
+            # next to one cost a single blow rather than two, because it
+            # spent every other turn stepping away and back.
+            if d <= 1:
+                continue
+            wandering = bool(s.aggro) and d > s.aggro
+            if wandering:
+                opts = [(hx + dx, hy + dy) for dx, dy in MOVES.values()]
+                self.rng.shuffle(opts)
+            else:
+                # Close the bigger gap first, and fall back to the other axis
+                # when a wall is in the way.
+                opts = []
+                if abs(self.ax - hx) >= abs(self.ay - hy):
+                    opts.append((hx + (1 if self.ax > hx else -1), hy))
+                    opts.append((hx, hy + (1 if self.ay > hy else -1)))
+                else:
+                    opts.append((hx, hy + (1 if self.ay > hy else -1)))
+                    opts.append((hx + (1 if self.ax > hx else -1), hy))
+                opts = [o for o in opts if o != (hx, hy)]
+            for nx, ny in opts:
+                if self._tile(nx, ny) in (T_WALL, T_HAZARD):
+                    continue
+                if (nx, ny) in taken or (nx, ny) == (self.ax, self.ay):
+                    continue
+                taken.discard((hx, hy))
+                taken.add((nx, ny))
+                self.hostiles[i] = (nx, ny)
+                break
 
     # -- episode -----------------------------------------------------------
 
@@ -813,7 +1124,29 @@ class CurriculumEnv:
             self.grid[hy][hx] = T_HAZARD
         self.trash = self._place(taken, 2 if s.can_pick else 0)
         self.good = self._place(taken, 1 if s.can_pick else 0)
-        self.hostiles = self._place(taken, s.hostiles)
+        # One sword early on the way, the rest scattered. A weapon that only
+        # ever lies BEHIND the thing it is for is not a weapon the rung can
+        # teach: the agent meets the guard bare-handed every time, and the
+        # sword becomes a reward for having already won the fight.
+        self.swords = []
+        if s.swords:
+            early = [c for c in self._direct_path() if c not in taken]
+            if early:
+                c = early[max(0, len(early) // 4)]
+                self.swords.append(c)
+                taken.add(c)
+            self.swords.extend(self._place(taken, s.swords - len(self.swords)))
+        # Health, not a position: a hostile is now a thing with a state
+        # rather than a coordinate that is either there or deleted. Kept as
+        # a parallel list so every existing `for h in self.hostiles` that
+        # only wants the position goes on working unchanged.
+        self.hostiles = (self._place_guards(taken, s.hostiles) if s.guards
+                         else self._place(taken, s.hostiles))
+        self.hostile_hp = [s.hostile_hp] * len(self.hostiles)
+        self.armed = False
+        self.kills = 0
+        self.hits_taken = 0
+        self.met = False          # did a hostile ever come within sight?
 
         self.health = 100
         self.steps = 0
@@ -849,6 +1182,35 @@ class CurriculumEnv:
             return self.grid[y][x]
         return T_WALL
 
+    def _view(self, x, y):
+        """What the agent SEES at a cell, as opposed to what the map is.
+
+        Swords and hostiles are kept out of `self.grid` on purpose - every
+        route check in this file tests `== T_FLOOR` to find a free cell, and
+        writing an item into the terrain would quietly make its tile
+        unreachable to the maze validator, the hazard placer and the oracle
+        at once.
+
+        So the terrain stays terrain and this is the overlay. Both ids are
+        the real world's: TILE_HOSTILE and TILE_OBJECT are what world.py
+        renders an entity and a ground item as, which is the whole reason
+        this is worth doing rather than adding curriculum-only ids - the
+        tile embedding then means the same thing on both sides.
+
+        Without it there is no way to learn to pick a sword up. Items have
+        never been in this observation at all: `good` and `trash` are placed,
+        rewarded on ACT_PICK_UP, and invisible, so every can_pick rung has
+        been rewarding a lottery.
+        """
+        raw = self._tile(x, y)
+        if raw == T_WALL:
+            return raw
+        if (x, y) in self.hostiles:
+            return T_HOSTILE
+        if (x, y) in self.swords or (x, y) in self.good or (x, y) in self.trash:
+            return T_OBJECT
+        return raw
+
     def _nearest(self, items):
         if not items:
             return None, 999
@@ -872,7 +1234,17 @@ class CurriculumEnv:
             for dx in range(-r, r + 1):
                 x, y = self.ax + dx, self.ay + dy
                 if 0 <= x < n and 0 <= y < n:
-                    self.seen[(x, y)] = self.grid[y][x]
+                    # Terrain and items are remembered; hostiles are not.
+                    # A hostile that walks away would otherwise leave a
+                    # permanent ghost on the remembered map, and the agent
+                    # would spend the rest of the episode routing around
+                    # somewhere nothing is standing.
+                    t = self.grid[y][x]
+                    if t != T_WALL and ((x, y) in self.swords
+                                        or (x, y) in self.good
+                                        or (x, y) in self.trash):
+                        t = T_OBJECT
+                    self.seen[(x, y)] = t
         d = config_rl.MEM_VISIT_DECAY
         for k in list(self.visit):
             self.visit[k] *= d
@@ -933,10 +1305,10 @@ class CurriculumEnv:
         s[4] = 0.0                       # level
 
         # Adjacent tiles (indices 10..13), same order as agent.build_state
-        s[10] = float(self._tile(self.ax, self.ay - 1))
-        s[11] = float(self._tile(self.ax - 1, self.ay))
-        s[12] = float(self._tile(self.ax + 1, self.ay))
-        s[13] = float(self._tile(self.ax, self.ay + 1))
+        s[10] = float(self._view(self.ax, self.ay - 1))
+        s[11] = float(self._view(self.ax - 1, self.ay))
+        s[12] = float(self._view(self.ax + 1, self.ay))
+        s[13] = float(self._view(self.ax, self.ay + 1))
 
         host, hd = self._nearest(self.hostiles)
         s[14] = min(1.0, hd / span)
@@ -945,6 +1317,38 @@ class CurriculumEnv:
         goal, gd = self._nearest(self.goals)
         s[18] = min(1.0, gd / span)
         s[config_rl.IDX_OBJ_ID] = 1.0 / config_rl.ITEM_ID_SCALE if goal else 0.0
+
+        # What we are carrying, in the real inventory slots. Until now the
+        # curriculum left all seven of them at zero, so a policy trained here
+        # had never once seen the block it is supposed to read in the full
+        # world - and, more immediately, "am I armed?" was not in the
+        # observation at all. Without it the sword is not a decision: picking
+        # it up changes nothing the policy can see, so the extra damage looks
+        # like the same swing sometimes working and sometimes not.
+        #
+        # STONE_SWORD is item 0013 in the real registry, written the way
+        # agent.build_state writes it, so the slot means the same thing on
+        # both sides.
+        if self.armed:
+            inv = config_rl.IDX_INV_START
+            s[inv + 0] = STONE_SWORD / float(config_rl.ITEM_ID_SCALE)
+            s[inv + 1] = 1.0 / float(config_rl.ITEM_ID_SCALE)
+
+        # Is it coming for me, and what does it land if it arrives? Slots 16
+        # and 17 are `ent_state` and `incoming` in agent.build_state, and the
+        # curriculum has always left both at zero. They are written here with
+        # the same meaning the real world gives them: 2 is entities.py's
+        # "attacking", and `incoming` is the damage one blow costs.
+        #
+        # Enemy hit points deliberately do NOT go in the vector. There is no
+        # slot for them in the real world's 0..53 block, and inventing one
+        # would change STATE_SIZE and strand every weight trained so far.
+        # The decision the agent actually has to make is "am I armed", which
+        # the inventory slots above now carry.
+        if host and self.stage.chase:
+            close = self.stage.aggro == 0 or hd <= self.stage.aggro
+            s[16] = 2.0 if close else 0.0
+            s[17] = (self.stage.bite / 100.0) if hd <= 1 else 0.0
 
         # The direction block. This is the single most useful thing in the
         # vector: without a signed bearing to the goal the policy has to infer
@@ -968,7 +1372,7 @@ class CurriculumEnv:
         i = 0
         for dy in range(-r, r + 1):
             for dx in range(-r, r + 1):
-                s[p + i] = float(self._tile(self.ax + dx, self.ay + dy))
+                s[p + i] = float(self._view(self.ax + dx, self.ay + dy))
                 i += 1
 
         # Remembered map: three channels over one window, agent-centred.
@@ -1011,20 +1415,43 @@ class CurriculumEnv:
 
         elif action == config_rl.ACT_PICK_UP and s.can_pick:
             here = (self.ax, self.ay)
-            if here in self.good:
+            if here in self.swords:
+                self.swords.remove(here)
+                # Only the first one is worth anything. Otherwise a room with
+                # two swords pays twice for the same lesson, and on the grown
+                # rungs that is a free score that has nothing to do with the
+                # fight.
+                reward += 0.0 if self.armed else R_SWORD
+                self.armed = True
+                self.seen.pop(here, None)
+            elif here in self.good:
                 self.good.remove(here)
                 reward += R_GOOD
+                self.seen.pop(here, None)
             elif here in self.trash:
                 self.trash.remove(here)
                 reward += R_TRASH
+                self.seen.pop(here, None)
 
         elif action == config_rl.ACT_ATTACK and s.can_attack:
             here = (self.ax, self.ay)
-            hit = [h for h in self.hostiles
+            hit = [i for i, h in enumerate(self.hostiles)
                    if abs(h[0] - here[0]) + abs(h[1] - here[1]) <= 1]
             if hit:
-                self.hostiles.remove(hit[0])
-                reward += R_GOOD
+                i = hit[0]
+                dmg = SWORD_DAMAGE if self.armed else FIST_DAMAGE
+                self.hostile_hp[i] -= dmg
+                if self.hostile_hp[i] <= 0:
+                    self.hostiles.pop(i)
+                    self.hostile_hp.pop(i)
+                    self.kills += 1
+                    reward += R_KILL
+                else:
+                    reward += R_HIT
+            else:
+                # Swinging at nothing. Free otherwise, and an action that
+                # costs nothing gets mashed.
+                reward += R_SWING if s.punitive else 0.0
 
         # Standing still. The point is to stop the policy parking itself
         # somewhere safe and running the clock out - which is exactly what the
@@ -1079,15 +1506,28 @@ class CurriculumEnv:
         # The comment on `avoid` says damage is off so the agent survives
         # long enough to form the association. That reasoning is right - it
         # just also removed the only signal the association could form from.
+        # The hostiles move AFTER the agent has acted, so an attack lands on
+        # where the thing was when the agent could see it. Stepping them
+        # first would mean swinging at a tile it had already left, which
+        # reads to the policy as ATTACK working at random.
+        self._step_hostiles()
+        if self.hostiles:
+            _, hostd = self._nearest(self.hostiles)
+            if hostd <= config_rl.PATCH_RADIUS:
+                self.met = True
+
         if self._tile(self.ax, self.ay) == T_HAZARD:
             reward += R_HAZARD
         if s.damage:
             if self._tile(self.ax, self.ay) == T_HAZARD:
                 self.health -= s.hazard_damage
-            for h in self.hostiles:
-                if abs(h[0] - self.ax) + abs(h[1] - self.ay) <= 1:
-                    self.health -= max(1, s.hazard_damage // 2)
-                    reward += R_HAZARD * 0.5
+            # A blow is the hostile's turn, on the same clock as its move.
+            if self.steps % s.tempo == 0:
+                for h in self.hostiles:
+                    if abs(h[0] - self.ax) + abs(h[1] - self.ay) <= 1:
+                        self.health -= s.bite
+                        self.hits_taken += 1
+                        reward += R_HAZARD * 0.5
             if self.health <= 0:
                 self.dead = True
                 reward += R_DEATH
@@ -1108,13 +1548,66 @@ class CurriculumEnv:
         return self._state(), reward, done, {
             "collected": self.collected, "success": success,
             "dead": self.dead, "steps": self.steps, "health": self.health,
+            "kills": self.kills, "armed": self.armed, "met": self.met,
+            "hits_taken": self.hits_taken,
         }
 
 
 # ---- the guard that stops the original bug coming back -------------------
 
+def _first_step(env, stage, targets, block):
+    """First move of a shortest route to any of `targets`, or None."""
+    from collections import deque
+    n = stage.grid
+    start = (env.ax, env.ay)
+    targets = set(targets)
+    if not targets:
+        return None
+    prev = {start: None}
+    q = deque([start])
+    end = None
+    while q and end is None:
+        x, y = q.popleft()
+        for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+            nx, ny = x + dx, y + dy
+            if not (0 <= nx < n and 0 <= ny < n) or (nx, ny) in prev:
+                continue
+            if env.grid[ny][nx] == T_WALL:
+                continue
+            if (nx, ny) in block and (nx, ny) not in targets:
+                continue
+            prev[(nx, ny)] = (x, y)
+            if (nx, ny) in targets:
+                end = (nx, ny)
+                break
+            q.append((nx, ny))
+    if end is None:
+        return None
+    cur = end
+    while prev[cur] != start:
+        cur = prev[cur]
+    want = (cur[0] - start[0], cur[1] - start[1])
+    for act, d in MOVES.items():
+        if d == want:
+            return act
+    return None
+
+
 def oracle_step(env, stage):
     """One step along a shortest route to the nearest goal, avoiding harm.
+
+    Combat, added 2026-09-25
+    ------------------------
+    The avoid-everything version below cannot play a rung whose hostiles
+    chase: every cell adjacent to a pursuer is a `bite` cell, a pursuer
+    follows, so the careful pass finds no route at all and the reckless pass
+    walks the whole episode taking a blow a tick. It died in most rooms and
+    reported the tier as unplayable, which would have had preflight refuse
+    to train rungs that are in fact fine - the exact failure this function
+    was last rewritten to fix, in a new costume.
+
+    A competent player of a combat rung arms itself and kills what corners
+    it, so that is what this does, in priority order.
 
     This replaced a greedy "walk the bigger axis first" chooser, which had no
     pathfinding and so measured the maze rather than the reward. It cleared
@@ -1135,8 +1628,6 @@ def oracle_step(env, stage):
     n = stage.grid
     start = (env.ax, env.ay)
     goals = set(env.goals)
-    if not goals:
-        return config_rl.ACT_WAIT
 
     bite = set()
     if stage.damage:
@@ -1145,6 +1636,41 @@ def oracle_step(env, stage):
                 for dy in (-1, 0, 1):
                     if abs(dx) + abs(dy) <= 1:
                         bite.add((h[0] + dx, h[1] + dy))
+
+    # 1. Standing on a weapon with empty hands. Always worth one tick.
+    if stage.can_pick and not env.armed and start in env.swords:
+        return config_rl.ACT_PICK_UP
+
+    # 2. Unarmed, with a weapon reachable without walking into anything.
+    #    Arming first is what makes these rungs winnable and is the whole
+    #    behaviour they exist to teach.
+    #
+    #    ORDER MATTERS, and getting it wrong cost a measurable 20% of
+    #    episodes. The first version put "something is adjacent" above this
+    #    and had it break off toward the sword; the next tick nothing was
+    #    adjacent, so this rule routed back toward the sword THROUGH the
+    #    guard, and the two rules traded the agent back and forth beside a
+    #    hostile that hit it every tick. Static guards, which cannot even
+    #    follow, killed a competent player 19% of the time - more often than
+    #    the rung where they chase.
+    #
+    #    Asking for the sword first, and only fighting when it cannot be
+    #    had safely, is a decision that cannot oscillate: the two branches
+    #    are now mutually exclusive rather than alternating.
+    if stage.can_pick and not env.armed and env.swords and env.hostiles:
+        act = _first_step(env, stage, env.swords, bite | set(env.hazards))
+        if act is not None:
+            return act
+
+    # 3. Something is in reach, and either we are armed or the weapon was
+    #    not safely reachable. Either way the fight is the plan now.
+    if stage.can_attack and env.hostiles:
+        if any(abs(h[0] - start[0]) + abs(h[1] - start[1]) <= 1
+               for h in env.hostiles):
+            return config_rl.ACT_ATTACK
+
+    if not goals:
+        return config_rl.ACT_WAIT
 
     for careful in (True, False):
         prev = {start: None}
