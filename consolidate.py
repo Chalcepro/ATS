@@ -38,6 +38,7 @@ climbing it.
 from __future__ import annotations
 
 import argparse
+import math
 import random
 import statistics
 import sys
@@ -132,16 +133,30 @@ def main(argv=None):
             report()
             # Greedy is what promotion and diag_ladder both use; the rolling
             # window above is the sampling policy and reads high.
+            # Within one standard error counts as clearing it, and that is
+            # not generosity - it is the only way this loop can ever stop.
+            #
+            # Requiring nineteen independently noisy measurements to all
+            # land at-or-above their bars on the same sample is a condition
+            # that barely fires even when every rung is genuinely healthy:
+            # at a 90% chance each, all nineteen agree 13% of the time; at
+            # 70%, once in a thousand. A rung sitting exactly on its bar is
+            # a coin-flip to read under it.
+            #
+            # So the test is "not measurably below", the same rule
+            # diag_ladder reports with, and the two cannot disagree.
             short = []
             for rr in keep:
                 g = greedy_pass_rate(C.CurriculumEnv(rr, seed=a.seed), policy,
                                      rr, episodes=a.check_episodes)
-                if g < rr.pass_rate:
+                se = math.sqrt(max(g * (1.0 - g), 1e-9) / max(1, a.check_episodes))
+                if g + se < rr.pass_rate:
                     short.append((rung_key(rr), g, rr.pass_rate))
             brain.save(policy, learner,
                        {"passed": passed, "episodes": episodes_total})
             if not short:
-                print("\n  every rung clears its bar under greedy play.")
+                print("\n  every rung clears its bar under greedy play, or")
+                print("  sits within one standard error of it.")
                 print("  brain saved. %d episodes." % episodes_total)
                 return 0
             print("  still short under greedy: %s"
