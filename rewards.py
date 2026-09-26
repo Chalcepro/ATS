@@ -66,6 +66,18 @@ R_SLEEP = 2.0
 
 # Penalties
 R_WAIT = -0.2               # wait penalty
+# Swinging at empty air.
+#
+# Without this, ATTACK is a free WAIT that occasionally pays, and the agent
+# finds that. Measured on the island with a brain that had cleared the whole
+# curriculum: it chose attack in 85.8% of ticks, stood more or less still,
+# and survived by not going anywhere - because nothing it was doing cost
+# anything and one action in a hundred landed a hit.
+#
+# Smaller than R_WAIT on purpose. Swinging at nothing is a wasted tick, not a
+# worse one than deliberately idling, and the curriculum uses the same -0.05
+# for the same reason.
+R_ATTACK_MISS = -0.05
 R_WALL_HIT = -0.05          # wall hit. Was -0.3, which at 30 ticks/s is -9 a
                             # second for being pressed against a rock
 R_DAMAGE_PER_HIT = -1.0     # damage penalty

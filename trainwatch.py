@@ -47,6 +47,9 @@ RE_DONE = re.compile(r"every rung clears|PASSED after (\d+)|gave up after (\d+)|
                      r"##### DONE|ALL DONE")
 RE_SHORT = re.compile(r"still short under greedy:\s*(.+)")
 RE_CAP = re.compile(r"--episodes[= ](\d+)")
+# main.py: "Episode 12 done | reward=..." and the cap it announces
+RE_ISLAND = re.compile(r"^Episode (\d+) done \| reward=([-+]?[\d.]+)")
+RE_ISLANDCAP = re.compile(r"episode cap: (\d+) ticks")
 
 BG = "#1b1d22"
 FG = "#e6e8ec"
@@ -66,7 +69,8 @@ def find_run():
         out = subprocess.run(
             ["powershell", "-NoProfile", "-Command",
              "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
-             "Where-Object { $_.CommandLine -match 'consolidate|train_curriculum' } | "
+             "Where-Object { $_.CommandLine -match "
+             "'consolidate|train_curriculum|main[.]py' } | "
              "ForEach-Object { $_.ProcessId.ToString() + '|' + $_.CommandLine }"],
             capture_output=True, text=True, timeout=20).stdout
     except Exception:
@@ -173,6 +177,16 @@ class Watch:
             if m:
                 self.episodes = int(m.group(1))
                 self.detail = "reward %s, success %s%%" % (m.group(2), m.group(3))
+                continue
+            m = RE_ISLAND.match(line)
+            if m:
+                self.episodes = int(m.group(1))
+                self.detail = "reward %s" % m.group(2)
+                self.stage = self.stage or "the island"
+                continue
+            m = RE_ISLANDCAP.search(line)
+            if m:
+                self.stage = "the island - %s tick episodes" % m.group(1)
                 continue
             m = RE_STAGE.match(line)
             if m:

@@ -445,6 +445,12 @@ class Agent:
                         self.unlock_capability("CAP_BOSS_SLAYER", rewards)
                         rewards.on_boss_defeated(target_id)
                         self.log_event(f"★ Progression Validator Passed! Defeated Boss {entity_name(target_id)}!")
+            else:
+                # Hit nothing. The branch above had no `else`, so a swing at
+                # empty air was free - and an action that costs nothing gets
+                # mashed. See rewards.R_ATTACK_MISS for the measurement.
+                from rewards import R_ATTACK_MISS
+                rewards.add(R_ATTACK_MISS, "attack_miss")
             return
 
         # --- Interact ---

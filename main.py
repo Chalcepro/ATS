@@ -15,6 +15,7 @@ import torch
 
 import brain
 import config_rl
+import survival
 import trace as pathtrace
 from ats_env import ATSEnvironment
 from ats_virus_adapter import VirusAdapter
@@ -96,15 +97,21 @@ def _make_mind(fresh=False):
 
 
 # ---------------------------------------------------------------------------
-def _progress(passed, episodes):
+def _progress(passed, episodes, rung=None):
 # ---------------------------------------------------------------------------
     """What the ladder has to remember between sessions.
 
     Written whole on every save, so it must carry forward what was already
     there: handing brain.save() a bare {"episodes": n} would erase the list of
-    rungs the curriculum runner had recorded.
+    rungs the curriculum runner had recorded - and, since survival.py,
+    the tick cap the agent has earned. Leaving `survival_rung` out of a
+    save resets the episode length to the shortest rung on the next load,
+    silently, which is the same bug the paragraph above describes.
     """
-    return {"passed": list(passed), "episodes": int(episodes)}
+    out = {"passed": list(passed), "episodes": int(episodes)}
+    if rung is not None:
+        out["survival_rung"] = int(rung)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +218,7 @@ def _env_for_selection(gui):
         gui.active_stage = None
         gui.active_mask = None
         print(f"[ATS] {name}: full island")
-        return ATSEnvironment()
+        return ATSEnvironment(max_ticks=survival.cap_for(getattr(gui, "progress", None)))
 
     session = StageSession(stage)
     gui.active_stage = stage
@@ -275,6 +282,9 @@ def run_gui(args):
         passed_rungs  = list(progress.get("passed") or [])
         base_episodes = int(progress.get("episodes") or 0)
         window        = deque()
+        # Did each of the recent island episodes reach its cap? That is what
+        # earns a longer one - see survival.py.
+        reached       = deque()
 
         # Which rung the menu was sitting on when LAUNCH was pressed.
         #
@@ -322,6 +332,7 @@ def run_gui(args):
                 if mem_file.exists():
                     mem_file.unlink(missing_ok=True)
                 passed_rungs, base_episodes, window = [], 0, deque()
+                reached = deque()
                 if env: env.agent.event_log.append(("Policy & Memory reset to fresh!", time.time()))
 
             if gui.sig_stop:
@@ -360,12 +371,30 @@ def run_gui(args):
 
                 if env.agent.health <= 0:
                     reason = f"Perished (HP:{env.agent.health})"
-                elif env.tick >= config_rl.MAX_TICKS:
-                    reason = f"Max Ticks ({config_rl.MAX_TICKS})"
+                elif env.tick >= env.max_ticks:
+                    reason = f"Survived the cap ({env.max_ticks})"
                 else:
                     reason = "Episode complete"
 
                 gui.record_episode(ep, total_rew, env.tick, reason, grade=grade, efficiency=prog_eff, capabilities=caps_count)
+
+                # Earning a longer episode. Only on the island - a
+                # curriculum rung has its own max_steps and is not what this
+                # ladder is about.
+                if getattr(gui, "active_stage", None) is None:
+                    reached.append(env.tick >= env.max_ticks)
+                    while len(reached) > survival.WINDOW:
+                        reached.popleft()
+                    if survival.earned(progress, reached):
+                        cap = survival.promote(progress)
+                        reached.clear()
+                        print("[ATS] survived %d of the last %d - episode cap "
+                              "is now %s" % (survival.WINDOW, survival.WINDOW,
+                                             survival.label(progress)))
+                        _save_brain(policy, learner,
+                                    _progress(passed_rungs, base_episodes + ep,
+                                              progress.get("survival_rung")))
+                        env.max_ticks = cap
 
                 narration = adapter.generate_narration(
                     f"### INPUT: ATS ep {ep} reward {total_rew:.2f} grade {grade}\n### OUTPUT:")
@@ -517,7 +546,12 @@ def run_headless(args):
     policy, learner, progress = _make_mind(args.fresh)
     policy.eval()
     sl      = SolutionLoop(policy=policy)
-    env     = ATSEnvironment()
+    # The cap the agent has earned, not the constant. See survival.py: the
+    # world runs at 63 ticks a second, so a ten-day episode is ten minutes
+    # and six an hour - short episodes while it is bad, long ones once it
+    # can use them.
+    env     = ATSEnvironment(max_ticks=survival.cap_for(progress))
+    print("[ATS] episode cap: %s" % survival.label(progress))
     adapter = VirusAdapter(profile=args.virus_profile)
     adapter.write_active_profile()
 
