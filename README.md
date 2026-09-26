@@ -123,6 +123,59 @@ check is here because the full world did not have it - an episode that
 survived to max ticks scored -3281 while dying outright cost -10, so the
 policy correctly learned to end episodes early.
 
+### Where it got to
+
+Greedy play, 40 episodes a rung, measured 2026-09-25 (`python diag_ladder.py`):
+
+| rung | greedy | bar | | rung | greedy | bar |
+|------|-------:|----:|-|------|-------:|----:|
+| nursery 5x5 | 100% | 85% | | senior 15x15 | 57% | 50% |
+| corridors 5x5 | 100% | 80% | | senior 17x17 | 65% | 50% |
+| corridors7 7x7 | 98% | 75% | | senior 19x19 | 55% | 50% |
+| avoid 7x7 | 75% | 75% | | satchel 5x5 | 95% | 85% |
+| hazards 7x7 | 75% | 70% | | satchel7 7x7 | 95% | 75% |
+| foraging 7x7 | 95% | 70% | | armed 15x15 | 65% | 50% |
+| primary 9x9 | 78% | 65% | | armed 17x17 | 57% | 50% |
+| primary 11x11 | 82% | 65% | | hunted 15x15 | 65% | 50% |
+| junior 9x9 | 88% | 60% | | hunted 17x17 | 62% | 50% |
+| junior 11x11 | 90% | 60% | | warden 15x15 | 70% | 45% |
+| | | | | warden 17x17 | 52% | 45% |
+
+`senior 19x19` is worth calling out: this file used to record it as the
+frontier, "plateaus around 38% over 900 episodes". It passes now, and what
+changed was not the rung - it was a crash. See the growth bug below.
+
+What the combat rungs actually do, 50 episodes each:
+
+| rung | success | arms itself | kills/ep | meets a hostile |
+|------|--------:|------------:|---------:|----------------:|
+| armed | 46% | 32% | 1.02 | 94% |
+| hunted | 60% | 42% | 1.30 | 98% |
+| warden | 54% | 50% | 2.32 | 96% |
+
+Still below bar: the three `senior-short` and `senior-trail` rungs, which
+have never been trained (they are the sequential-goal rungs, and the ladder
+reaches combat without them), and the three 19x19 variants of the combat
+rungs at 40-45%. 19x19 remains where the difficulty is.
+
+### Two bugs worth knowing about
+
+**The network grows mid-episode, and that used to kill the run.**
+`learner.maybe_update()` can widen the GRU (`RLPolicy.expand`), while
+`run_episode` carries a hidden state made at the old width:
+
+    RuntimeError: hidden0 has inconsistent hidden_size: got 256, expected 512
+
+It had been doing this invisibly for a long time, because training was run
+with stderr piped through a grep that only matched progress lines - the rung
+ended with no PASSED and no "gave up", and the next one started as though
+nothing had happened. `armed` looked like a rung that trains to a flat
+8-17%; it was a rung that crashed every time.
+
+**Rehearsal was uniform, which is the same as absent.** 25% of episodes
+spread evenly over thirteen rungs rehearses each in about 2% of episodes.
+It is weighted toward the nearest rungs now, at 0.40.
+
 ### Diagnostics
 
 These measure the rungs, not the agent, and each exists because something
