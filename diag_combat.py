@@ -135,12 +135,19 @@ def main(argv=None):
             bad.append((name, "a competent agent scores negative"))
         if o["win"] < 0.85:
             bad.append((name, "oracle clears only %.0f%%" % (100 * o["win"])))
-        if o["met"] < 0.60:
-            bad.append((name, "hostiles met in only %.0f%% of episodes"
-                        % (100 * o["met"])))
-        if r["win"] > st.pass_rate * 0.6:
-            bad.append((name, "random walker gets %.0f%% against a %.0f%% bar"
-                        % (100 * r["win"], 100 * st.pass_rate)))
+        # The encounter and luck gates are about combat. The hand rungs are
+        # deliberately a nursery - no hostiles at all, and small enough that
+        # a random walker does well, exactly as the real nursery is (95% for
+        # a random walker). Their job is to teach an action, not to be hard,
+        # so holding them to a combat rung's bars would fail them for being
+        # what they are meant to be.
+        if not st.pick_goals:
+            if o["met"] < 0.60:
+                bad.append((name, "hostiles met in only %.0f%% of episodes"
+                            % (100 * o["met"])))
+            if r["win"] > st.pass_rate * 0.6:
+                bad.append((name, "random walker gets %.0f%% against a %.0f%% bar"
+                            % (100 * r["win"], 100 * st.pass_rate)))
         if pol is not None:
             b = play(st, a.episodes, a.seed, pol)
             print("  %-14s %7.0f%% %6.0f%% %6s %6.0f%% %6.0f%% %6.2f %6.2f %+7.2f"

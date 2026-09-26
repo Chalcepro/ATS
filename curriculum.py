@@ -1247,13 +1247,35 @@ class CurriculumEnv:
         never been in this observation at all: `good` and `trash` are placed,
         rewarded on ACT_PICK_UP, and invisible, so every can_pick rung has
         been rewarding a lottery.
+
+        Goals are objects too, and that is not a tidy-up
+        ------------------------------------------------
+        Leaving them out made `satchel` unable to transfer the one thing it
+        exists to teach. Standing on the thing to be picked up read as two
+        different situations depending on which rung you were on:
+
+            satchel, standing ON the goal    patch centre 0   obj id 0.01
+            armed,   standing ON the sword   patch centre 3   obj id 0.13
+
+        So the policy learned "press it when the tile under me is bare
+        floor", which is exactly wrong everywhere else. Measured after
+        satchel passed: ACT_PICK_UP rose from 2.2% of ticks to 15.9% - the
+        hand was alive - and the agent still armed itself in 0 of 40 rooms,
+        because argmax is deterministic and on a sword tile it always chose
+        a move.
+
+        It is also the more faithful encoding. The curriculum's goal is
+        written into IDX_OBJ_ID as item 0001, which is an apple, and an
+        apple lying on the ground is TILE_OBJECT in world.py. The goal was
+        the one object on the floor being drawn as floor.
         """
         raw = self._tile(x, y)
         if raw == T_WALL:
             return raw
         if (x, y) in self.hostiles:
             return T_HOSTILE
-        if (x, y) in self.swords or (x, y) in self.good or (x, y) in self.trash:
+        if ((x, y) in self.swords or (x, y) in self.good
+                or (x, y) in self.trash or (x, y) in self.goals):
             return T_OBJECT
         return raw
 
@@ -1324,7 +1346,8 @@ class CurriculumEnv:
                     t = self.grid[y][x]
                     if t != T_WALL and ((x, y) in self.swords
                                         or (x, y) in self.good
-                                        or (x, y) in self.trash):
+                                        or (x, y) in self.trash
+                                        or (x, y) in self.goals):
                         t = T_OBJECT
                     self.seen[(x, y)] = t
         d = config_rl.MEM_VISIT_DECAY
