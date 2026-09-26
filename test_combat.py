@@ -40,7 +40,11 @@ def patch_of(env):
 
 
 print("\n=== the stage carries combat, and keeps it when it grows ===")
-st = C.combat_tier()[2]
+def rung(name):
+    return next(s for s in C.combat_tier() if s.name == name)
+
+
+st = rung("warden")
 check("warden has hostiles", st.hostiles, st.hostiles >= 4)
 check("warden has swords", st.swords, st.swords > 0)
 check("hostiles take more than one blow", st.hostile_hp, st.hostile_hp > 1)
@@ -182,7 +186,7 @@ check("four ticks beside it costs two blows, not four", lost,
       lost == 2 * st.bite)
 
 print("\n=== guards stand between you and the goal ===")
-st = C.combat_tier()[0]
+st = rung("armed")
 on_route = 0
 for k in range(40):
     e = C.CurriculumEnv(st, seed=500 + k)

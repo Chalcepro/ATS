@@ -69,7 +69,7 @@ class Stage:
                  grow_goals=True, clock_growth=1.5,
                  swords=0, hostile_hp=1, hostile_damage=0, chase=0,
                  aggro=0, grow_hostiles=False, guards=False,
-                 weapon_first=False):
+                 weapon_first=False, pick_goals=False):
         self.name = name
         self.grid = grid
         self.walls = walls
@@ -165,6 +165,12 @@ class Stage:
         # no gradient anywhere on the ladder - see CurriculumEnv._aim for
         # the 0%-armed measurement that made this necessary.
         self.weapon_first = bool(weapon_first)
+        # The goal is taken with ACT_PICK_UP while standing on it, not by
+        # standing on it. This exists because no rung on this ladder ever
+        # taught the hand: every one of them is solved by moving alone, and
+        # a policy that has passed all of them chooses ACT_PICK_UP 2% of the
+        # time and ACT_ATTACK *never* - measured 0 times in 3,495 ticks.
+        self.pick_goals = bool(pick_goals)
         # Goals scaling with room size undoes a compass rung (see grow_goals).
         # Hostiles scaling is the opposite: on a combat rung the encounter
         # rate IS the lesson, and a bigger room with the same two hostiles is
@@ -244,7 +250,8 @@ class Stage:
                     swords=self.swords, hostile_hp=self.hostile_hp,
                     hostile_damage=self.hostile_damage, chase=self.chase,
                     aggro=self.aggro, grow_hostiles=self.grow_hostiles,
-                    guards=self.guards, weapon_first=self.weapon_first)
+                    guards=self.guards, weapon_first=self.weapon_first,
+                    pick_goals=self.pick_goals)
         return nxt
 
     def __repr__(self):
@@ -657,13 +664,45 @@ def combat_tier(grid=15, grow_to=19):
     ticks that walking does not: arming yourself is a detour, and every
     exchange is a tick not spent travelling.
     """
+    # 0. Before any of it: the hand.
+    #
+    #    Every rung below this tier is solved by moving. Nothing on the
+    #    ladder has ever required ACT_PICK_UP or ACT_ATTACK, and a policy
+    #    that had passed all thirteen of them chose ACT_PICK_UP in 2.2% of
+    #    ticks and ACT_ATTACK in **0 of 3,495**. Trained 600 episodes on
+    #    `armed` it picked up a sword in 0% of episodes and killed 0.00
+    #    hostiles, walking out the clock at 8%.
+    #
+    #    Giving the sword a bearing and shaping was necessary and still not
+    #    enough: the agent then walked to the sword and STOOD on it for
+    #    twenty-odd ticks without pressing anything, because reaching a
+    #    thing has been the whole job for thirteen rungs. Shaping cannot
+    #    teach an action; it can only teach where to stand.
+    #
+    #    So the same argument the nursery makes for the goal, made for the
+    #    hand: one room, one thing, nothing to be hurt by, and the only way
+    #    to score is the button. `satchel` IS the nursery - same size, same
+    #    no-walls, same no-penalties, same single goal ending the episode -
+    #    with exactly one thing added, which is that arriving is not enough.
+    hand = dict(hazards=0, goals=1, sequence=0, respawn=False, damage=False,
+                can_pick=True, pick_goals=True, punitive=False,
+                target=1, window=50)
+    tier = [
+        Stage("satchel", 5, walls=False, shaped=False, max_steps=120,
+              pass_rate=0.85, **hand),
+        # Then the same lesson where the thing has to be found first, so
+        # "press it when you arrive" survives a room it cannot see all of.
+        Stage("satchel7", 7, walls=True, shaped=True, max_steps=200,
+              pass_rate=0.75, **hand),
+    ]
+
     common = dict(walls=True, hazards=3, goals=1, sequence=0, respawn=False,
                   can_pick=True, can_attack=True, damage=True,
                   target=1, window=60, grow_to=grow_to,
                   grow_goals=False, clock_growth=1.2,
                   hostile_hp=3, hostile_damage=8, aggro=6, guards=True,
                   weapon_first=True)
-    return [
+    return tier + [
         # 1. New thing: a weapon. Hostiles stand still exactly as they have
         #    since junior, so nothing about avoiding them has changed - but
         #    they now take three blows bare-handed and one with the sword,
@@ -1461,7 +1500,13 @@ class CurriculumEnv:
             else:
                 self.ax, self.ay = nx, ny
 
-        elif action == config_rl.ACT_PICK_UP and s.can_pick:
+        # On a pick_goals rung the goal is taken with the hand rather than by
+        # standing on it. Noted here and settled with all the other goal
+        # bookkeeping below, so trails and clear-the-room stay in one place.
+        took = (action == config_rl.ACT_PICK_UP and s.can_pick and s.pick_goals
+                and (self.ax, self.ay) in self.goals)
+
+        if action == config_rl.ACT_PICK_UP and s.can_pick and not took:
             here = (self.ax, self.ay)
             if here in self.swords:
                 self.swords.remove(here)
@@ -1526,9 +1571,12 @@ class CurriculumEnv:
         if s.shaped and now_aimed == aimed_at and (self.goals or self.swords):
             reward += R_TOWARDS * (before - after)
 
-        # Reaching a goal
+        # Reaching a goal - or, where the rung says so, reaching it AND
+        # picking it up. `took` is set by the pick-up branch above.
         here = (self.ax, self.ay)
-        if here in self.goals:
+        if s.pick_goals and not took:
+            pass
+        elif here in self.goals:
             self.goals.remove(here)
             self.collected += 1
             reward += R_GOAL
@@ -1692,6 +1740,11 @@ def oracle_step(env, stage):
                 for dy in (-1, 0, 1):
                     if abs(dx) + abs(dy) <= 1:
                         bite.add((h[0] + dx, h[1] + dy))
+
+    # 0. Standing on the thing we were sent for, on a rung where arriving is
+    #    not enough. Nothing else can be worth a tick more than this.
+    if stage.pick_goals and stage.can_pick and start in goals:
+        return config_rl.ACT_PICK_UP
 
     # 1. Standing on a weapon with empty hands. Always worth one tick.
     if stage.can_pick and not env.armed and start in env.swords:
