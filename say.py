@@ -19,11 +19,36 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
-import tempfile
+import time
 from pathlib import Path
 
 VOICES = Path.home() / "Documents" / "github" / "Cpeech" / "piper-voices"
 VOICE = "en_US-libritts-high.onnx"
+
+# Where spoken briefings are kept, one file per briefing.
+#
+# They used to all land on a single temp file, so every briefing overwrote the
+# last one and the whole history was whichever one happened to be most recent -
+# in the system temp directory, which Windows is free to empty. A briefing
+# worth speaking is worth being able to hear again, and the recordings of Bob's
+# own voice are already kept this way in Formant/voice.
+BRIEFINGS = Path(__file__).resolve().parent / "briefings"
+
+# Older briefings are pruned past this many. Text is cheap, 3 MB of wav each
+# is not, and the drives on this machine are not in good health.
+KEEP_BRIEFINGS = 40
+
+
+def prune(keep: int = KEEP_BRIEFINGS):
+    """Keep the newest few briefings. Promised by the comment on
+    KEEP_BRIEFINGS, and a constant that nothing enforces is a lie."""
+    try:
+        wavs = sorted(BRIEFINGS.glob("*.wav"), key=lambda q: q.stat().st_mtime)
+        for old in wavs[:-keep] if len(wavs) > keep else []:
+            old.unlink(missing_ok=True)
+            old.with_suffix(".txt").unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def model_path() -> Path | None:
@@ -43,7 +68,18 @@ def speak(text: str, out: Path | None = None, play: bool = True) -> Path | None:
         print(text)
         return None
 
-    out = Path(out) if out else Path(tempfile.gettempdir()) / "ats_briefing.wav"
+    if out:
+        out = Path(out)
+    else:
+        BRIEFINGS.mkdir(parents=True, exist_ok=True)
+        out = BRIEFINGS / ("%s.wav" % time.strftime("%Y-%m-%d_%H%M%S"))
+        # The text beside the wav, so a briefing can be read as well as
+        # replayed - and so it stays findable without listening to forty of
+        # them.
+        try:
+            out.with_suffix(".txt").write_text(text, encoding="utf-8")
+        except Exception:
+            pass
     try:
         subprocess.run(
             [sys.executable, "-m", "piper", "-m", str(model), "-f", str(out)],
@@ -79,7 +115,24 @@ def main(argv=None):
     ap.add_argument("--file", help="read the text from a file instead")
     ap.add_argument("--out", help="keep the wav here")
     ap.add_argument("--no-play", action="store_true")
+    ap.add_argument("--list", action="store_true",
+                    help="what briefings are kept, newest last")
     a = ap.parse_args(argv)
+
+    if a.list:
+        wavs = sorted(BRIEFINGS.glob("*.wav"), key=lambda q: q.stat().st_mtime)
+        if not wavs:
+            print("  no briefings kept yet -> %s" % BRIEFINGS)
+            return 1
+        print("  %d briefing(s) in %s" % (len(wavs), BRIEFINGS))
+        for w in wavs:
+            txt = w.with_suffix(".txt")
+            first = ""
+            if txt.is_file():
+                first = txt.read_text(encoding="utf-8").strip().split(". ")[0][:62]
+            print("    %-22s %6.1f MB  %s"
+                  % (w.name, w.stat().st_size / 1e6, first))
+        return 0
 
     if a.file:
         text = Path(a.file).read_text(encoding="utf-8")
@@ -89,6 +142,9 @@ def main(argv=None):
         text = sys.stdin.read()
 
     path = speak(text, out=a.out, play=not a.no_play)
+    if path and not a.out:
+        prune()
+        print("[say] kept at %s" % path, file=sys.stderr)
     return 0 if path else 1
 
 

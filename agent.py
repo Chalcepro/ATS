@@ -564,9 +564,19 @@ class Agent:
             consumed = self._consume_from_slot(self.selected_slot)
             if consumed:
                 if item.get("heal"):
+                    # Captured before the change, because the reward is paid
+                    # for the deficit that was closed - eating a full stomach
+                    # closes nothing and must pay nothing.
+                    hunger_before, health_before = self.hunger, self.health
                     self.health = min(100, self.health + int(item["heal"]))
                     self.hunger = min(100, self.hunger + 15)
                     self.log_event(f"Consumed {item_name(consumed)} (+{item.get('heal')} HP)")
+                    # This call did not exist. `rewards` was passed into this
+                    # method and used only in the failure branch, so eating -
+                    # the one thing that stops the agent starving to death -
+                    # was the only survival action paying nothing at all.
+                    rewards.on_eat(float(item.get("heal") or 0),
+                                   hunger_before, health_before)
                 if item.get("cure_leg"):
                     self.leg_injured = 0
                     self.log_event(f"Treated leg with {item_name(consumed)} (Injury Cured)")

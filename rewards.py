@@ -83,7 +83,38 @@ R_WALL_HIT = -0.05          # wall hit. Was -0.3, which at 30 ticks/s is -9 a
 R_DAMAGE_PER_HIT = -1.0     # damage penalty
 R_HUNGER_DRAIN = -0.5       # per starvation tick
 R_LEG_INJURY = -2.0
-R_DEATH = -10.0             # Normal death penalty
+R_DEATH = -10.0             # Normal death penalty, before the forfeit below
+
+# Dying forfeits this share of what the episode earned, on top of R_DEATH.
+#
+# THE BUG THIS FIXES. A flat -10 is nothing next to a real episode. Measured
+# over 14 episodes: mean reward +1,172, of which exploration paid +1,384 and
+# the entire difference between living and dying was 20 points - 1.7%. The
+# agent explored relentlessly, never ate, and died at ~3,300 ticks every time,
+# which is the correct policy for that arithmetic. It was not failing to
+# learn; it had learnt that death is a rounding error.
+#
+# A share rather than a bigger flat number, because the scale of an episode
+# changes with the earned tick cap (survival.py) and any constant tuned for a
+# 2,000-tick episode is wrong again at 40,000. A share stays proportionate.
+#
+# It does not invert the incentive to score: forfeiting a fraction leaves
+# total*(1-share), which still rises with total, so earning more is still
+# better than earning less.
+DEATH_FORFEIT = 0.35
+
+# Eating. Paid for the deficit it closes, not for the act.
+#
+# The reason it was zero: _use_item takes `rewards` as a parameter and never
+# called it on the consumable path - it heals, refills hunger by 15, writes a
+# log line, and awards nothing. Sleeping, in the same file, pays R_SLEEP.
+# Eating was the only survival action in the game with no reward attached, and
+# the agent had never once eaten across every episode recorded.
+#
+# Scaled by need so it cannot be farmed: eating at full hunger closes no
+# deficit and pays nearly nothing, so the flat value is what a starving agent
+# gets for saving itself.
+R_EAT = 1.5
 # Ocean/shark penalty. Was -500.0 — but ats_env applies it on every shark
 # trigger, including *survived* strikes, and a single -500 tick under gamma=0.99
 # dominates the whole discounted return and (after advantage normalisation)
@@ -125,6 +156,17 @@ STANDING_STILL_THRESHOLD = 5
 R_ALIVE = 0.02              # per tick, just for still being here
 NUISANCE_BUDGET = 25.0      # most an episode can lose to wall-hits + standing still
 
+# What a well-played episode actually earns, for the audit's second question.
+# Measured, not guessed: the mean over 14 logged episodes was +1,172. The
+# audit needs a realistic figure because the bug it now catches is invisible
+# at small totals and obvious at real ones.
+EARNED_EXAMPLE = 1172.0
+
+# How much of a well-played episode dying must cost before the agent has a
+# reason to avoid it. At 1.7% - what a flat -10 came to - PPO cannot find the
+# signal underneath its own advantage noise, and did not for 26,000 episodes.
+MIN_DEATH_SHARE = 0.15
+
 # Survival bonus
 R_SURVIVE_EPISODE = 10.0
 
@@ -143,6 +185,7 @@ def default_reward_rules() -> dict[str, bool]:
         "death_penalty":   True,  # big penalty on death
         "pickup_reward":   True,  # reward for picking up items
         "kill_reward":     True,  # reward for killing entities
+        "eat_reward":      True,  # reward for eating, scaled by the need it closes
         "explore_reward":  True,  # reward for discovering biomes / ruins
         "progression":     True,  # reward for capabilities, gates, bosses
     }
@@ -451,11 +494,49 @@ class RewardEngine:
     def on_leg_injury(self) -> float:
         return self.add(R_LEG_INJURY, "leg_injury")
 
+    def on_eat(self, healed: float = 0.0, hunger_before: float = 100.0,
+               health_before: float = 100.0) -> float:
+        """Paid for eating, in proportion to how much it was needed.
+
+        Called from Agent._use_item. Before this, eating paid nothing at all
+        while costing three or four actions to reach - inventory open, slot
+        select, use, close - during which the agent earns no exploration
+        income, and a mis-timed attempt is fined a full point. Eating was
+        strictly negative in the short term and the agent, correctly, never
+        did it.
+
+        Scaled by the larger of the two deficits it closes. Eating a full
+        stomach at full health pays ~0, which is what stops this becoming a
+        reward to farm by carrying food and spamming the action.
+        """
+        if not self.rules.get("eat_reward", True):
+            return 0.0
+        hunger_need = max(0.0, (100.0 - float(hunger_before))) / 100.0
+        health_need = max(0.0, (100.0 - float(health_before))) / 100.0
+        need = max(hunger_need, health_need)
+        if need <= 0.01:
+            return 0.0
+        self.progression_points += 0.05 * need
+        return self.add(R_EAT * need, "ate")
+
     def on_death(self) -> float:
+        """The flat penalty, plus a share of what the episode had earned.
+
+        The share is the part that matters. See DEATH_FORFEIT: a flat -10 was
+        1.7% of a typical episode, so the agent had no reason to avoid dying
+        and did not. Charged against the total as it stands at death, which is
+        everything the episode earned, since this is called before the
+        survival bonus is ever reached.
+        """
         self.deaths += 1
         if not self.rules.get("death_penalty", True):
             return 0.0
-        return self.add(R_DEATH, "death")
+        forfeit = -DEATH_FORFEIT * max(0.0, self.total)
+        # One award, two reasons, so the breakdown shows which part bit.
+        out = self.add(R_DEATH, "death")
+        if forfeit < 0.0:
+            out += self.add(forfeit, "death_forfeit")
+        return out
 
     def on_survive_bonus(self, ticks: int | None = None) -> float:
         """Paid for reaching the end of an episode, scaled by how long it was.
@@ -528,18 +609,63 @@ def audit(max_ticks: int = 9000, verbose: bool = True) -> bool:
     survive_badly = wage + nuisance + starving + R_SURVIVE_EPISODE
     die_at_once = R_DEATH
 
-    ok = survive_badly > die_at_once
+    floor_ok = survive_badly > die_at_once
+
+    # The second question, which this audit did not ask and should have.
+    #
+    # "Living beats dying" is only the floor. An agent that plays WELL earns
+    # hundreds of points from exploration, and against that a flat -10 death
+    # is noise: measured over 14 real episodes, mean reward was +1,172 and the
+    # whole live-or-die difference was 20 points, 1.7%. Every check above
+    # passed the entire time. The agent explored until it starved, which was
+    # optimal, and nothing here objected.
+    #
+    # So: on a well-played episode, is dying meaningfully worse than
+    # finishing? A few percent is not a signal PPO can find underneath its own
+    # advantage noise; the threshold below is what "meaningfully" means.
+    earned = EARNED_EXAMPLE
+    die_late = earned + R_DEATH - DEATH_FORFEIT * max(0.0, earned)
+    finish_late = earned + R_SURVIVE_EPISODE
+    swing = finish_late - die_late
+    share = swing / max(1.0, abs(finish_late))
+    swing_ok = share >= MIN_DEATH_SHARE
+
+    # Computed here and not inside the `verbose` block. Written there first,
+    # which would have made a quiet audit return a different verdict from a
+    # loud one - a guard rail that only works when someone is watching.
+    starving_meal = R_EAT               # need == 1.0 when hunger has hit zero
+    eat_cost = abs(R_TILE_EXPLORE) * 4  # the four ticks it spends not exploring
+    eat_ok = starving_meal > eat_cost
+
+    ok = floor_ok and swing_ok and eat_ok
     if verbose:
         print("reward audit over %d ticks" % max_ticks)
-        print("   wage for being alive      %+9.1f" % wage)
-        print("   nuisance (budget %-5.1f)   %+9.1f" % (NUISANCE_BUDGET, nuisance))
-        print("   starving the whole time   %+9.1f" % starving)
-        print("   survival bonus            %+9.1f" % R_SURVIVE_EPISODE)
-        print("   --------------------------------")
-        print("   played badly, survived    %+9.1f" % survive_badly)
-        print("   died immediately          %+9.1f" % die_at_once)
-        print("   %s" % ("ok - living beats dying"
-                         if ok else "BROKEN - the agent is paid to die"))
+        print("  1. does living beat dying when played BADLY?")
+        print("     wage for being alive      %+9.1f" % wage)
+        print("     nuisance (budget %-5.1f)   %+9.1f" % (NUISANCE_BUDGET, nuisance))
+        print("     starving the whole time   %+9.1f" % starving)
+        print("     survival bonus            %+9.1f" % R_SURVIVE_EPISODE)
+        print("     ------------------------------")
+        print("     played badly, survived    %+9.1f" % survive_badly)
+        print("     died immediately          %+9.1f" % die_at_once)
+        print("     %s" % ("ok - living beats dying"
+                           if floor_ok else "BROKEN - the agent is paid to die"))
+        print("  2. does dying COST anything when played WELL?")
+        print("     an episode that earned     %+9.1f" % earned)
+        print("     ...and then died           %+9.1f" % die_late)
+        print("     ...or reached the cap      %+9.1f" % finish_late)
+        print("     ------------------------------")
+        print("     the difference             %+9.1f  (%.1f%% of the episode)"
+              % (swing, 100.0 * share))
+        print("     %s"
+              % ("ok - death is worth avoiding" if swing_ok else
+                 "BROKEN - death is a rounding error, the agent will ignore it"
+                 " (need %.0f%%)" % (100.0 * MIN_DEATH_SHARE)))
+        print("  3. is eating worth the actions it takes?")
+        print("     eating while starving      %+9.2f" % starving_meal)
+        print("     four ticks not exploring   %+9.2f" % -eat_cost)
+        print("     %s" % ("ok - a starving agent gains by eating"
+                           if eat_ok else "BROKEN - eating costs more than it pays"))
     return ok
 
 

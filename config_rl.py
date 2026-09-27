@@ -313,7 +313,12 @@ BEST_MODEL_PATH = CHECKPOINT_DIR / "model_best.pt"
 # 3 = STATE_SIZE 79->108 (directional perception + egocentric patch) and the
 #     reworked embedding front-end — old checkpoints are structurally
 #     incompatible (fc1/embed_proj shapes differ), not merely miscalibrated.
-REWARD_SCHEME_VERSION = 3
+# 4: eating pays (R_EAT, scaled by need) and death forfeits a share of the
+#    episode (DEATH_FORFEIT). Under 3 a flat -10 death was 1.7% of a typical
+#    +1,172 episode, so the agent explored until it starved - correctly, for
+#    that arithmetic. A brain trained under 3 keeps its policy but its VALUE
+#    function was fitted to the old scale and will need to relearn.
+REWARD_SCHEME_VERSION = 4
 
 # ---------------------------------------------------------------------------
 # Logging / TensorBoard
