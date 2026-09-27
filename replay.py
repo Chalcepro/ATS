@@ -286,6 +286,10 @@ def play(path, speed=0.12, still=False):
              blob.get("ticks"), len(frames)))
     if blob.get("cause"):
         print("  cause: %s" % blob["cause"])
+    if blob.get("world_seed") is not None:
+        # Reproduce it:  python main.py --no-gui --episodes 1         #                  --fixed-world --world-seed <this>
+        print("  world seed: %s   (--fixed-world --world-seed %s to go back)"
+              % (blob["world_seed"], blob["world_seed"]))
     print()
     for i, fr in enumerate(frames):
         if not still:

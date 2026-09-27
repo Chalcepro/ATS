@@ -48,6 +48,15 @@ def parse_args():
                    help="Explicit GUI mode (same as default)")
     p.add_argument("--fresh",         action="store_true",
                    help="Ignore existing checkpoint, start fresh")
+    p.add_argument("--world-seed",     type=int,   default=None,
+                   help="seed for the run; the sequence of worlds follows from "
+                        "it, so the same value reproduces the same run")
+    p.add_argument("--fixed-world",   action="store_true",
+                   help="the SAME island every episode. Was the only "
+                        "behaviour - seed 1337 forever - and is why a brain "
+                        "could memorise one map instead of generalising. Keep "
+                        "it for evaluation, where varying terrain would "
+                        "measure the terrain instead of the brain")
     p.add_argument("--virus-profile", default=config_rl.VIRUS_PROFILE,
                    choices=["ats", "general"],
                    help="Virus LM profile (default: ats)")
@@ -301,7 +310,10 @@ def _env_for_selection(gui):
         gui.active_stage = None
         gui.active_mask = None
         print(f"[ATS] {name}: full island")
-        return ATSEnvironment(max_ticks=survival.cap_for(getattr(gui, "progress", None)))
+        return ATSEnvironment(
+            max_ticks=survival.cap_for(getattr(gui, "progress", None)),
+            world_seed=getattr(args, "world_seed", None),
+            vary_world=not getattr(args, "fixed_world", False))
 
     session = StageSession(stage)
     gui.active_stage = stage
@@ -640,7 +652,9 @@ def run_headless(args):
     # world runs at 63 ticks a second, so a ten-day episode is ten minutes
     # and six an hour - short episodes while it is bad, long ones once it
     # can use them.
-    env     = ATSEnvironment(max_ticks=survival.cap_for(progress))
+    env     = ATSEnvironment(max_ticks=survival.cap_for(progress),
+                             world_seed=args.world_seed,
+                             vary_world=not args.fixed_world)
     print("[ATS] episode cap: %s" % survival.label(progress))
     adapter = VirusAdapter(profile=args.virus_profile)
     adapter.write_active_profile()
@@ -657,6 +671,9 @@ def run_headless(args):
     rungs = _passed_rungs(progress)
     rng = _random.Random()
     recorder = replay.Recorder()
+    print("[ATS] world: %s (run seed %s)"
+          % ("a new island every episode" if env.vary_world
+             else "PINNED to one island", env.run_seed))
     if rungs:
         print("[ATS] rehearsing %d earned rungs on %.0f%% of episodes "
               "(hardest: %s %dx%d)"
@@ -734,7 +751,8 @@ def run_headless(args):
                 getattr(env.agent, "hunger", None), starved)
             if not hit_cap:
                 replay_path = recorder.save(
-                    env, "died", {"cause": cause})
+                    env, "died", {"cause": cause,
+                                  "world_seed": getattr(env, "world_seed", None)})
                 if replay_path:
                     print("  cause: %s   replay: %s"
                           % (cause, Path(replay_path).name))

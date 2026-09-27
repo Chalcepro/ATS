@@ -22,7 +22,26 @@ from world import World
 
 
 class ATSEnvironment:
-    def __init__(self, max_ticks: int | None = None):
+    def __init__(self, max_ticks: int | None = None,
+                 world_seed: int | None = None, vary_world: bool = True):
+        """
+        world_seed
+            The seed for the first episode. None means one is drawn at random,
+            so two runs are not secretly the same run.
+        vary_world
+            A NEW world every episode, which is the default and the point.
+
+            What it replaces: World() takes `seed: int = 1337` and reset()
+            passed nothing, so every episode was byte-identical - the same
+            terrain, the same 161 entities in the same places, the same spawn.
+            26,433 episodes on one map. Nothing in that setup ever asks the
+            agent to generalise; it can succeed by memorising, and a model
+            that has memorised one island is worth nothing on a second one.
+
+            Pass False to pin the world, which is what evaluation and
+            debugging want: comparing two brains on different terrain measures
+            the terrain.
+        """
         # The cap is a parameter, not a constant read at the point of use.
         # It is earned now (survival.py): short episodes while the agent is
         # bad, because that is when episodes-per-hour matters most, and long
@@ -30,7 +49,16 @@ class ATSEnvironment:
         # and raising the constant to ten days would only make each failure
         # take ten times longer to watch.
         self.max_ticks = int(max_ticks or config_rl.MAX_TICKS)
-        self.world = World()
+        # Its own generator, seeded once. A per-episode seed drawn from this
+        # gives variety AND reproducibility: the run seed plus the episode
+        # number names the world exactly, which is what makes a recorded death
+        # something you can go back to.
+        self.vary_world = bool(vary_world)
+        self.run_seed = int(world_seed) if world_seed is not None \
+            else random.randrange(1, 2 ** 31 - 1)
+        self._seeds = random.Random(self.run_seed)
+        self.world_seed = self.run_seed
+        self.world = World(seed=self.world_seed)
         self.agent = Agent(self.world)
         self.day_night = DayNight()
         self.rewards = RewardEngine()
@@ -54,7 +82,11 @@ class ATSEnvironment:
     # ------------------------------------------------------------------
     def reset(self) -> list[float]:
         self.episode += 1
-        self.world = World()
+        # A different island every episode unless pinned. This line used to be
+        # World() with no argument, which meant seed 1337 forever.
+        if self.vary_world:
+            self.world_seed = self._seeds.randrange(1, 2 ** 31 - 1)
+        self.world = World(seed=self.world_seed)
         self.agent = Agent(self.world)
         self.day_night = DayNight()
         self.rewards = RewardEngine()

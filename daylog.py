@@ -177,6 +177,11 @@ def record_for(env, ep, where, total, grade, eff, cap, hit_cap,
         "pos": [int(getattr(agent, "x", 0) or 0), int(getattr(agent, "y", 0) or 0)]
                if agent is not None else None,
         "caps": len(getattr(agent, "capabilities", ()) or ()),
+        # Which island this was. Essential now that the world varies per
+        # episode: without it a recorded death names a map nobody can get
+        # back to, and "it died at (84,31)" means nothing across two
+        # different terrains.
+        "world_seed": getattr(env, "world_seed", None),
         "islands": sorted(getattr(rewards, "discovered_islands", ()) or ()),
         "tiles_seen": len(getattr(rewards, "discovered_tiles", ()) or ()),
         "paid": breakdown,
