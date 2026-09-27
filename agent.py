@@ -353,7 +353,7 @@ class Agent:
             else:
                 self.last_failed_action = action_idx
                 self.log_event(f"Slot {slot_idx} is EMPTY [Disabled]")
-                rewards.add(-1.0)
+                rewards.add(-1.0, "empty_slot_select")
             return
 
         # --- Use item ---
@@ -364,7 +364,7 @@ class Agent:
             else:
                 self.last_failed_action = action_idx
                 self.log_event(f"Cannot use: Slot {self.selected_slot} is EMPTY [Disabled]")
-                rewards.add(-1.0)
+                rewards.add(-1.0, "empty_slot_use")
             return
 
         # --- Crafting ---
@@ -669,7 +669,11 @@ class Agent:
         # Starvation: health drains 1 HP every 30 ticks (~1 second)
         if self.hunger <= 0 and self._hunger_counter % 30 == 0:
             self.health = max(0, self.health - 1)
-            rewards.add(-0.5)
+            # Labelled, because unlabelled it was invisible. 436 of these
+            # awards showed up in a 14-episode sample as an anonymous "?"
+            # worth -218, and each one also costs a point of health - so the
+            # agent was quietly starving and no readout said so.
+            rewards.add(-0.5, "starving")
 
         # Safe Haven natural recovery bonus
         if self.world.is_safe_zone(self.x, self.y) and self.health < 100:

@@ -17,6 +17,9 @@ import torch
 import brain
 import config_rl
 import survival
+import daylog
+import replay
+from pathlib import Path
 import trace as pathtrace
 from ats_env import ATSEnvironment
 from ats_virus_adapter import VirusAdapter
@@ -646,6 +649,7 @@ def run_headless(args):
     world_env = env
     rungs = _passed_rungs(progress)
     rng = _random.Random()
+    recorder = replay.Recorder()
     if rungs:
         print("[ATS] rehearsing %d earned rungs on %.0f%% of episodes "
               "(hardest: %s %dx%d)"
@@ -665,12 +669,20 @@ def run_headless(args):
         done       = False
         ep_rewards = []
 
+        recorder.begin(base_eps + ep, "rehearse %s %dx%d"
+                       % (env.stage.name, env.stage.grid, env.stage.grid)
+                       if rehearsing else "WORLD")
+
         while not done:
             mask   = env.agent.get_action_mask(env.world, env.day_night)
             action = sl.choose_action(state, mask)
             prev_state = state
             state, reward, done, _ = env.step(action)
             ep_rewards.append(reward)
+            # The last stretch of ticks, kept for the death screen. Positions
+            # and actions with a tick on each, which is the one thing neither
+            # the reward tally nor the discovered-tiles set can provide.
+            recorder.capture(env, action, reward)
             learner.collect(state=prev_state, action=action, reward=reward,
                             log_prob=sl.last_log_prob, value=sl.last_value,
                             action_mask=mask, done=done, hidden=sl.last_hidden)
@@ -700,6 +712,29 @@ def run_headless(args):
                   % env.rewards.breakdown_line(env.tick, top=7))
         except Exception as exc:                        # never lose an episode
             print("  paid for: (unavailable: %s)" % exc)
+
+        # The death screen, and the day's record. Both wrapped: a diagnostic
+        # that can end an 18-hour run is worse than no diagnostic.
+        replay_path = None
+        try:
+            events = [t for t, _ts in
+                      list(getattr(env.agent, "event_log", ()) or ())]
+            starved = next((t for t, _hp, hun in recorder.arc if hun <= 0),
+                           None)
+            cause = None if hit_cap else daylog.guess_cause(
+                events, getattr(env.agent, "health", None),
+                getattr(env.agent, "hunger", None), starved)
+            if not hit_cap:
+                replay_path = recorder.save(
+                    env, "died", {"cause": cause})
+                if replay_path:
+                    print("  cause: %s   replay: %s"
+                          % (cause, Path(replay_path).name))
+            daylog.write(daylog.record_for(env, base_eps + ep, where, total,
+                                           grade, eff_str, cap, hit_cap,
+                                           replay_path, starved))
+        except Exception as exc:
+            print("  (log/replay unavailable: %s)" % exc)
 
         # Earning a longer episode. run_gui grew the cap and this did not, so
         # the fast path - the one an actual long run uses - would have held

@@ -20,3 +20,5 @@ Thumbs.db
 # Generated screenshots and scratch output
 build/
 build_shot.png
+replays/
+logs/

@@ -95,7 +95,7 @@ class ATSEnvironment:
         # --- Agent action --------------------------------------------------
         failed_action_flag = 0
         if action_idx in disabled_actions:
-            self.rewards.add(-1.0)
+            self.rewards.add(-1.0, "disabled_action")
             failed_action_flag = action_idx
             self.agent.last_failed_action = action_idx
             from agent import ACTION_NAMES
