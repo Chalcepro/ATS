@@ -62,7 +62,8 @@ CAUSE_HINTS = [
 ]
 
 
-def guess_cause(events, health=None, hunger=None, starved_ticks=None) -> str:
+def guess_cause(events, health=None, hunger=None, starved_ticks=None,
+                reported=None) -> str:
     """Name the death from the events that preceded it.
 
     The environment has no death-cause field - death is `health <= 0` in
@@ -75,8 +76,13 @@ def guess_cause(events, health=None, hunger=None, starved_ticks=None) -> str:
     Returns "unattributed" rather than guessing when nothing matches, because
     a wrong cause in a log is worse than an absent one.
     """
-    blow = None
-    for text in reversed(list(events or ())):
+    # The environment now records what actually did it (env.death_cause), so
+    # prefer that over reading the last log line. The string-matching below
+    # stays as a fallback for deaths that predate the field or arrive by a
+    # path that does not set it - it was written when the only evidence was
+    # a message that said "fell in battle" for every death at zero health.
+    blow = str(reported) if reported else None
+    for text in (() if blow else reversed(list(events or ()))):
         low = str(text).lower()
         for needle, name in CAUSE_HINTS:
             if needle in low:
@@ -157,6 +163,8 @@ def record_for(env, ep, where, total, grade, eff, cap, hit_cap,
         pass
 
     health = getattr(agent, "health", None)
+    _cause = guess_cause(events, health, _num(agent, "hunger"), starved_ticks,
+                         getattr(env, "death_cause", None))
     rec = {
         "ts": time.strftime("%H:%M:%S"),
         "ep": ep,
@@ -167,10 +175,8 @@ def record_for(env, ep, where, total, grade, eff, cap, hit_cap,
         "grade": grade,
         "eff": eff,
         "outcome": "survived" if hit_cap else "died",
-        "cause": None if hit_cap else guess_cause(
-            events, health, _num(agent, "hunger"), starved_ticks),
-        "cause_kind": None if hit_cap else cause_kind(guess_cause(
-            events, health, _num(agent, "hunger"), starved_ticks)),
+        "cause": None if hit_cap else _cause,
+        "cause_kind": None if hit_cap else cause_kind(_cause),
         "health": None if health is None else round(float(health), 1),
         "hunger": _num(agent, "hunger"),
         "stamina": _num(agent, "stamina"),

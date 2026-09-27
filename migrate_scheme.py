@@ -103,6 +103,10 @@ def main(argv=None):
 
     keep = [k for k in sd if k not in VALUE_KEYS]
     print("\n    keeping %d tensors:  %s" % (len(keep), ", ".join(keep)))
+    _have = int(sd["actor.weight"].shape[0])
+    if int(config_rl.ACTION_SIZE) > _have:
+        print("    growing actor:       %d actions -> %d (the old %d keep "
+              "their weights)" % (_have, config_rl.ACTION_SIZE, _have))
     print("    resetting:           %s" % ", ".join(VALUE_KEYS))
     print("    dropping:            optimizer state (%d entries, Adam moments"
           " scaled to the old reward magnitudes)"
@@ -119,6 +123,30 @@ def main(argv=None):
 
     w, b = fresh_value_head(sd["critic.weight"].shape, sd["critic.bias"].shape)
     sd["critic.weight"], sd["critic.bias"] = w, b
+
+    # Grow the actor if the build has more actions than the brain was trained
+    # with. Old action logits keep their weights, so every action it already
+    # understands still means the same thing; new ones start at zero, which is
+    # a logit of 0 - not suppressed, not preferred, reachable as soon as the
+    # mask allows it and the advantage points that way.
+    want_actions = int(config_rl.ACTION_SIZE)
+    have_actions = int(sd["actor.weight"].shape[0])
+    if want_actions > have_actions:
+        aw = torch.zeros(want_actions, sd["actor.weight"].shape[1])
+        ab = torch.zeros(want_actions)
+        aw[:have_actions, :] = sd["actor.weight"]
+        ab[:have_actions] = sd["actor.bias"]
+        sd["actor.weight"], sd["actor.bias"] = aw, ab
+        print("    actions            %d -> %d (old %d keep their weights)"
+              % (have_actions, want_actions, have_actions))
+        shape = blob.get("shape") or {}
+        shape["action_size"] = want_actions
+        blob["shape"] = shape
+        ps = blob.get("param_shapes")
+        if isinstance(ps, dict):
+            ps["actor.weight"] = list(aw.shape)
+            ps["actor.bias"] = list(ab.shape)
+
     blob["policy"] = sd
     # Dropped, not zeroed: brain.load restores the optimizer only when the key
     # is there, so removing it is how a fresh Adam gets built.

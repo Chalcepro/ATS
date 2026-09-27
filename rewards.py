@@ -634,7 +634,9 @@ def audit(max_ticks: int = 9000, verbose: bool = True) -> bool:
     # which would have made a quiet audit return a different verdict from a
     # loud one - a guard rail that only works when someone is watching.
     starving_meal = R_EAT               # need == 1.0 when hunger has hit zero
-    eat_cost = abs(R_TILE_EXPLORE) * 4  # the four ticks it spends not exploring
+    # ONE tick, not four. Eating used to be open-inventory, select-slot,
+    # use, close; ACT_USE_SLOT_BASE made it a single action on a named slot.
+    eat_cost = abs(R_TILE_EXPLORE) * 1
     eat_ok = starving_meal > eat_cost
 
     ok = floor_ok and swing_ok and eat_ok
@@ -663,7 +665,7 @@ def audit(max_ticks: int = 9000, verbose: bool = True) -> bool:
                  " (need %.0f%%)" % (100.0 * MIN_DEATH_SHARE)))
         print("  3. is eating worth the actions it takes?")
         print("     eating while starving      %+9.2f" % starving_meal)
-        print("     four ticks not exploring   %+9.2f" % -eat_cost)
+        print("     the tick it costs to eat   %+9.2f" % -eat_cost)
         print("     %s" % ("ok - a starving agent gains by eating"
                            if eat_ok else "BROKEN - eating costs more than it pays"))
     return ok

@@ -69,6 +69,7 @@ class ATSEnvironment:
         self.need_detector = NeedDetector()
         self.tick = 0
         self.done = False
+        self.death_cause = None
         self.episode = 0
         self._killed_this_tick: list[str] = []
         self.world.mark_explored(
@@ -95,6 +96,7 @@ class ATSEnvironment:
         self.events = EventSystem()
         self.tick = 0
         self.done = False
+        self.death_cause = None
         self._killed_this_tick = []
         self.world.mark_explored(
             self.agent.x,
@@ -153,6 +155,8 @@ class ATSEnvironment:
             # Void proximity kill
             if dmg >= 9999:
                 self.agent.health = 0
+                self.agent.last_damage_cause = "the Void"
+                self.death_cause = "the Void"
                 self.rewards.on_death()
                 self.agent.log_event("Consumed by the Void!")
                 self.done = True
@@ -164,12 +168,14 @@ class ATSEnvironment:
                 dist = abs(ent.x - self.agent.x) + abs(ent.y - self.agent.y)
                 if dist <= aoe:
                     self.agent.health -= dmg
+                    self.agent.last_damage_cause = "a Creeper explosion"
                     self.rewards.on_damage(dmg)
                     self.agent.log_event(f"Caught in Creeper Explosion! (-{dmg} HP)")
             elif dmg > 0:
                 self.agent.health -= dmg
                 self.rewards.on_damage(dmg)
                 from item_ids import entity_name
+                self.agent.last_damage_cause = entity_name(ent.entity_id)
                 self.agent.log_event(f"Attacked by {entity_name(ent.entity_id)} (-{dmg} HP)")
                 # Poison / burn status effects from entity
                 if ent.data.get("poison"):
@@ -227,6 +233,8 @@ class ATSEnvironment:
             else:
                 # Health is below 20: Harsh stop — terminate episode with BAD result
                 self.agent.health = 0
+                self.agent.last_damage_cause = "drowning"
+                self.death_cause = "drowning"
                 self.agent.log_event("Harsh Stop: Drowned in ocean with critical HP < 20 (-500 rew, Perished)")
                 self.done = True
                 self.memory.decay()
@@ -234,7 +242,14 @@ class ATSEnvironment:
         # Death / timeout
         elif self.agent.health <= 0:
             self.rewards.on_death()
-            self.agent.log_event("Agent fell in battle / perished.")
+            # Say what actually killed it. This line read "Agent fell in
+            # battle / perished." for EVERY death at zero health - starvation,
+            # lava, poison, a fall, the lot - and a death message that names
+            # the wrong cause is worse than none, because it is believed.
+            # The trained brain's deaths were pure starvation and this called
+            # them battles for 26,000 episodes.
+            self.death_cause = self.agent.last_damage_cause or "unknown causes"
+            self.agent.log_event("Died of %s." % self.death_cause)
             self.done = True
             self.memory.decay()
         elif self.tick >= self.max_ticks:

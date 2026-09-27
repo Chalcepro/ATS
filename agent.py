@@ -34,6 +34,7 @@ ACTION_NAMES = {
 
 for _i in range(config_rl.INVENTORY_SLOTS):
     ACTION_NAMES[config_rl.ACT_SELECT_SLOT_BASE + _i] = f"sel_slot_{_i}"
+    ACTION_NAMES[config_rl.ACT_USE_SLOT_BASE + _i] = f"use_slot_{_i}"
 
 
 class Agent:
@@ -49,6 +50,16 @@ class Agent:
         self.xp = 0
         self.level = 1
         self.leg_injured = 0
+        # What last hurt it, so a death can say what actually killed it.
+        #
+        # Every death at health <= 0 printed "Agent fell in battle /
+        # perished." whatever the cause. Measured on the trained brain: it
+        # died at tick 4,470 having attacked 6 times in the entire episode,
+        # with health dropping exactly 5 HP every 150 ticks - the starvation
+        # drain, ticking like a metronome. Nothing fought it. The log said
+        # battle, and that one wrong string is what pointed the first
+        # diagnosis of this plateau at combat.
+        self.last_damage_cause: str | None = None
 
         # Facing direction: (dx, dy) and label ("N", "S", "W", "E")
         self.facing = (0, -1)  # Default North
@@ -278,6 +289,16 @@ class Agent:
             if ent_data.get("type") in ("neutral", "passive"):
                 mask[config_rl.ACT_INTERACT] = 1
 
+        # Use slot i directly, with nothing to open first. Unmasked for any
+        # NON-EMPTY slot, not only for slots holding something usable: the
+        # decision being asked for is "which of the things I am carrying do I
+        # want", and pre-filtering to the usable ones answers that question on
+        # the agent's behalf. Using a sword this way simply does nothing much,
+        # which is the feedback that teaches the difference.
+        for i in range(config_rl.INVENTORY_SLOTS):
+            if self.inventory[i]["id"] and self.inventory[i]["count"] > 0:
+                mask[config_rl.ACT_USE_SLOT_BASE + i] = 1
+
         # Inventory management
         if not self.inventory_open:
             mask[config_rl.ACT_OPEN_INVENTORY] = 1
@@ -357,6 +378,24 @@ class Agent:
             return
 
         # --- Use item ---
+        # --- Use a named slot, directly ---
+        if (config_rl.ACT_USE_SLOT_BASE
+                <= action_idx < config_rl.ACT_USE_SLOT_BASE
+                + config_rl.INVENTORY_SLOTS):
+            slot = action_idx - config_rl.ACT_USE_SLOT_BASE
+            s_item = self.inventory[slot]
+            if s_item["id"] and s_item["count"] > 0:
+                # Selection moves too, so the rest of the system - crafting,
+                # the panels, ACT_USE_ITEM - keeps seeing one selected slot
+                # rather than two disagreeing notions of "current".
+                self.selected_slot = slot
+                self._use_item(rewards)
+            else:
+                self.last_failed_action = action_idx
+                self.log_event(f"Slot {slot} is EMPTY [Disabled]")
+                rewards.add(-1.0, "empty_slot_use")
+            return
+
         if action_idx == config_rl.ACT_USE_ITEM:
             s_item = self.inventory[self.selected_slot]
             if s_item["id"] and s_item["count"] > 0:
@@ -652,6 +691,7 @@ class Agent:
             dmg = int(dmg * 1.5)
 
         self.health -= dmg
+        self.last_damage_cause = "fell from a high place"
         rewards.on_damage(dmg)
         self.log_event(f"Took {dmg} Fall Damage!")
 
@@ -679,6 +719,7 @@ class Agent:
         # Starvation: health drains 1 HP every 30 ticks (~1 second)
         if self.hunger <= 0 and self._hunger_counter % 30 == 0:
             self.health = max(0, self.health - 1)
+            self.last_damage_cause = "starvation"
             # Labelled, because unlabelled it was invisible. 436 of these
             # awards showed up in a 14-episode sample as an anonymous "?"
             # worth -218, and each one also costs a point of health - so the
@@ -695,6 +736,7 @@ class Agent:
         if cur_t:
             if cur_t.tile_type == 6:  # TILE_LAVA
                 self.health = max(0, self.health - config_rl.LAVA_DAMAGE_PER_TICK)
+                self.last_damage_cause = "lava"
                 self.status["burning"] = max(self.status["burning"], 5)
                 rewards.on_damage(config_rl.LAVA_DAMAGE_PER_TICK)
             elif cur_t.tile_type == 9:  # TILE_ACID
@@ -710,9 +752,11 @@ class Agent:
         # Status effect ticks
         if self.status["poisoned"] > 0:
             self.health -= 1
+            self.last_damage_cause = "poison"
             self.status["poisoned"] -= 1
         if self.status["burning"] > 0:
             self.health -= 2
+            self.last_damage_cause = "burning"
             self.status["burning"] -= 1
         if self.status["slowed"] > 0:
             self.status["slowed"] -= 1

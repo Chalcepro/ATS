@@ -44,7 +44,24 @@ ACT_CLOSE_CRAFTING = 22
 ACT_SLEEP = 23
 ACT_WAIT = 24
 
-ACTION_SIZE = 25  # total action indices 0..24
+# Use the item in slot i DIRECTLY, without opening anything: 25..31.
+#
+# Why these exist. ACT_USE_ITEM is masked in only while the inventory is open,
+# so eating was a three-action chain - open, select the right slot, use - with
+# no reward at any step and, until recently, none at the end either. Measured
+# on the trained brain: it held food for 2,600 of 2,600 ticks, ACT_USE_ITEM
+# was available for 0 of them, and it chose ACT_OPEN_INVENTORY 0 times. It
+# never declined to eat; eating was never in its action set.
+#
+# One action per SLOT rather than one "consume" button, on purpose. A single
+# button that uses whatever happens to be selected can be pressed blindly and
+# still work, which teaches nothing about what is being held. Choosing slot 3
+# is a real decision: the model must know slot 3 holds an apple and not a
+# sword, and the contents of every slot are already in the state vector for
+# it to read.
+ACT_USE_SLOT_BASE = 25  # 25 + slot_index (0..6) -> actions 25..31
+
+ACTION_SIZE = 32  # total action indices 0..31
 
 # ---------------------------------------------------------------------------
 # State vector sizing & Embeddings

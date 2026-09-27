@@ -266,6 +266,38 @@ class RLPolicy(nn.Module):
         self.hidden_size = new_hidden_size
 
     # ------------------------------------------------------------------
+    # Action growth: more THINGS IT CAN DO
+    # ------------------------------------------------------------------
+    def expand_actions(self, new_action_size):
+        """Add outputs to the actor - new actions, old ones untouched.
+
+        The counterpart of expand() and expand_vocab(), and it was the missing
+        one: the actor is a Linear(hidden, action_size) and nothing could
+        widen it, so adding an action meant discarding a trained policy.
+
+        Existing action logits keep their exact weights, so every action the
+        brain already understands still means what it meant. New actions start
+        at zero weight and zero bias, which puts their logit at 0 - neither
+        suppressed nor preferred, and reachable as soon as the mask allows and
+        the advantage points that way.
+
+        Deliberately not output-preserving, and it cannot be: a new action
+        with a logit of 0 changes the softmax over the others. That is the
+        point of adding it. What is preserved is the RANKING among the old
+        actions, which is where the learning lives.
+        """
+        if new_action_size <= self.action_size:
+            return
+        old = self.action_size
+        new_actor = nn.Linear(self.hidden_size, new_action_size)
+        nn.init.zeros_(new_actor.weight)
+        nn.init.zeros_(new_actor.bias)
+        new_actor.weight.data[:old, :] = self.actor.weight.data
+        new_actor.bias.data[:old] = self.actor.bias.data
+        self.actor = new_actor
+        self.action_size = new_action_size
+
+    # ------------------------------------------------------------------
     # Vocabulary growth: more SYMBOLS
     # ------------------------------------------------------------------
     def expand_vocab(self, item_vocab=None, entity_vocab=None, tile_vocab=None):
