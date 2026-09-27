@@ -502,7 +502,14 @@ def run_gui(args):
                 # into the brain and then re-selected, so clearing the nursery
                 # in the GUI actually moves the agent up a room instead of
                 # replaying the same one until the episode budget runs out.
-                learner.note_outcome(bool(info.get("success")))
+                # On a curriculum rung `info` carries "success"; on the island
+                # it does not, so this read False for every world episode and
+                # the success rate that is meant to STOP growth once the agent
+                # is winning could never rise above zero. Falls back to
+                # reaching the tick cap, which is what success means there.
+                learner.note_outcome(
+                    bool(info.get("success")) if "success" in info
+                    else bool(getattr(env, "tick", 0) >= _episode_cap(env)))
                 stage = getattr(gui, "active_stage", None)
                 if stage is not None:
                     window.append(1.0 if info.get("success") else 0.0)
@@ -668,6 +675,7 @@ def run_headless(args):
         sl.reset_memory()
         done       = False
         ep_rewards = []
+        info       = {}
 
         recorder.begin(base_eps + ep, "rehearse %s %dx%d"
                        % (env.stage.name, env.stage.grid, env.stage.grid)
@@ -677,7 +685,7 @@ def run_headless(args):
             mask   = env.agent.get_action_mask(env.world, env.day_night)
             action = sl.choose_action(state, mask)
             prev_state = state
-            state, reward, done, _ = env.step(action)
+            state, reward, done, info = env.step(action)
             ep_rewards.append(reward)
             # The last stretch of ticks, kept for the death screen. Positions
             # and actions with a tick on each, which is the one thing neither
@@ -743,6 +751,25 @@ def run_headless(args):
         # cap says nothing about whether the agent has earned a longer day in
         # the world, and counting it would promote the survival ladder on the
         # strength of the curriculum.
+        # Whether that counted as a success, which decides autonomous brain
+        # growth. run_headless never reported this, so `_outcomes` stayed
+        # empty and _maybe_grow refused every single check with "only 0
+        # episodes reported (need 30)" - which is why the mind sat at 256 wide
+        # through 26,000 episodes despite expand() working fine. Reported with
+        # 40 outcomes at 20% success, the same gate expands 256 -> 512 on the
+        # next check.
+        #
+        # For the world, success is reaching the tick cap. The island's `info`
+        # has no "success" key at all, so `info.get("success")` - which is what
+        # run_gui uses - reads False for every world episode forever. That is
+        # harmless while the agent is failing and wrong the moment it is not:
+        # MIND_GROWTH_MAX_SUCCESS exists to stop growth once the thing is
+        # succeeding, and a permanently-0% success rate would let it widen to
+        # the 1024 ceiling regardless.
+        success = bool(info.get("success")) if (isinstance(info, dict)
+                                                and "success" in info) else hit_cap
+        learner.note_outcome(success)
+
         # A guard, not `continue`: the periodic save sits below this and
         # skipping it on rehearsal episodes would drop two checkpoints in
         # five at random.
