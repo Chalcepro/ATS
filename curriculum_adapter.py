@@ -212,6 +212,20 @@ class _Rewards:
     def compute_progression_efficiency(self, tick):
         return None
 
+    def breakdown(self, ticks: int = 0, top: int = 0):
+        """No reward breakdown here, and that is not an oversight.
+
+        A rung is scored by CurriculumEnv's own scheme, which never routes
+        through RewardEngine.add, so there are no labelled awards to total.
+        Returning empty rather than raising keeps the caller's log line
+        honest instead of printing an AttributeError on every rehearsal
+        episode - two in five of them.
+        """
+        return []
+
+    def breakdown_line(self, ticks: int = 0, top: int = 6) -> str:
+        return "(curriculum rung - scored by its own rules, not the island's)"
+
 
 # --- the adapter ----------------------------------------------------------
 

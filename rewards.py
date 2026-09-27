@@ -148,6 +148,21 @@ def default_reward_rules() -> dict[str, bool]:
     }
 
 
+def _tally_key(reason: str) -> str:
+    """Group awards that are the same kind of thing.
+
+    Several reasons carry an id - `island_discover_3`, `island_discover_7` -
+    and keeping those apart would turn the breakdown into one row per island,
+    which is the opposite of the point. A trailing numeric segment is dropped;
+    anything else is left alone, because a reason that ends in a word is
+    already the category.
+    """
+    if not reason:
+        return "?"
+    head, _, tail = reason.rpartition("_")
+    return head if head and tail.isdigit() else reason
+
+
 class RewardEngine:
     """Core reward management, dynamic peak-relative classification, and progression efficiency."""
 
@@ -180,6 +195,16 @@ class RewardEngine:
         # How much of this episode's nuisance budget has been spent
         self._nuisance_spent = 0.0
         self._last_pos: tuple[int, int] | None = None
+
+        # What the agent was actually paid for, by reason. Every award
+        # already carries a reason string and `add` used to discard it, which
+        # made the single most obvious question about a training run
+        # unanswerable: episodes were scoring 0.353 reward per tick, R_ALIVE
+        # explains 0.02 of that and R_TILE_EXPLORE cannot exceed 0.2, so a
+        # third of the score had no known source and no way to find one
+        # short of guessing. Keeping the sum and the count per reason costs
+        # one dict.
+        self.tally: dict[str, list] = {}
 
     @classmethod
     def reset_history(cls):
@@ -234,7 +259,39 @@ class RewardEngine:
     def add(self, value: float, reason: str = "") -> float:
         self.tick_reward += value
         self.total += value
+        key = _tally_key(reason)
+        slot = self.tally.get(key)
+        if slot is None:
+            self.tally[key] = [value, 1]
+        else:
+            slot[0] += value
+            slot[1] += 1
         return value
+
+    def breakdown(self, ticks: int = 0, top: int = 0):
+        """What the score was made of, biggest contributor first.
+
+        Returns (reason, total, count, per_tick) rows. Sorted by absolute
+        total, because a large penalty matters as much as a large reward and
+        sorting by signed value would bury it at the bottom.
+        """
+        rows = []
+        for reason, (total, count) in self.tally.items():
+            rows.append((reason, total, count,
+                         total / ticks if ticks else 0.0))
+        rows.sort(key=lambda r: -abs(r[1]))
+        return rows[:top] if top else rows
+
+    def breakdown_line(self, ticks: int = 0, top: int = 6) -> str:
+        """One printable line, for a per-episode log that stays readable."""
+        parts = []
+        for reason, total, count, _per in self.breakdown(ticks, top):
+            # A decimal for small totals. Rounding to whole numbers turned
+            # every early or minor award into "+0", which reads as "paid
+            # nothing" when it means "paid a little".
+            fmt = "%s %+.1f" if abs(total) < 10 else "%s %+.0f"
+            parts.append(fmt % (reason or "?", total))
+        return " | ".join(parts) if parts else "(nothing scored)"
 
     def compute_progression_efficiency(self, ticks: int = 1) -> float:
         """Compute Progression Efficiency = meaningful_progression / cost."""

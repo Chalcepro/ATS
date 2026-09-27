@@ -178,6 +178,85 @@ def _rehearsal_env(gui, current):
     return StageSession(random.choices(behind, weights=weights)[0])
 
 
+def _passed_rungs(progress):
+    """The rungs this brain has earned, each at the size it earned them.
+
+    `progress["passed"]` records them as "senior 19x19", while
+    `stage_by_name("senior")` hands back the BASE 15x15. Rehearsing the base
+    would drill an easier task than the one being held, so each stage is
+    grown until it matches the size that was actually passed.
+
+    Returned in ladder order, easiest first, so a caller can weight by
+    position.
+    """
+    from curriculum_adapter import stage_by_name
+    from debug_gui import TRACKS
+
+    want: dict[str, int] = {}
+    for entry in (progress.get("passed") or []):
+        name, _, size = str(entry).rpartition(" ")
+        if not name:
+            continue
+        try:
+            grid = int(size.split("x")[0])
+        except ValueError:
+            continue
+        want[name] = max(want.get(name, 0), grid)
+
+    order = [r for _n, rungs, _b, _o in TRACKS for r in rungs]
+    out = []
+    for name in order:
+        if name not in want:
+            continue
+        stage = stage_by_name(name)
+        if stage is None:
+            continue
+        guard = 0
+        while stage.grid < want[name] and guard < 20:
+            nxt = stage.grown()
+            if nxt is None:
+                break
+            stage, guard = nxt, guard + 1
+        out.append(stage)
+    return out
+
+
+def _world_rehearsal_env(rungs, world_env, rng):
+    """Now and then, an earned rung instead of the world.
+
+    `_rehearsal_env` cannot do this job: it reads `gui.active_stage`, which
+    is None when the target is the island, so it returns the world unchanged.
+    That left run_headless with no rehearsal at all - an 18 hour run spent
+    1,500 episodes on the world without once revisiting the 21 rungs it took
+    26,000 episodes to earn. The cost of that is measured: 600 GUI episodes
+    of training `avoid` took `avoid` itself from 90% to 48%.
+
+    Weighted toward the LATER rungs, because those are the ones nearest what
+    the world asks for, and uniform weighting over 21 rungs rehearses each
+    about 2% of the time, which is a rounding error rather than rehearsal.
+    """
+    if not rungs or rng.random() >= _REHEARSE_RATE:
+        return world_env
+    from curriculum_adapter import StageSession
+
+    weights = [i + 1 for i in range(len(rungs))]
+    return StageSession(rng.choices(rungs, weights=weights)[0])
+
+
+def _episode_cap(env):
+    """The tick limit of whatever is being played.
+
+    The world carries `max_ticks`; a StageSession does not - it carries a
+    stage with `max_steps`. Reading only `max_ticks` raised AttributeError
+    the moment a rehearsal episode was swapped in.
+    """
+    cap = getattr(env, "max_ticks", None)
+    if cap:
+        return int(cap)
+    stage = getattr(env, "stage", None)
+    return int(getattr(stage, "max_steps", 0) or 0)
+
+
 def _env_for_selection(gui):
     """The environment the menu's current selection means.
 
@@ -560,7 +639,27 @@ def run_headless(args):
 
     reached = deque()
     base_eps = int(progress.get("episodes") or 0)
+
+    # Rehearsal, which this path did not have. See _world_rehearsal_env.
+    import random as _random
+
+    world_env = env
+    rungs = _passed_rungs(progress)
+    rng = _random.Random()
+    if rungs:
+        print("[ATS] rehearsing %d earned rungs on %.0f%% of episodes "
+              "(hardest: %s %dx%d)"
+              % (len(rungs), _REHEARSE_RATE * 100,
+                 rungs[-1].name, rungs[-1].grid, rungs[-1].grid))
+    else:
+        print("[ATS] no earned rungs to rehearse - training the world alone")
+
     for ep in range(1, num_eps + 1):
+        # A rehearsal episode still trains the policy; it is simply not the
+        # thing being scored for promotion, which is why `reached` below only
+        # counts world episodes.
+        env = _world_rehearsal_env(rungs, world_env, rng)
+        rehearsing = env is not world_env
         state      = env.reset()
         sl.reset_memory()
         done       = False
@@ -583,19 +682,42 @@ def run_headless(args):
         prog_eff = env.rewards.compute_progression_efficiency(env.tick)
         eff_str = " n/a" if prog_eff is None else f"{prog_eff:.3f}"
         caps_count = len(env.agent.capabilities)
-        hit_cap = env.tick >= env.max_ticks
+        cap = _episode_cap(env)
+        hit_cap = bool(cap) and env.tick >= cap
         reason = "Survived" if hit_cap else "Died"
-        print(f"Episode {ep} done | reward={total:+7.2f} | GRADE: {grade:4s} | "
-              f"Caps={caps_count} | Eff={eff_str} | ticks={env.tick}/{env.max_ticks} | {reason}")
+        where = ("rehearse %s %dx%d" % (env.stage.name, env.stage.grid,
+                                        env.stage.grid)) if rehearsing else "WORLD"
+        print(f"Episode {ep} done | {where} | reward={total:+7.2f} | "
+              f"GRADE: {grade:4s} | Caps={caps_count} | Eff={eff_str} | "
+              f"ticks={env.tick}/{cap} | {reason}")
+
+        # What the score was actually made of. Without this a run reports a
+        # number and no way to ask where it came from: episodes were scoring
+        # 0.353 reward per tick with R_ALIVE explaining 0.02 of it, and the
+        # rest was unattributable because the reason string was thrown away.
+        try:
+            print("  paid for: %s"
+                  % env.rewards.breakdown_line(env.tick, top=7))
+        except Exception as exc:                        # never lose an episode
+            print("  paid for: (unavailable: %s)" % exc)
 
         # Earning a longer episode. run_gui grew the cap and this did not, so
         # the fast path - the one an actual long run uses - would have held
         # the agent at half a day forever however good it got.
-        reached.append(hit_cap)
+        # World episodes only. A rehearsal episode reaching a 111-step maze
+        # cap says nothing about whether the agent has earned a longer day in
+        # the world, and counting it would promote the survival ladder on the
+        # strength of the curriculum.
+        # A guard, not `continue`: the periodic save sits below this and
+        # skipping it on rehearsal episodes would drop two checkpoints in
+        # five at random.
+        if not rehearsing:
+            reached.append(hit_cap)
         while len(reached) > survival.WINDOW:
             reached.popleft()
-        if survival.earned(progress, reached):
-            env.max_ticks = survival.promote(progress)
+        if not rehearsing and survival.earned(progress, reached):
+            # world_env, not env: `env` is whatever was just played.
+            world_env.max_ticks = survival.promote(progress)
             reached.clear()
             print("[ATS] survived %d of the last %d - episode cap is now %s"
                   % (survival.WINDOW, survival.WINDOW, survival.label(progress)))
