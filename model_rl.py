@@ -266,6 +266,39 @@ class RLPolicy(nn.Module):
         self.hidden_size = new_hidden_size
 
     # ------------------------------------------------------------------
+    # State growth: more THINGS IT CAN SEE
+    # ------------------------------------------------------------------
+    def expand_state(self, new_state_size):
+        """Add inputs to fc1 - new state features, old ones untouched.
+
+        The one I missed, and it cost a night of training. STATE_SIZE is
+        IDX_MASK_START + ACTION_SIZE, because the action mask is carried as the
+        TAIL of the state vector. So adding 7 slot actions silently added 7
+        state inputs too, 495 -> 502, and a migrated brain with a correctly
+        grown 32-action actor was still refused for having a 495-wide input.
+
+        Correct precisely because the mask sits at the end and the new actions
+        were appended: the old features keep their column positions, and the
+        new columns are the new actions' mask bits. Zero weights mean those
+        bits start with no influence, which is right - the brain has never seen
+        them.
+
+        If a future change inserts state features anywhere but the end, this is
+        wrong and a straight copy would silently misalign every feature after
+        the insertion point. That would not raise; it would just quietly
+        destroy the policy.
+        """
+        if new_state_size <= self.state_size:
+            return
+        old = self.state_size
+        new_fc1 = nn.Linear(new_state_size, self.hidden_size)
+        nn.init.zeros_(new_fc1.weight)
+        new_fc1.bias.data = self.fc1.bias.data.clone()
+        new_fc1.weight.data[:, :old] = self.fc1.weight.data
+        self.fc1 = new_fc1
+        self.state_size = new_state_size
+
+    # ------------------------------------------------------------------
     # Action growth: more THINGS IT CAN DO
     # ------------------------------------------------------------------
     def expand_actions(self, new_action_size):

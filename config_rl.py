@@ -139,7 +139,13 @@ IDX_MEM_VISIT_START = IDX_MEM_KNOWN_START + MEM_CELLS
 IDX_MEM_ROUTE_START = IDX_MEM_VISIT_START + MEM_CELLS
 
 IDX_MASK_START  = IDX_MEM_ROUTE_START + MEM_CELLS
-STATE_SIZE = IDX_MASK_START + ACTION_SIZE     # 495
+# NOTE: this is derived from ACTION_SIZE, because the action mask is carried as
+# the TAIL of the state vector. Adding an action therefore changes the STATE
+# size too, and a saved brain will be refused for an input-width mismatch even
+# after its actor has been grown correctly. Both have to be migrated together -
+# see RLPolicy.expand_state and migrate_scheme.py. The old value was 495 at
+# ACTION_SIZE 25; do not hardcode it anywhere.
+STATE_SIZE = IDX_MASK_START + ACTION_SIZE
 
 # The route channel is a teaching aid, not a permanent sense.  Stages named
 # here get it; everything else sees zeros, so the skill has to survive its

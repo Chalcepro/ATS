@@ -107,6 +107,10 @@ def main(argv=None):
     if int(config_rl.ACTION_SIZE) > _have:
         print("    growing actor:       %d actions -> %d (the old %d keep "
               "their weights)" % (_have, config_rl.ACTION_SIZE, _have))
+    _hs = int(sd["fc1.weight"].shape[1])
+    if int(config_rl.STATE_SIZE) > _hs:
+        print("    growing input:       %d state features -> %d (the action "
+              "mask is the state's tail)" % (_hs, config_rl.STATE_SIZE))
     print("    resetting:           %s" % ", ".join(VALUE_KEYS))
     print("    dropping:            optimizer state (%d entries, Adam moments"
           " scaled to the old reward magnitudes)"
@@ -146,6 +150,31 @@ def main(argv=None):
         if isinstance(ps, dict):
             ps["actor.weight"] = list(aw.shape)
             ps["actor.bias"] = list(ab.shape)
+
+    # Grow the state input if the build sees more than the brain was trained
+    # with. STATE_SIZE is IDX_MASK_START + ACTION_SIZE - the action mask is the
+    # TAIL of the state vector - so adding 7 slot actions added 7 state inputs
+    # as well, and a brain with a correctly grown actor was still refused for
+    # having a 495-wide input against a 502-wide one.
+    #
+    # A straight column copy is right only because the mask sits at the END and
+    # the new actions were appended, so every old feature keeps its column. If
+    # a future change inserts features in the middle, this must not be used:
+    # it would misalign everything after the insertion point silently.
+    want_state = int(config_rl.STATE_SIZE)
+    have_state = int(sd["fc1.weight"].shape[1])
+    if want_state > have_state:
+        fw = torch.zeros(sd["fc1.weight"].shape[0], want_state)
+        fw[:, :have_state] = sd["fc1.weight"]
+        sd["fc1.weight"] = fw
+        print("    state inputs       %d -> %d (old %d keep their columns)"
+              % (have_state, want_state, have_state))
+        shape = blob.get("shape") or {}
+        shape["state_size"] = want_state
+        blob["shape"] = shape
+        ps = blob.get("param_shapes")
+        if isinstance(ps, dict):
+            ps["fc1.weight"] = list(fw.shape)
 
     blob["policy"] = sd
     # Dropped, not zeroed: brain.load restores the optimizer only when the key
