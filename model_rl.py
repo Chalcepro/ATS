@@ -268,7 +268,7 @@ class RLPolicy(nn.Module):
     # ------------------------------------------------------------------
     # State growth: more THINGS IT CAN SEE
     # ------------------------------------------------------------------
-    def expand_state(self, new_state_size):
+    def expand_state(self, new_state_size, insert_at=None):
         """Add inputs to fc1 - new state features, old ones untouched.
 
         The one I missed, and it cost a night of training. STATE_SIZE is
@@ -277,24 +277,32 @@ class RLPolicy(nn.Module):
         state inputs too, 495 -> 502, and a migrated brain with a correctly
         grown 32-action actor was still refused for having a 495-wide input.
 
-        Correct precisely because the mask sits at the end and the new actions
-        were appended: the old features keep their column positions, and the
-        new columns are the new actions' mask bits. Zero weights mean those
-        bits start with no influence, which is right - the brain has never seen
-        them.
+        Appending (the default) is right for new actions: the mask sits at the
+        end and the new actions were appended, so the old features keep their
+        column positions and the new columns are the new actions' mask bits.
+        Zero weights mean those bits start with no influence, which is right -
+        the brain has never seen them.
 
-        If a future change inserts state features anywhere but the end, this is
-        wrong and a straight copy would silently misalign every feature after
-        the insertion point. That would not raise; it would just quietly
-        destroy the policy.
+        A new SENSE (hearing, say) does not go at the end - the mask has to stay
+        the tail - so it is inserted at IDX_MASK_START. Pass *insert_at* for
+        that: columns before it keep their place, columns from it onward move
+        right by the number added, and the new ones in between start at zero.
+        A plain copy there would have handed the hearing weights to the mask
+        bits and the mask weights to nothing, without raising.
         """
         if new_state_size <= self.state_size:
             return
         old = self.state_size
+        at = old if insert_at is None else int(insert_at)
+        if not 0 <= at <= old:
+            raise ValueError("insert_at %d outside 0..%d" % (at, old))
+        added = new_state_size - old
         new_fc1 = nn.Linear(new_state_size, self.hidden_size)
         nn.init.zeros_(new_fc1.weight)
         new_fc1.bias.data = self.fc1.bias.data.clone()
-        new_fc1.weight.data[:, :old] = self.fc1.weight.data
+        w = self.fc1.weight.data
+        new_fc1.weight.data[:, :at] = w[:, :at]
+        new_fc1.weight.data[:, at + added:] = w[:, at:]
         self.fc1 = new_fc1
         self.state_size = new_state_size
 

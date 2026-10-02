@@ -1,6 +1,8 @@
 # 🤖 AGENTS.md — ATS AI Agent Onboarding & Contribution Guide
 
 > **MANDATORY READ FOR ALL AI AGENTS.**
+> **Then read [`docs/CHARTER.md`](docs/CHARTER.md) (the model's rules) and [`docs/ROADMAP.md`](docs/ROADMAP.md) (what to build next, with gates and tests).**
+> The state/action tables further down are from August and are out of date; `config_rl.py` is the truth (502 state, 32 actions as of 2026-10-02).
 > Before writing a single line of code, read this file top to bottom.
 > Your first action after reading this MUST be to update the relevant docs.
 
