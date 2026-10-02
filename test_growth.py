@@ -1,4 +1,4 @@
-"""Growth must be output-preserving, survive a save/load, and keep learning."""
+﻿"""Growth must be output-preserving, survive a save/load, and keep learning."""
 import sys, torch
 sys.path.insert(0, r'C:\Users\Bob\Documents\github\ATS')
 import config_rl
@@ -23,7 +23,7 @@ def realistic_state(n=4):
 
 def out(p, s):
     with torch.no_grad():
-        l, v = p(s)
+        l, v, _ = p(s)
     return l.clone(), v.clone()
 
 st = realistic_state()
@@ -71,7 +71,7 @@ opt = torch.optim.Adam(p.parameters(), lr=1e-2)
 s2 = realistic_state(8)
 s2[:, config_rl.IDX_OBJ_ID] = 150.0 / config_rl.ITEM_ID_SCALE   # id 150 -> new row
 for _ in range(20):
-    logits, value = p(s2)
+    logits, value, _ = p(s2)
     loss = logits.pow(2).mean() + value.pow(2).mean()
     opt.zero_grad(); loss.backward(); opt.step()
 moved = (p.item_embed.weight.data[150] - before).abs().max().item()
