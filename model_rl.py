@@ -160,6 +160,16 @@ class RLPolicy(nn.Module):
         h_in = self.initial_hidden(x.shape[0]) if hx is None else hx
         if h_in.dim() == 1:
             h_in = h_in.unsqueeze(0)
+        # A memory carried from before the mind grew is narrower than the mind.
+        # The run on 2026-10-02 died on exactly this: expand() took the GRU
+        # from 256 to 512 mid-episode, and the very next step fed it the
+        # 256-wide memory the solution loop was holding. Widen it with zeros -
+        # the new units have never been used, so "nothing remembered yet" is
+        # the truthful value for them, and the old units keep what they hold.
+        # Done here rather than in each caller so every holder of a hidden
+        # state (solution loop, curriculum, diagnostics) is covered at once.
+        if h_in.shape[-1] < self.hidden_size:
+            h_in = torch.nn.functional.pad(h_in, (0, self.hidden_size - h_in.shape[-1]))
         h_out = self.gru(x, h_in)
         x = h_out
 

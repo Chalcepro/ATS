@@ -54,6 +54,27 @@ l, v = out(p, st)
 check('logits unchanged', torch.allclose(base_l, l, atol=1e-6), 'max d %.2e' % (base_l-l).abs().max())
 check('hidden is 512', p.hidden_size == 512, str(p.hidden_size))
 
+print('\n=== 3b. a memory carried across growth (the 2026-10-02 crash) ===')
+import copy
+torch.manual_seed(1)
+a = RLPolicy()                                   # 256 wide
+with torch.no_grad():
+    _, _, hx = a(st[:1])                         # the solution loop holds this
+    b = copy.deepcopy(a)
+    l_before, v_before, _ = b(st[1:2], hx=hx)    # next step, no growth
+    a.expand(512)
+    try:
+        l_after, v_after, h2 = a(st[1:2], hx=hx) # next step, after growth
+        ran = True
+    except RuntimeError as err:
+        ran = False
+        print('    ', err)
+check('the next step runs with the old 256-wide memory', ran)
+if ran:
+    check('...and says exactly what it would have', torch.allclose(l_before, l_after, atol=1e-5),
+          'max d %.2e' % (l_before - l_after).abs().max())
+    check('...and hands back a 512-wide memory', h2.shape[-1] == 512, str(tuple(h2.shape)))
+
 print('\n=== 4. the grown brain survives save -> load ===')
 import tempfile, pathlib
 f = pathlib.Path(tempfile.gettempdir()) / 'grown.pt'
