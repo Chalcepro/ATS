@@ -30,6 +30,9 @@ class Entity:
     _wander_ticks: int = 0
     # Creeper explosion flag
     exploded: bool = False
+    # A bridge guard holds its post: it never wanders off the bridge, only
+    # fights what comes within reach. Set by World._lay_bridges.
+    guard: bool = False
 
     @classmethod
     def from_id(cls, entity_id: str, x: int, y: int) -> "Entity":
@@ -92,10 +95,11 @@ class Entity:
         telegraph_dur = int(self.data.get("telegraph", 2))
 
         if dist > 2:
-            # Out of range — wander
+            # Out of range — wander (a guard stays on its post)
             self.state = 0
             self.telegraph_ticks = 0
-            self._wander(world)
+            if not self.guard:
+                self._wander(world)
             return 0
 
         # In range — attack cycle
@@ -159,9 +163,11 @@ class Entity:
 
         random.shuffle(directions[:2])  # some randomness even when fleeing
 
+        sea_only = (self.data.get("type") == "ocean" or self.data.get("ocean_spawn")) and \
+            _sharks_stay_in_water()
         for dx, dy in directions:
             nx, ny = self.x + dx, self.y + dy
-            if world is None or _passable(world, nx, ny):
+            if world is None or _passable(world, nx, ny, sea_only):
                 self.x, self.y = nx, ny
                 return
 
@@ -187,10 +193,21 @@ class Entity:
             self._wander(world, flee_from=attacker_pos)
 
 
-def _passable(world, x: int, y: int) -> bool:
-    """Simple passability check for entity movement."""
+def _sharks_stay_in_water() -> bool:
+    try:
+        import config_rl
+        return bool(getattr(config_rl, "SHARKS_STAY_IN_WATER", True))
+    except Exception:
+        return True
+
+
+def _passable(world, x: int, y: int, sea_only: bool = False) -> bool:
+    """Simple passability check for entity movement. `sea_only` is a shark:
+    open ocean and nothing else - not the beach, not a bridge."""
     try:
         tile = world._tile(x, y)
+        if sea_only:
+            return tile.tile_type == 8           # TILE_OCEAN
         return tile.tile_type not in (1, 7)  # not a wall or gate
     except Exception:
         return True

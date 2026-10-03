@@ -122,8 +122,16 @@ def generate_island_shape(
     center: Tuple[int, int],
     seed: int,
     island_id: int,
+    relative: bool = False,
 ) -> Tuple[Set[Tuple[int, int]], int]:
-    """Organic amoeba-shaped island. Returns (land_tiles, radius)."""
+    """Organic amoeba-shaped island. Returns (land_tiles, radius).
+
+    `relative` samples the coastline noise in the island's own coordinates
+    instead of the world's, so the shape is the same wherever the island is
+    put. The bridge layout needs that: it slides each island in until its
+    coast is a set distance from its neighbour's, and with world-coordinate
+    noise every slide would be a different island.
+    """
     cx, cy = center
     r_noise = _hash2d(island_id * 17, seed, 0xABCDEF)
     radius  = int(30 + r_noise * 30)      # 30..60 tiles
@@ -132,9 +140,10 @@ def generate_island_shape(
     for dy in range(-radius - 5, radius + 6):
         for dx in range(-radius - 5, radius + 6):
             tx, ty = cx + dx, cy + dy
+            nx, ny = (dx, dy) if relative else (tx, ty)
             dist = math.sqrt(dx*dx + dy*dy) / radius
-            coast    = _fbm(tx * 0.12, ty * 0.12, seed + island_id * 1337, octaves=4)
-            interior = _fbm(tx * 0.04, ty * 0.04, seed + island_id * 2749, octaves=3)
+            coast    = _fbm(nx * 0.12, ny * 0.12, seed + island_id * 1337, octaves=4)
+            interior = _fbm(nx * 0.04, ny * 0.04, seed + island_id * 2749, octaves=3)
             eff_dist = dist - (coast - 0.5) * 0.45 - (interior - 0.5) * 0.15
             if eff_dist < 0.82:
                 land_tiles.add((tx, ty))
@@ -253,22 +262,162 @@ def generate_obstacle_clusters(
 # ---------------------------------------------------------------------------
 # Island Registry
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Bridges
+# ---------------------------------------------------------------------------
+# The islands used to sit about 250 tiles apart. With a shark at three ticks
+# of open ocean, nothing past the first island could ever be reached - the
+# rest of the world existed only on paper.
+#
+# Now they sit close, every coast at least COAST_GAP tiles of open ocean from
+# every other coast, and each connected pair has exactly ONE bridge: a path
+# one tile wide with sea on both sides. There is no lucky shortcut - eight
+# tiles of ocean is more than the shark allows anywhere - so the only way to
+# another island is to find its bridge, stay on it, and get past what guards
+# it.
+#
+# Grassland sits in the middle with the four tier islands round it; the Boss
+# Sanctum is reached only from the Tundra, the last tier before it.
+
+COAST_GAP = 8
+
+# (from, to) - one bridge each.
+BRIDGES: List[Tuple[int, int]] = [
+    (ISLAND_GRASSLAND, ISLAND_DARK_FOREST),
+    (ISLAND_GRASSLAND, ISLAND_VOLCANIC),
+    (ISLAND_GRASSLAND, ISLAND_MUSHROOM),
+    (ISLAND_GRASSLAND, ISLAND_TUNDRA),
+    (ISLAND_TUNDRA,    ISLAND_BOSS),
+]
+
+
+def _unit(v: Tuple[float, float]) -> Tuple[float, float]:
+    n = math.hypot(v[0], v[1]) or 1.0
+    return (v[0] / n, v[1] / n)
+
+
+# Which way each island lies from the one it is bridged from - the old
+# layout's directions, so the world keeps its geography, only closer. The
+# Boss now lies on past the Tundra rather than off on its own.
+DIRECTIONS: Dict[int, Tuple[float, float]] = {
+    ISLAND_DARK_FOREST: _unit(ISLAND_CENTERS[ISLAND_DARK_FOREST]),
+    ISLAND_VOLCANIC:    _unit(ISLAND_CENTERS[ISLAND_VOLCANIC]),
+    ISLAND_MUSHROOM:    _unit(ISLAND_CENTERS[ISLAND_MUSHROOM]),
+    ISLAND_TUNDRA:      _unit(ISLAND_CENTERS[ISLAND_TUNDRA]),
+    ISLAND_BOSS:        _unit(ISLAND_CENTERS[ISLAND_TUNDRA]),
+}
+
+
+def _extent(tiles, d) -> float:
+    """How far the tiles reach along direction d (max dot product)."""
+    return max(x * d[0] + y * d[1] for x, y in tiles)
+
+
+def separated(a, b, gap: float) -> bool:
+    """True if every tile of a is at least `gap` from every tile of b along
+    the axis between their middles - which bounds the real distance too."""
+    ax = sum(x for x, _ in a) / len(a); ay = sum(y for _, y in a) / len(a)
+    bx = sum(x for x, _ in b) / len(b); by = sum(y for _, y in b) / len(b)
+    d = _unit((bx - ax, by - ay))
+    return min(x * d[0] + y * d[1] for x, y in b) - _extent(a, d) >= gap
+
+
+def four_line(a: Tuple[int, int], b: Tuple[int, int]) -> List[Tuple[int, int]]:
+    """Tiles from a to b, 4-connected: a diagonal step becomes two straight
+    ones, because the agent moves in four directions and a bridge it can only
+    cross diagonally is a bridge it cannot cross."""
+    (x0, y0), (x1, y1) = a, b
+    dx, dy = abs(x1 - x0), -abs(y1 - y0)
+    sx, sy = (1 if x0 < x1 else -1), (1 if y0 < y1 else -1)
+    err = dx + dy
+    out = [(x0, y0)]
+    while (x0, y0) != (x1, y1):
+        e2 = 2 * err
+        if e2 >= dy and x0 != x1:
+            err += dy
+            x0 += sx
+            out.append((x0, y0))
+        elif e2 <= dx and y0 != y1:
+            err += dx
+            y0 += sy
+            out.append((x0, y0))
+        else:                                    # one axis done: walk the other
+            if x0 != x1:
+                x0 += sx
+            else:
+                y0 += sy
+            out.append((x0, y0))
+    return out
+
+
 class IslandRegistry:
-    def __init__(self, world_seed: int):
+    def __init__(self, world_seed: int, bridges: bool = True):
         self.world_seed = world_seed
+        self.use_bridges = bridges
         self.islands: List[IslandDef] = []
         self._tile_map: Dict[Tuple[int,int], int] = {}
+        # bridge tile -> the island it leads to; and each bridge's record
+        self.bridge_tiles: Dict[Tuple[int, int], int] = {}
+        self.bridges: List[dict] = []
 
     def build(self) -> None:
-        for island_id, center in ISLAND_CENTERS.items():
-            idef = self._build_island(island_id, center)
-            self.islands.append(idef)
-            for tile in idef.land_tiles:
-                self._tile_map[tile] = island_id
+        if not self.use_bridges:
+            for island_id, center in ISLAND_CENTERS.items():
+                self._add(self._build_island(island_id, center))
+            return
+        self._build_bridged()
 
-    def _build_island(self, island_id: int, center: Tuple[int,int]) -> IslandDef:
+    def _add(self, idef: "IslandDef") -> None:
+        self.islands.append(idef)
+        for tile in idef.land_tiles:
+            self._tile_map[tile] = idef.island_id
+
+    def _build_bridged(self) -> None:
+        # Every shape once, around (0, 0); then each is slid out along its
+        # direction until its coast is COAST_GAP past its neighbour's.
+        shapes = {}
+        for iid in ISLAND_CENTERS:
+            seed = self.world_seed + iid * 1000003
+            shapes[iid], _r = generate_island_shape((0, 0), seed, iid, relative=True)
+        placed: Dict[int, Tuple[int, int]] = {ISLAND_GRASSLAND: (0, 0)}
+        land = {ISLAND_GRASSLAND: shapes[ISLAND_GRASSLAND]}
+        for src, dst in BRIDGES:
+            d = DIRECTIONS[dst]
+            sx, sy = placed[src]
+            reach = _extent(land[src], d) - (sx * d[0] + sy * d[1])
+            back = _extent(shapes[dst], (-d[0], -d[1]))
+            dist = reach + back + COAST_GAP
+            while True:
+                c = (int(round(sx + d[0] * dist)), int(round(sy + d[1] * dist)))
+                moved = {(x + c[0], y + c[1]) for x, y in shapes[dst]}
+                if all(separated(other, moved, COAST_GAP) for other in land.values()):
+                    break
+                dist += 2                        # rounding, or a third island in the way
+            placed[dst], land[dst] = c, moved
+        for iid, c in placed.items():
+            self._add(self._build_island(iid, c, land[iid]))
+        for src, dst in BRIDGES:
+            self._make_bridge(src, dst)
+
+    def _make_bridge(self, src: int, dst: int) -> None:
+        """The ocean tiles on the straight line between the two middles,
+        after the last of src's land and before the first of dst's."""
+        line = four_line(self.get_island(src).center, self.get_island(dst).center)
+        last_src = max(i for i, t in enumerate(line) if self._tile_map.get(t) == src)
+        first_dst = min(i for i, t in enumerate(line)
+                        if self._tile_map.get(t) == dst and i > last_src)
+        tiles = [t for t in line[last_src + 1:first_dst] if t not in self._tile_map]
+        for t in tiles:
+            self.bridge_tiles[t] = dst
+        self.bridges.append({"from": src, "to": dst, "tiles": tiles,
+                             "guard": tiles[len(tiles) // 2] if tiles else None})
+
+    def _build_island(self, island_id: int, center: Tuple[int,int], land=None) -> IslandDef:
         seed = self.world_seed + island_id * 1000003
-        land, radius = generate_island_shape(center, seed, island_id)
+        if land is None:
+            land, radius = generate_island_shape(center, seed, island_id)
+        else:
+            radius = int(30 + _hash2d(island_id * 17, seed, 0xABCDEF) * 30)
         water, hazard, safe_path, spore = generate_internal_water(land, island_id, center, seed)
         occupied = hazard | water
         obstacles = generate_obstacle_clusters(land, island_id, center, seed, occupied)
@@ -296,7 +445,7 @@ class IslandRegistry:
         return self.get_island(ISLAND_GRASSLAND)
 
 
-def build_island_registry(world_seed: int) -> "IslandRegistry":
-    reg = IslandRegistry(world_seed)
+def build_island_registry(world_seed: int, bridges: bool = True) -> "IslandRegistry":
+    reg = IslandRegistry(world_seed, bridges)
     reg.build()
     return reg

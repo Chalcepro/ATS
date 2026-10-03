@@ -1131,6 +1131,7 @@ class TerminalGUI:
                     elif t.tile_type == 10: cs, cc = "[ICE]", (160, 230, 255)
                     elif t.tile_type == 11: cs, cc = "[ASH]", (180, 180, 180)
                     elif t.tile_type == 12: cs, cc = "%SPOR%", (200, 80, 220)
+                    elif t.tile_type == 13: cs, cc = "=BRDG=", (200, 160, 90)
                     else:                  cs, cc = ".", DIM
                 self._blit(cs, cx, ry, self.f_body, cc)
 

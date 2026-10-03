@@ -152,13 +152,19 @@ class ATSEnvironment:
                 continue
             dmg = ent.tick_ai(self.agent.x, self.agent.y, self.world)
 
-            # Void proximity kill
+            # Instant kill (the Void, or a shark). Named after what it was:
+            # every one of these used to say "the Void", which hid that
+            # sharks were the ones doing it.
             if dmg >= 9999:
+                killer = "the Void" if ent.entity_id == "E014" else (
+                    "a shark" if ent.data.get("ocean_spawn") or ent.data.get("type") == "ocean"
+                    else str(ent.data.get("name", ent.entity_id)))
                 self.agent.health = 0
-                self.agent.last_damage_cause = "the Void"
-                self.death_cause = "the Void"
+                self.agent.last_damage_cause = killer
+                self.death_cause = killer
                 self.rewards.on_death()
-                self.agent.log_event("Consumed by the Void!")
+                self.agent.log_event("Consumed by the Void!" if killer == "the Void"
+                                     else "Killed by %s!" % killer)
                 self.done = True
                 break
 
@@ -204,8 +210,18 @@ class ATSEnvironment:
         self.events.tick(self.world)
         self.tick += 1
 
-        # Per-tile exploration reward (first visit only)
-        self.rewards.on_new_tile(self.agent.x, self.agent.y)
+        # Stepping onto a bridge builds the island it leads to, if it is not
+        # built yet - its land, resources and creatures.
+        dest = self.world.bridge_target(self.agent.x, self.agent.y) \
+            if hasattr(self.world, "bridge_target") else -1
+        if dest >= 0 and self.world.materialise(dest):
+            self.agent.log_event("A bridge - something lies across it")
+
+        # Per-tile exploration reward (first visit only). The sea pays only
+        # if EXPLORE_PAYS_OCEAN says so - see config_rl.
+        here = self.world._tile(self.agent.x, self.agent.y)
+        if getattr(config_rl, "EXPLORE_PAYS_OCEAN", True) or here.tile_type != 8:
+            self.rewards.on_new_tile(self.agent.x, self.agent.y)
 
         # Island discovery (only for genuinely new islands outside the starting spawn island 0)
         cur_t = self.world._tile(self.agent.x, self.agent.y)

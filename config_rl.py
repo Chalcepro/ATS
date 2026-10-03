@@ -154,6 +154,24 @@ ROUTE_HINT_STAGES = ('nursery', 'corridors', 'corridors7', 'avoid')
 
 # Hazard & Ocean constants
 OCEAN_SHARK_TICKS = 3     # ticks before lethal shark arrives
+
+# The world's shape. Bridges: islands close, one 1-tile bridge per connected
+# pair, a guard standing on each - see island_gen.BRIDGES. False puts back the
+# old layout of islands ~250 tiles apart that nothing could reach.
+WORLD_BRIDGES = True
+
+# A shark used to walk out of the sea after the agent and chase it across the
+# island, killing on contact - logged as "the Void" (2026-10-03: 856 of 856
+# Void deaths that day followed a shark strike). True keeps sharks on ocean
+# tiles: exactly as deadly at sea, no longer on land. False is the old way.
+SHARKS_STAY_IN_WATER = True
+
+# Whether a first visit to an OCEAN tile pays the exploration reward. Once
+# the island is explored the sea is the only new ground left, so paying for
+# it pulled the agent out to drown (2026-10-03: 966 of 1,024 world episodes
+# went to sea). Off, by Bob's decision: the sea is not ground to explore.
+# Bridge tiles are not ocean, so finding a bridge still pays.
+EXPLORE_PAYS_OCEAN = False
 LAVA_DAMAGE_PER_TICK = 5  # HP lost per tick on TILE_LAVA (not safe ash path)
 ACID_POISON_TICKS = 10    # POISONED duration from TILE_ACID
 

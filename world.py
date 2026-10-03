@@ -35,6 +35,7 @@ TILE_ACID    = 9   # Mushroom island acid pool (applies POISONED)
 TILE_ICE     = 10  # Tundra ice (passable, 20% slip = leg injury)
 TILE_ASH     = 11  # Volcanic safe ash path (no burn damage)
 TILE_SPORE   = 12  # Mushroom spore cloud zone (applies BLINDED)
+TILE_BRIDGE  = 13  # One tile wide over open ocean; the only way to another island
 
 
 @dataclass
@@ -127,12 +128,15 @@ class World:
         self.agent_spawn = (0, 0)
 
         # Build island registry (generates all 6 islands)
-        self.island_registry: IslandRegistry = build_island_registry(seed)
+        self.island_registry: IslandRegistry = build_island_registry(
+            seed, bridges=getattr(config_rl, "WORLD_BRIDGES", True))
+        self._materialised: set[int] = set()
         self.starting_island: IslandDef = self.island_registry.get_starting_island()
         self.agent_spawn = self.starting_island.spawn_pos
 
         # Pre-generate all tiles for the starting island only
         self._generate_island_tiles(self.starting_island)
+        self._materialised.add(self.starting_island.island_id)
 
         # Ensure spawn tile is clear
         spawn_tile = self._tile(*self.agent_spawn)
@@ -144,6 +148,12 @@ class World:
 
         # Spawn entities for starting island
         self._populate_island_entities(self.starting_island)
+
+        # Bridges and the guard standing on each. The far islands are only
+        # built for real when the agent first steps onto a bridge to them -
+        # every island's creatures ticking every step would slow training to
+        # a crawl for land the agent may never reach.
+        self._lay_bridges()
 
     # ------------------------------------------------------------------
     # Island tile generation
@@ -224,6 +234,50 @@ class World:
                 continue
             ent_id = pool[i % len(pool)]
             self.entities.append(Entity.from_id(ent_id, tx, ty))
+
+    def _lay_bridges(self) -> None:
+        reg = self.island_registry
+        for b in getattr(reg, "bridges", []):
+            for (x, y) in b["tiles"]:
+                self.tiles[(x, y)] = Tile(tile_type=TILE_BRIDGE, island_id=-1,
+                                          flags="bridge:%d" % b["to"])
+            post = b.get("guard")
+            if post is None:
+                continue
+            guard_id = self._guard_for(b["to"])
+            if guard_id:
+                g = Entity.from_id(guard_id, *post)
+                g.guard = True
+                self.entities.append(g)
+
+    def _guard_for(self, island_id: int) -> str:
+        """A fighter from the island the bridge leads to - the first hostile
+        in its native pool, so a harder island has a harder guard."""
+        for eid in _ISLAND_ENTITY_POOLS.get(island_id, []):
+            spec = REGISTRY.get_entity(eid) or {}
+            if spec.get("type", "hostile") == "hostile" and not spec.get("unkillable"):
+                return eid
+        return "E001"
+
+    def materialise(self, island_id: int) -> bool:
+        """Build an island for real - its tiles, resources and creatures -
+        the first time the agent heads for it. False if it already was."""
+        if island_id in self._materialised:
+            return False
+        idef = self.island_registry.get_island(island_id)
+        if idef is None:
+            return False
+        self._generate_island_tiles(idef)
+        self._populate_island_entities(idef)
+        self._materialised.add(island_id)
+        return True
+
+    def bridge_target(self, x: int, y: int) -> int:
+        """The island the bridge at (x, y) leads to, or -1 if not a bridge."""
+        t = self.tiles.get((x, y))
+        if t is None or t.tile_type != TILE_BRIDGE or not t.flags.startswith("bridge:"):
+            return -1
+        return int(t.flags.split(":", 1)[1])
 
     def _place_starter_surroundings(self) -> None:
         """Place immediate items around spawn point."""
