@@ -76,7 +76,7 @@ class Entity:
 
         # ---- Special: Ocean Shark ------------------------------------
         if entity_type == "ocean" or self.data.get("ocean_spawn"):
-            if dist <= 1:
+            if dist <= 1 and _shark_can_reach(world, agent_x, agent_y):
                 return 9999
             # Move towards agent aggressively
             self._wander(world, flee_from=(self.x + (self.x - agent_x), self.y + (self.y - agent_y)))
@@ -197,6 +197,18 @@ def _sharks_stay_in_water() -> bool:
     try:
         import config_rl
         return bool(getattr(config_rl, "SHARKS_STAY_IN_WATER", True))
+    except Exception:
+        return True
+
+
+def _shark_can_reach(world, agent_x: int, agent_y: int) -> bool:
+    """With SHARKS_BITE_ONLY_AT_SEA a shark bites only an agent that is in
+    the ocean itself - not one on the beach or a bridge beside it."""
+    try:
+        import config_rl
+        if not getattr(config_rl, "SHARKS_BITE_ONLY_AT_SEA", True):
+            return True
+        return world._tile(agent_x, agent_y).tile_type == 8   # TILE_OCEAN
     except Exception:
         return True
 

@@ -166,6 +166,14 @@ WORLD_BRIDGES = True
 # tiles: exactly as deadly at sea, no longer on land. False is the old way.
 SHARKS_STAY_IN_WATER = True
 
+# A shark kills anything within one tile, so with sharks kept at sea they
+# waited at the shoreline and killed the agent standing on the beach
+# (2026-10-06: 11 of 12 shark deaths checked were on land; reward fell
+# 80 -> 51 -> 29 over three days). True means a shark only bites an agent
+# that is on an ocean tile - beaches and bridges are out of its reach.
+# Bob's call. False is the old one-tile reach.
+SHARKS_BITE_ONLY_AT_SEA = True
+
 # Whether a first visit to an OCEAN tile pays the exploration reward. Once
 # the island is explored the sea is the only new ground left, so paying for
 # it pulled the agent out to drown (2026-10-03: 966 of 1,024 world episodes
