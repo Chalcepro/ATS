@@ -68,7 +68,8 @@ def run_benchmark(num_episodes=20, max_ticks=200):
         "action_distribution": action_counts
     }
     
-    output_json = r"c:\Users\Virus\Documents\github\ATS\data\baseline_benchmark.json"
+    output_json = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "data", "baseline_benchmark.json")
     os.makedirs(os.path.dirname(output_json), exist_ok=True)
     with open(output_json, "w") as f:
         json.dump(summary, f, indent=2)

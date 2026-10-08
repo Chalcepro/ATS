@@ -158,7 +158,15 @@ OCEAN_SHARK_TICKS = 3     # ticks before lethal shark arrives
 # The world's shape. Bridges: islands close, one 1-tile bridge per connected
 # pair, a guard standing on each - see island_gen.BRIDGES. False puts back the
 # old layout of islands ~250 tiles apart that nothing could reach.
-WORLD_BRIDGES = True
+#
+# 2026-10-08: switched OFF by Bob. The bridge world put the agent on small
+# islands ringed by sea, and a shark is an instant kill the moment it steps in
+# - so it died in the sea ~1.8 times per episode and survival fell to ZERO
+# (reward 500 -> 29, lifespan 3500 -> 800 ticks over 10-04..10-06). The old
+# world is the one it mastered (~500 reward, real survivors). Bridges + sharks
+# are kept intact behind this flag to bring back later as a GRADUAL curriculum
+# rung with a shark the agent can see and flee, not a sudden one-shot.
+WORLD_BRIDGES = False
 
 # A shark used to walk out of the sea after the agent and chase it across the
 # island, killing on contact - logged as "the Void" (2026-10-03: 856 of 856
