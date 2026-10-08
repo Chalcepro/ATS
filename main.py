@@ -638,12 +638,44 @@ def run_gui(args):
 
 
 # ---------------------------------------------------------------------------
+class _Tee:
+    """Mirror stdout to a log file so 'Watch training.bat' has something to
+    read. Train.bat runs us with no redirect, so without this every print goes
+    only to the console window and the watcher sits blank. Line-buffered and
+    flushed per write so the watcher updates in near-real-time."""
+
+    def __init__(self, path, stream):
+        self._f = open(path, "w", encoding="utf-8")
+        self._stream = stream
+
+    def write(self, s):
+        self._stream.write(s)
+        self._f.write(s)
+        self._f.flush()
+        return len(s)
+
+    def flush(self):
+        self._stream.flush()
+        self._f.flush()
+
+
 def run_headless(args):
 # ---------------------------------------------------------------------------
     """Fast batch training with no window — for scripting/CI."""
+    import sys
+    from datetime import datetime
+    logs_dir = Path(__file__).resolve().parent / "logs"
+    logs_dir.mkdir(exist_ok=True)
+    logpath = logs_dir / ("train_%s.log" % datetime.now().strftime("%Y%m%d_%H%M%S"))
+    sys.stdout = _Tee(logpath, sys.stdout)
+    print("[ATS] console log -> %s" % logpath.name)
+
     if args.ticks:
         config_rl.MAX_TICKS = args.ticks
     num_eps = args.episodes or config_rl.EPISODES
+    # Announced so the watcher can draw a real progress bar (it reads this
+    # line); the command line carries no --episodes when Train.bat launches us.
+    print("[ATS] training %d episodes" % num_eps)
 
     policy, learner, progress = _make_mind(args.fresh)
     policy.eval()

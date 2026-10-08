@@ -47,8 +47,15 @@ RE_DONE = re.compile(r"every rung clears|PASSED after (\d+)|gave up after (\d+)|
                      r"##### DONE|ALL DONE")
 RE_SHORT = re.compile(r"still short under greedy:\s*(.+)")
 RE_CAP = re.compile(r"--episodes[= ](\d+)")
-# main.py: "Episode 12 done | reward=..." and the cap it announces
-RE_ISLAND = re.compile(r"^Episode (\d+) done \| reward=([-+]?[\d.]+)")
+# main.py announces its episode total in the log so we can size the bar even
+# though the command line carries no --episodes.
+RE_TOTAL = re.compile(r"training (\d+) episodes")
+# main.py episode lines, in two shapes:
+#   curriculum rung:  "Episode 12 done | reward=29.40 | GRADE: GOOD | ..."
+#   world / rehearse: "Episode 12 done | WORLD | reward= +29.40 | eff ..."
+# The middle "| WORLD |" segment is optional; capture it as the stage when present.
+RE_ISLAND = re.compile(
+    r"^Episode (\d+) done \|(?:\s*([^|]+?)\s*\|)?\s*reward=\s*([-+]?[\d.]+)")
 RE_ISLANDCAP = re.compile(r"episode cap: (\d+) ticks")
 
 BG = "#1b1d22"
@@ -178,11 +185,19 @@ class Watch:
                 self.episodes = int(m.group(1))
                 self.detail = "reward %s, success %s%%" % (m.group(2), m.group(3))
                 continue
+            m = RE_TOTAL.search(line)
+            if m:
+                self.cap = int(m.group(1))
+                continue
             m = RE_ISLAND.match(line)
             if m:
                 self.episodes = int(m.group(1))
-                self.detail = "reward %s" % m.group(2)
-                self.stage = self.stage or "the island"
+                where = (m.group(2) or "").strip()
+                self.detail = "reward %s" % m.group(3)
+                if where:
+                    self.stage = where            # "WORLD", "rehearse …"
+                elif not self.stage:
+                    self.stage = "the island"
                 continue
             m = RE_ISLANDCAP.search(line)
             if m:
