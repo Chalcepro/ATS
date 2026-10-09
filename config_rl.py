@@ -153,7 +153,14 @@ STATE_SIZE = IDX_MASK_START + ACTION_SIZE
 ROUTE_HINT_STAGES = ('nursery', 'corridors', 'corridors7', 'avoid')
 
 # Hazard & Ocean constants
-OCEAN_SHARK_TICKS = 3     # ticks before lethal shark arrives
+OCEAN_SHARK_TICKS = 3     # grace ticks in the ocean before the shark strikes
+
+# 2026-10-09 (Chalce): the sea should be survivable-but-brutal, not a one-shot.
+# True = past the grace ticks a shark deals SEA_DAMAGE_PER_TICK every tick, but
+# the agent can retreat to land and live - so it can finally LEARN the boundary
+# ("test my limit, then stay off the water"). False = the old teleport/drown.
+SEA_SURVIVABLE = True
+SEA_DAMAGE_PER_TICK = 25  # heavy: ~4 ticks in deep water from full HP = death
 
 # The world's shape. Bridges: islands close, one 1-tile bridge per connected
 # pair, a guard standing on each - see island_gen.BRIDGES. False puts back the

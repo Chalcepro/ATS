@@ -233,8 +233,25 @@ class ATSEnvironment:
             self.agent.log_event(f"★ Discovered New Island: {name}! (+50)")
             self.rewards.on_island_discovery(island_id)
 
-        # Check ocean shark kill condition (3-second ocean immersion countdown)
-        if self.agent.ocean_ticks >= config_rl.OCEAN_SHARK_TICKS:
+        # Sea danger. Two modes, behind config_rl.SEA_SURVIVABLE:
+        #   True  (new): once past the grace ticks, a shark deals HEAVY damage
+        #                every tick, but it is ESCAPABLE - retreat to land and
+        #                you live. This gives the agent a gradient to learn a
+        #                boundary from, instead of a sudden teleport/one-shot it
+        #                can never learn against.
+        #   False (old): the original teleport-to-spawn / drown behaviour.
+        sea_over = self.agent.ocean_ticks >= config_rl.OCEAN_SHARK_TICKS
+        if sea_over and getattr(config_rl, "SEA_SURVIVABLE", True):
+            self.agent.health -= config_rl.SEA_DAMAGE_PER_TICK
+            self.agent.last_damage_cause = "a shark"
+            self.world.spawn_shark(self.agent.x, self.agent.y)
+            self.rewards.on_ocean_death()       # per-bite penalty, not a cliff
+            self.agent.log_event(
+                "A shark tears in! -%d HP - get to land!"
+                % config_rl.SEA_DAMAGE_PER_TICK)
+            # Death is handled by the health<=0 check below, in this same tick.
+
+        if sea_over and not getattr(config_rl, "SEA_SURVIVABLE", True):
             self.rewards.on_ocean_death()  # -500 punishment
             self.world.spawn_shark(self.agent.x, self.agent.y)
             if self.agent.health >= 20:
@@ -256,6 +273,8 @@ class ATSEnvironment:
                 self.memory.decay()
 
         # Death / timeout
+        if self.done:
+            pass
         elif self.agent.health <= 0:
             self.rewards.on_death()
             # Say what actually killed it. This line read "Agent fell in
