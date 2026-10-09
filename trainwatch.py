@@ -95,9 +95,11 @@ def alive(pid):
     if not pid:
         return False
     try:
-        out = subprocess.run(["tasklist", "/FI", "PID eq %d" % pid],
-                             capture_output=True, text=True, timeout=10).stdout
-        return str(pid) in out
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "if (Get-Process -Id %d -ErrorAction SilentlyContinue) {'Y'} else {'N'}" % pid],
+            capture_output=True, text=True, timeout=10).stdout
+        return "Y" in out
     except Exception:
         return True          # cannot tell: assume still going, do not cry done
 
@@ -120,6 +122,7 @@ class Watch:
         self.stage = ""
         self.detail = ""
         self.announced = False
+        self.ever_ran = False     # becomes True once we actually see it running
 
         root.title("ATS training")
         root.configure(bg=BG)
@@ -217,7 +220,6 @@ class Watch:
     # ---- the one update --------------------------------------------------
     def tick(self):
         self.scan()
-        running = alive(self.pid) if self.pid else False
 
         if not self.pid and not self.done:
             # Maybe it started after this window did.
@@ -228,7 +230,19 @@ class Watch:
                 self.log = newest_log() or self.log
                 self.last_size = 0
 
-        if self.done or (self.pid and not running):
+        # Check liveness AFTER (re)finding the pid, or the tick that first
+        # discovers the trainer would see running=False and wrongly "finish".
+        running = alive(self.pid) if self.pid else False
+        if running:
+            self.ever_ran = True
+
+        # Only call it finished once we've genuinely seen it run (or a real
+        # completion token arrived with real progress). This stops the
+        # "Training finished - 0 episodes" false alarm when the window opens a
+        # beat before the trainer is visible, or alive() flakes once.
+        finished = (self.done and self.episodes > 0) \
+            or (self.ever_ran and self.pid and not running)
+        if finished:
             self.finish()
             return
 
