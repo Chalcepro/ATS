@@ -149,10 +149,26 @@ class ContinualLearner:
         # Recurrent states, zero-filled for any transition collected by a
         # caller that does not thread them (so an un-updated loop degrades
         # to the memoryless behaviour rather than crashing).
+        #
+        # Fit every stored hidden to the CURRENT hidden width. When the mind
+        # grows mid-rollout (256 -> 512), transitions collected before the
+        # growth carry a 256-wide hidden while the policy now expects 512;
+        # stacking the two raw raised "expected sequence of length 256 ...
+        # (got 512)". Pad short ones with zeros (exactly how the policy pads
+        # its own carried hidden on expansion) and truncate long ones.
         h = self.policy.hidden_size
-        hxs = torch.tensor(
-            [t.hidden if t.hidden is not None else [0.0] * h for t in transitions],
-            dtype=torch.float32)
+
+        def _fit(vec):
+            if vec is None:
+                return [0.0] * h
+            n = len(vec)
+            if n == h:
+                return list(vec)
+            if n < h:
+                return list(vec) + [0.0] * (h - n)
+            return list(vec[:h])
+
+        hxs = torch.tensor([_fit(t.hidden) for t in transitions], dtype=torch.float32)
 
         # --- GAE(lambda): episode-boundary aware, bootstrapped at the buffer edge ---
         # `mask` zeroes both the bootstrap and the lambda-return propagation across
