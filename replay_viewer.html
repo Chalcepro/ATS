@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ATS Replay</title>
+<style>
+  :root{
+    --bg:#15171c; --panel:#1e2128; --ink:#e6e8ec; --dim:#8b93a1; --accent:#5b8dd6;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 "Segoe UI",system-ui,sans-serif}
+  header{padding:12px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;border-bottom:1px solid #000}
+  h1{font-size:15px;margin:0;font-weight:700}
+  .muted{color:var(--dim)}
+  input[type=file]{color:var(--dim)}
+  main{display:flex;gap:16px;padding:16px;flex-wrap:wrap}
+  #stage{background:var(--panel);border-radius:10px;padding:10px}
+  canvas{background:#0c0e12;border-radius:6px;display:block;image-rendering:pixelated}
+  #side{flex:1;min-width:240px;max-width:360px;display:flex;flex-direction:column;gap:12px}
+  .card{background:var(--panel);border-radius:10px;padding:12px}
+  .row{display:flex;justify-content:space-between;margin:3px 0}
+  .bar{height:8px;border-radius:4px;background:#2a2d34;overflow:hidden;margin-top:2px}
+  .bar > span{display:block;height:100%}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  button{background:#2a2d34;color:var(--ink);border:0;border-radius:6px;padding:8px 12px;cursor:pointer;font:inherit}
+  button:hover{background:#343843}
+  input[type=range]{flex:1;min-width:140px}
+  .legend{display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:12px}
+  .sw{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+  .ev{font-size:12px;color:var(--dim);max-height:120px;overflow:auto}
+  .big{font-size:20px;font-weight:700}
+</style>
+</head>
+<body>
+<header>
+  <h1>ATS Replay</h1>
+  <input type="file" id="file" accept=".json">
+  <span class="muted" id="meta">Load a replay from <code>replays/&lt;date&gt;/*.json</code> (or drag one onto the window)</span>
+</header>
+<main>
+  <div id="stage"><canvas id="cv" width="640" height="640"></canvas></div>
+  <div id="side">
+    <div class="card">
+      <div class="controls">
+        <button id="play">▶ Play</button>
+        <button id="back">⏮</button>
+        <button id="fwd">⏭</button>
+        <label class="muted">speed
+          <select id="speed">
+            <option value="0.25">0.25x</option>
+            <option value="0.5">0.5x</option>
+            <option value="1" selected>1x</option>
+            <option value="2">2x</option>
+            <option value="4">4x</option>
+            <option value="8">8x</option>
+          </select>
+        </label>
+      </div>
+      <div style="margin-top:8px" class="controls">
+        <input type="range" id="scrub" min="0" max="0" value="0">
+        <span class="muted" id="frameno">0 / 0</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row"><span class="muted">tick</span><span class="big" id="tick">—</span></div>
+      <div class="row"><span class="muted">action</span><span id="action">—</span></div>
+      <div class="row"><span class="muted">reward (tick)</span><span id="reward">—</span></div>
+      <div class="row"><span class="muted">health</span><span id="hpv">—</span></div>
+      <div class="bar"><span id="hp" style="background:#5fbf7f"></span></div>
+      <div class="row"><span class="muted">hunger</span><span id="hunv">—</span></div>
+      <div class="bar"><span id="hun" style="background:#d6a15b"></span></div>
+      <div class="row"><span class="muted">stamina</span><span id="stav">—</span></div>
+      <div class="bar"><span id="sta" style="background:#5b8dd6"></span></div>
+    </div>
+    <div class="card">
+      <div class="muted" style="margin-bottom:4px">events</div>
+      <div class="ev" id="events">—</div>
+    </div>
+    <div class="card">
+      <div class="muted" style="margin-bottom:6px">tiles</div>
+      <div class="legend" id="legend"></div>
+    </div>
+  </div>
+</main>
+<script>
+const TILES = {
+  0:["ground","#2e3a2a"], 1:["wall","#4a4a52"], 2:["hostile","#c0392b"],
+  3:["object","#b9772e"], 4:["npc","#3f7fd6"], 5:["pond","#3a7fb0"],
+  6:["lava","#e05a2b"], 7:["gate","#8e44ad"], 8:["ocean","#17314f"],
+  9:["acid","#7fbf3f"], 10:["ice","#bfe6ee"], 11:["ash","#6b6b6b"],
+  12:["spore","#b05bd6"], 13:["bridge","#9c7a4a"]
+};
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+let data=null, frames=[], i=0, playing=false, timer=null, bounds=null, view=5;
+
+function legend(){
+  const el=document.getElementById("legend"); el.innerHTML="";
+  for(const k in TILES){ const [n,c]=TILES[k];
+    el.insertAdjacentHTML("beforeend",`<div><span class="sw" style="background:${c}"></span>${n}</div>`);
+  }
+}
+legend();
+
+function computeBounds(){
+  let minx=1e9,maxx=-1e9,miny=1e9,maxy=-1e9;
+  for(const f of frames){
+    minx=Math.min(minx,f.x-view); maxx=Math.max(maxx,f.x+view);
+    miny=Math.min(miny,f.y-view); maxy=Math.max(maxy,f.y+view);
+  }
+  bounds={minx,maxx,miny,maxy,cols:maxx-minx+1,rows:maxy-miny+1};
+}
+
+// Reveal the tile patches for frames 0..idx into a world map {key: type}.
+function revealed(idx){
+  const m=new Map();
+  for(let k=0;k<=idx;k++){
+    const f=frames[k], g=f.tiles; if(!g) continue;
+    const n=g.length, half=(n-1)/2;
+    for(let r=0;r<n;r++) for(let c=0;c<g[r].length;c++){
+      const wx=f.x+(c-half), wy=f.y+(r-half);
+      m.set(wx+","+wy, g[r][c]);
+    }
+  }
+  return m;
+}
+
+function draw(){
+  if(!frames.length){return;}
+  const f=frames[i];
+  const cell=Math.max(2, Math.floor(Math.min(cv.width/bounds.cols, cv.height/bounds.rows)));
+  const W=bounds.cols*cell, H=bounds.rows*cell;
+  const ox=Math.floor((cv.width-W)/2), oy=Math.floor((cv.height-H)/2);
+  ctx.fillStyle="#0c0e12"; ctx.fillRect(0,0,cv.width,cv.height);
+  // revealed map
+  const m=revealed(i);
+  for(const [key,t] of m){
+    const [wx,wy]=key.split(",").map(Number);
+    const px=ox+(wx-bounds.minx)*cell, py=oy+(wy-bounds.miny)*cell;
+    ctx.fillStyle=(TILES[t]&&TILES[t][1])||"#222"; ctx.fillRect(px,py,cell,cell);
+  }
+  // trail
+  ctx.strokeStyle="rgba(255,235,120,.55)"; ctx.lineWidth=Math.max(1,cell/4); ctx.beginPath();
+  for(let k=0;k<=i;k++){ const fk=frames[k];
+    const px=ox+(fk.x-bounds.minx)*cell+cell/2, py=oy+(fk.y-bounds.miny)*cell+cell/2;
+    k===0?ctx.moveTo(px,py):ctx.lineTo(px,py);
+  }
+  ctx.stroke();
+  // entities (best-effort: list of {x,y} or [x,y,...])
+  if(Array.isArray(f.ents)) for(const e of f.ents){
+    let ex,ey; if(Array.isArray(e)){ex=e[0];ey=e[1];} else if(e&&typeof e==="object"){ex=e.x;ey=e.y;}
+    if(ex==null||ey==null) continue;
+    const px=ox+(ex-bounds.minx)*cell, py=oy+(ey-bounds.miny)*cell;
+    ctx.fillStyle="#ff5555"; ctx.fillRect(px+cell*0.2,py+cell*0.2,cell*0.6,cell*0.6);
+  }
+  // agent + facing
+  const ax=ox+(f.x-bounds.minx)*cell+cell/2, ay=oy+(f.y-bounds.miny)*cell+cell/2;
+  ctx.fillStyle="#ffffff"; ctx.beginPath(); ctx.arc(ax,ay,Math.max(2,cell*0.42),0,7); ctx.fill();
+  const fx=(f.f&&f.f[0])||0, fy=(f.f&&f.f[1])||0;
+  if(fx||fy){ ctx.strokeStyle="#111"; ctx.lineWidth=Math.max(1,cell/5); ctx.beginPath();
+    ctx.moveTo(ax,ay); ctx.lineTo(ax+fx*cell*0.5, ay+fy*cell*0.5); ctx.stroke(); }
+  hud(f);
+}
+
+function bar(id,v){ document.getElementById(id).style.width=Math.max(0,Math.min(100,v))+"%"; }
+function hud(f){
+  document.getElementById("tick").textContent=f.t;
+  document.getElementById("action").textContent=f.a||"—";
+  document.getElementById("reward").textContent=(f.r>=0?"+":"")+ (f.r!=null?f.r.toFixed(2):"—");
+  document.getElementById("hpv").textContent=Math.round(f.hp); bar("hp",f.hp);
+  document.getElementById("hunv").textContent=Math.round(f.hun); bar("hun",f.hun);
+  document.getElementById("stav").textContent=Math.round(f.sta); bar("sta",f.sta);
+  document.getElementById("events").innerHTML=(f.ev&&f.ev.length)?f.ev.map(e=>"• "+e).join("<br>"):"—";
+  document.getElementById("scrub").value=i;
+  document.getElementById("frameno").textContent=(i+1)+" / "+frames.length;
+}
+
+function load(obj){
+  data=obj; frames=obj.frames||[]; i=0; view=obj.view||5;
+  if(!frames.length){ document.getElementById("meta").textContent="No frames in this file."; return; }
+  computeBounds();
+  document.getElementById("scrub").max=frames.length-1;
+  document.getElementById("meta").innerHTML=
+    `ep <b>${obj.episode??"?"}</b> · ${obj.where??""} · <b>${obj.outcome??""}</b>`+
+    (obj.cause?` · cause: ${obj.cause}`:"")+` · ${frames.length} frames`;
+  draw();
+}
+
+function step(d){ i=Math.max(0,Math.min(frames.length-1,i+d)); draw(); }
+function setPlay(p){
+  playing=p; document.getElementById("play").textContent=p?"⏸ Pause":"▶ Play";
+  if(timer){clearInterval(timer);timer=null;}
+  if(p){ const sp=parseFloat(document.getElementById("speed").value);
+    timer=setInterval(()=>{ if(i>=frames.length-1){setPlay(false);return;} step(1); }, 120/sp); }
+}
+document.getElementById("play").onclick=()=>setPlay(!playing);
+document.getElementById("fwd").onclick=()=>{setPlay(false);step(1);};
+document.getElementById("back").onclick=()=>{setPlay(false);step(-1);};
+document.getElementById("scrub").oninput=e=>{setPlay(false); i=+e.target.value; draw();};
+document.getElementById("speed").onchange=()=>{ if(playing) setPlay(true); };
+document.getElementById("file").onchange=e=>{
+  const f=e.target.files[0]; if(!f) return;
+  f.text().then(t=>{ try{ load(JSON.parse(t)); }catch(err){ document.getElementById("meta").textContent="Bad JSON: "+err; } });
+};
+window.addEventListener("dragover",e=>e.preventDefault());
+window.addEventListener("drop",e=>{ e.preventDefault(); const f=e.dataTransfer.files[0];
+  if(f) f.text().then(t=>{ try{ load(JSON.parse(t)); }catch(err){ document.getElementById("meta").textContent="Bad JSON: "+err; } }); });
+</script>
+</body>
+</html>
