@@ -12,6 +12,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
+import config_rl
+
 # ---------------------------------------------------------------------------
 # Island type constants
 # ---------------------------------------------------------------------------
@@ -134,7 +136,12 @@ def generate_island_shape(
     """
     cx, cy = center
     r_noise = _hash2d(island_id * 17, seed, 0xABCDEF)
-    radius  = int(30 + r_noise * 30)      # 30..60 tiles
+    # BIG_LAND scales islands up so there's room to live without the coast
+    # always a few steps away (the agent kept stumbling into the sea). The
+    # land threshold below is normalised by `radius`, so the whole island -
+    # and the distance from the spawn to the coast - scales with this.
+    scale   = getattr(config_rl, "LAND_SCALE", 2.0) if getattr(config_rl, "BIG_LAND", True) else 1.0
+    radius  = int((30 + r_noise * 30) * scale)   # 60..120 tiles at scale 2
 
     land_tiles: Set[Tuple[int, int]] = set()
     for dy in range(-radius - 5, radius + 6):

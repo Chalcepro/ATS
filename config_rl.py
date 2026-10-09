@@ -162,6 +162,14 @@ OCEAN_SHARK_TICKS = 3     # grace ticks in the ocean before the shark strikes
 SEA_SURVIVABLE = True
 SEA_DAMAGE_PER_TICK = 25  # heavy: ~4 ticks in deep water from full HP = death
 
+# 2026-10-09 (Chalce): bigger land so the agent has room to live without the
+# coast always a few steps away (at ep 400 it still drowned 99% of the time -
+# the sea was just too close). Scales island radius; islands sit ~250 tiles
+# apart with bridges off, so no overlap. State is agent-centric and unchanged,
+# so the SAME brain keeps loading - no fresh run forced. False = old size.
+BIG_LAND = True
+LAND_SCALE = 2.0
+
 # The world's shape. Bridges: islands close, one 1-tile bridge per connected
 # pair, a guard standing on each - see island_gen.BRIDGES. False puts back the
 # old layout of islands ~250 tiles apart that nothing could reach.
