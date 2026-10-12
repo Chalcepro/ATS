@@ -90,6 +90,14 @@ Two principles:
 | **S2** | Prediction: a small head on the brain that guesses the next frame's features and the next sound's features | Its guesses get better over time on footage it hasn't seen |
 | **S3** | Imitation on the island first: record Bob playing a room, train the brain to copy him | Copies Bob's route through a room it's never been trained in |
 
+## Phase 2c: A richer world, borrowed from WorldBox (after hearing)
+
+Chalce, 2026-10-12: WorldBox already has the world ATS needs. Don't train inside
+it (too slow for RL, see `docs/research/worldbox-notes.md`). Borrow its
+systems one at a time into the fast terminal world instead: biomes with
+danger, creatures, needs, traits, groups/villages, disasters. Order is decided
+with Chalce, each with its flow agreed first.
+
 ## Phase 3 — Conscience exams
 
 The charter becomes **scenarios in the world** the model must pass before any
@@ -112,6 +120,10 @@ phase after this one. They're built like rooms on the ladder:
 Gate: passes all seven, every time, on seeds it hasn't seen. The island is
 only the rehearsal. The charter is for real life, and the hard guard from
 CHARTER.md travels into the body with the brain.
+
+Exam room idea (parked, 2026-10-12): a WorldBox mod as a **visit world**
+where the trained brain lives among people and Chalce walks in first person.
+For watching and meeting it, not for training.
 
 ## Side track — the witness log (can start any time)
 
