@@ -18,20 +18,55 @@ entries: Phase 2c and Phase 3 below.
   [Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/changelog/3080294469?p=1)).
   Some Steam comments call it unsafe. Unverified; check the source before installing.
 
-## Systems to borrow, one at a time, into the fast terminal world
-From general knowledge of the game. **Not yet checked against a wiki** (the
-fandom wiki refused the fetch). Verify before using any as a spec.
-- Terrain types / biomes with different danger and food (ATS has land, sea, bridges).
-- Creatures: prey, predators, neutral; ATS has sharks.
-- Units with needs and life stages (hunger, age, birth, death).
-- Traits that change behaviour (brave, fast, weak...), as per-agent variation.
-- Groups: villages / kingdoms that form, trade and fight.
-  → the charter's "help who you can" and "judge threat by actions toward innocents"
-  need other people in the world first.
-- Disasters and weather as world events.
+## How WorldBox is built (from real mod source code, 2026-10-12)
 
-Order to add them: decide with Chalce, after Phase 2 (hearing). Each one gets its
-user flow first (see the hex BACKLOG rule; the same process applies here).
+The fandom wiki blocks automated reading, so this comes from mods on GitHub
+that plug into the game's own classes (the "source information" route):
+[WorldBoxOpenMods/ModExample](https://github.com/WorldBoxOpenMods/ModExample),
+[PantheonsGodMod](https://github.com/MasonScarbro/PantheonsGodMod),
+[Cultiway-Reborn](https://github.com/inmny/Cultiway-Reborn), and
+[Wikipedia](https://en.wikipedia.org/wiki/WorldBox) for the overview.
+
+1. **Everything is a data asset in a library.** `AssetManager.actor_library`,
+   `.traits`, `.kingdoms`, `.biome_library`, `.job_actor`, `.tasks_actor`. A
+   creature is an `ActorAsset`: `base_stats` (lifespan, health, damage, speed,
+   attack speed, mass, accuracy, range...) plus many yes/no flags (`flying`,
+   `die_in_lava`, `damaged_by_ocean`, `use_items`, `can_talk_with`, `has_soul`,
+   `force_land_creature`...). New creatures are made by **cloning** an existing
+   one and changing a few values.
+2. **Traits modify stats and add behaviour.** An `ActorTrait` has `base_stats`
+   changes (e.g. +100 health), a `birth` chance (how often a newborn has it), a
+   group, and an optional special action that runs during play.
+3. **Relationships are tags.** A `KingdomAsset` has tags and *friendly tags*
+   ("friendly with dragons, undead"). Who fights whom comes from tags, not
+   hard-coded pairs. Wild creatures belong to "wild kingdoms" too.
+4. **Behaviour = job → tasks → behaviours.** An `ActorJob` is an ordered list
+   of tasks. A `BehaviourTaskActor` is a chain of small reusable steps
+   (`BehGoToTileTarget`, custom ones like "flee if in danger"), each returning a
+   result (continue / stop / restart). That's how thousands of units live
+   their own lives cheaply.
+5. **Biomes are alive.** A `BiomeAsset` has high/low top tiles, a spawn list,
+   `grow_vegetation_auto`, `spread_biome` (biomes push into neighbours), and a
+   map-generation weight.
+6. **Civilisation layer** (overview): humans, orcs, elves, dwarves found
+   kingdoms → cities; alliances, wars, rebellions, clans, cultures, religions,
+   languages, families; **ages** that change biomes and creatures.
+
+## What each means for ATS
+
+- (1)+(2) → ATS's `assets/entities.json` is already halfway there. Give
+  creatures **stats + flags + traits** instead of special-cased code, so a new
+  creature is data, not a code change.
+- (3) → replace "hostile per type" with **tags**: predator/prey, herd,
+  group membership. Threat then comes from what a being *does*, which is
+  exactly what the charter asks the model to judge.
+- (4) → this is the big one. ATS creatures act only toward the agent. A
+  small **job/task/step** system lets every being live its own life (eat,
+  rest, wander home, herd, hunt, flee) and costs little per tick.
+- (5) → regrowing food and slowly spreading biomes make the world change
+  over a run, so memory and planning pay off.
+- (6) → people, families and groups come **last**, after beings can live
+  on their own. Without them, "help who you can" has no one to help.
 
 ## The "visit" world (later, Phase 3)
 Once the brain is trained, a WorldBox mod feeds it what's around one unit;

@@ -94,9 +94,8 @@ Two principles:
 
 Chalce, 2026-10-12: WorldBox already has the world ATS needs. Don't train inside
 it (too slow for RL, see `docs/research/worldbox-notes.md`). Borrow its
-systems one at a time into the fast terminal world instead: biomes with
-danger, creatures, needs, traits, groups/villages, disasters. Order is decided
-with Chalce, each with its flow agreed first.
+systems one at a time into the fast terminal world instead. The ordered list
+is `docs/WORLD-BACKLOG.md` (W0 study + audit done 2026-10-12).
 
 ## Phase 3 — Conscience exams
 
