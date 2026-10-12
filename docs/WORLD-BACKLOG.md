@@ -58,14 +58,19 @@ storms.
 
 ---
 
-## Open questions for Chalce
-1. **Hearing vs world first?** The ROADMAP says hearing is next. Suggestion:
-   W1–W3 first (they create things worth hearing), then hearing goes into the
-   W4 senses batch, so the brain migrates once instead of twice.
-2. **Is the agent just another being?** In W2, predators hunt *prey*, and the
-   agent counts as prey to wolves and sharks the way a sheep does, rather
-   than every creature targeting the agent. OK?
-3. **Keep the trained brain or start fresh?** Once creatures behave differently,
-   some of what the brain learned (e.g. "everything near me attacks") stops
-   being true. Migrate the current brain (backed up in Chalcepro/ATS-brain), or
-   train a new one on the new world and keep the old one as a reference?
+## Decisions (Chalce, 2026-10-12)
+- **All of W1–W6, incrementally**, in order.
+- **Senses come with the world, not after:** hearing **and** wider sight go into
+  the W4 batch (one brain migration). Sight size is Claude's call: **15×15
+  patch (radius 7, up from 7×7)** and a **21×21 remembered map (radius 10, up
+  from 11×11)**. Measure ticks/sec and RAM at W4 and shrink if training slows badly.
+- **The agent is neither "always hunted" nor "just prey".** Each creature has its
+  own reason: some hunt it, some only fight back when attacked, some
+  **defend their space** and charge if it comes too close but leave it alone
+  at a distance (like Valheim's boars). Built as per-creature tags/traits in W1–W2.
+- **Keep the trained brain** and migrate it. The point is that it copes with a
+  changing world instead of collapsing back to zero.
+
+## Next session: start W1
+Write W1's flow (entities.json stats/flags/traits/tags shape + the "same seed,
+same replay" proof), get Chalce's OK, then build.
