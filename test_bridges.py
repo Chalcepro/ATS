@@ -79,7 +79,7 @@ for seed in (1, 7, 1337, 258598698, 388373227):
               [w._tile(*p).tile_type for p in sides], all(w._tile(*p).tile_type == W.TILE_OCEAN for p in sides))
         g = [e for e in w.entities if e.guard and (e.x, e.y) == br["guard"]]
         check("bridge %s: a guard stands on it" % tag, g[0].entity_id if g else None,
-              bool(g) and g[0].data.get("type", "hostile") == "hostile")
+              bool(g) and g[0].spec.has("hostile"))
         check("bridge %s: the guard blocks the way" % tag, w.in_bounds_passable(*br["guard"]),
               not w.in_bounds_passable(*br["guard"]))
         check("bridge %s: tiles say where they lead" % tag, w.bridge_target(*tiles[0]),

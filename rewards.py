@@ -20,28 +20,7 @@ R_PICKUP_DISCOVERY = 1.5    # first time picking up any item type
 R_PICKUP_CONSUMABLE = 1.0   # consumable already discovered
 R_PICKUP_DEFAULT = 0.5      # any other item
 
-# Kills — indexed by entity ID
-_KILL_REWARDS = {
-    "E001": 2.0,   # Weak Slime
-    "E002": 3.0,   # Zombie
-    "E003": 3.5,   # Skeleton
-    "E004": 4.0,   # Creeper
-    "E005": 2.5,   # Spider
-    "E006": 3.0,   # Husk
-    "E007": 2.5,   # Fire Imp
-    "E008": 3.0,   # Cave Spider
-    "E009": 10.0,  # Ancient Golem (boss)
-    "E010": 3.5,   # Witch
-    "E011": 2.5,   # Wolf
-    "E012": 4.0,   # Yeti
-    "E013": 0.5,   # Bat (passive)
-    "E015": 1.0,   # Deer (passive)
-    "E016": 1.0,   # Rabbit (passive)
-    "E017": 1.0,   # Sheep (passive)
-    "E020": 5.0,   # Void Echo (rare)
-    "E023": 8.0,   # Toxic Toad
-    "E025": 6.0,   # Frost Wraith
-}
+# Kills: each creature's kill reward is in assets/entities.json ("reward").
 R_KILL_DEFAULT = 2.0
 
 # Exploration & Island Progression
@@ -390,7 +369,9 @@ class RewardEngine:
     def on_kill(self, entity_id: str, island_tier: int = 0) -> float:
         if not self.rules.get("kill_reward", True):
             return 0.0
-        base_reward = _KILL_REWARDS.get(entity_id, R_KILL_DEFAULT)
+        from item_ids import REGISTRY
+        spec = REGISTRY.get_entity(entity_id)
+        base_reward = spec.kill_reward if spec else R_KILL_DEFAULT
         tier_mult = R_KILL_TIER_SCALE[min(max(island_tier, 0), len(R_KILL_TIER_SCALE) - 1)]
         reward = base_reward * tier_mult
         self.progression_points += 1.0 * tier_mult

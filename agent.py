@@ -75,7 +75,6 @@ class Agent:
 
         self.sprint = False
         self.has_sword = True if self.inventory[0]["id"] in ("0002", "0013", "0033", "0034") else False
-        self.slime_killed = False
 
         self.status = {
             "poisoned": 0,
@@ -285,8 +284,8 @@ class Agent:
 
         # Interact — NPC, chest, pond, etc. within 3×3 (Chebyshev ≤ 1)
         if ent_cheb and ent_cheb_dist <= 1:
-            ent_data = ent_cheb.data
-            if ent_data.get("type") in ("neutral", "passive"):
+            ent_data = ent_cheb.spec
+            if ent_data.has("neutral") or ent_data.has("passive"):
                 mask[config_rl.ACT_INTERACT] = 1
 
         # Use slot i directly, with nothing to open first. Unmasked for any
@@ -480,9 +479,7 @@ class Agent:
                     self._check_level_up(rewards)
 
                     # Boss progression validator check
-                    # Bosses: Ancient Golem and Lava Golem. Was E009/E023/E025,
-                    # left over from when E023/E025 meant other creatures.
-                    if target_id in ("E009", "E022"):
+                    if REGISTRY.get_entity(target_id).boss:
                         self.unlock_capability("CAP_BOSS_SLAYER", rewards)
                         rewards.on_boss_defeated(target_id)
                         self.log_event(f"★ Progression Validator Passed! Defeated Boss {entity_name(target_id)}!")
@@ -807,10 +804,10 @@ class Agent:
         ent_state = 0
         ent_type = 0
         if ent:
-            ent_type = int(ent.entity_id.replace("E", "")) if ent.entity_id.startswith("E") and ent.entity_id[1:].isdigit() else 0
+            ent_type = ent.spec.brain_id
             ent_state = ent.state
             if ent.state == 2:
-                incoming = int(ent.data.get("damage", 0))
+                incoming = ent.spec.damage
 
         cur_tile = world._tile(self.x, self.y)
         cur_island = cur_tile.island_id if cur_tile else -1

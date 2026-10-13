@@ -1112,7 +1112,7 @@ class TerminalGUI:
                         cs, cc = "??", DIM
                     elif ent:
                         cs = entity_name(ent.entity_id)[:5]
-                        cc = RED if ent.data.get("type") == "hostile" else AMBER
+                        cc = RED if ent.spec.has("hostile") else AMBER
                     elif t.object_id:
                         raw = item_name(t.object_id)
                         # "Sword" before "Stone", because next() takes the first key that

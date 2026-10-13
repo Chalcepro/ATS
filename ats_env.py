@@ -156,9 +156,7 @@ class ATSEnvironment:
             # every one of these used to say "the Void", which hid that
             # sharks were the ones doing it.
             if dmg >= 9999:
-                killer = "the Void" if ent.entity_id == "E014" else (
-                    "a shark" if ent.data.get("ocean_spawn") or ent.data.get("type") == "ocean"
-                    else str(ent.data.get("name", ent.entity_id)))
+                killer = ent.spec.killer_name
                 self.agent.health = 0
                 self.agent.last_damage_cause = killer
                 self.death_cause = killer
@@ -170,7 +168,7 @@ class ATSEnvironment:
 
             # Creeper AoE — check radius
             if ent.exploded:
-                aoe = int(ent.data.get("aoe_radius", 2))
+                aoe = ent.spec.hostility_args["radius"]
                 dist = abs(ent.x - self.agent.x) + abs(ent.y - self.agent.y)
                 if dist <= aoe:
                     self.agent.health -= dmg
@@ -184,14 +182,8 @@ class ATSEnvironment:
                 self.agent.last_damage_cause = entity_name(ent.entity_id)
                 self.agent.log_event(f"Attacked by {entity_name(ent.entity_id)} (-{dmg} HP)")
                 # Poison / burn status effects from entity
-                if ent.data.get("poison"):
-                    self.agent.status["poisoned"] = max(self.agent.status.get("poisoned", 0), 5)
-                if ent.data.get("burn"):
-                    self.agent.status["burning"] = max(self.agent.status.get("burning", 0), 3)
-                if ent.data.get("slow"):
-                    self.agent.status["slowed"] = max(self.agent.status.get("slowed", 0), 4)
-                if ent.data.get("blindness"):
-                    self.agent.status["blinded"] = max(self.agent.status.get("blinded", 0), 3)
+                for status, ticks in ent.spec.on_hit.items():
+                    self.agent.status[status] = max(self.agent.status.get(status, 0), ticks)
 
         # --- World / progression -------------------------------------------
         self.world.mark_explored(
@@ -328,8 +320,6 @@ class ATSEnvironment:
         cur_tier = self.world.get_island_tier_at(self.agent.x, self.agent.y)
         for killed_id, drop_id, kill_x, kill_y in pending:
             self.rewards.on_kill(killed_id, island_tier=max(0, cur_tier))
-            if killed_id == "E001":
-                self.agent.slime_killed = True
             if drop_id:
                 self.world.spawn_drop(kill_x, kill_y, drop_id)
             self.agent.xp += 3

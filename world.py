@@ -254,8 +254,8 @@ class World:
         """A fighter from the island the bridge leads to - the first hostile
         in its native pool, so a harder island has a harder guard."""
         for eid in _ISLAND_ENTITY_POOLS.get(island_id, []):
-            spec = REGISTRY.get_entity(eid) or {}
-            if spec.get("type", "hostile") == "hostile" and not spec.get("unkillable"):
+            spec = REGISTRY.get_entity(eid)
+            if spec and spec.has("hostile") and not spec.has("unkillable"):
                 return eid
         return "E001"
 
@@ -366,7 +366,7 @@ class World:
         # Block movement through alive hostile entities
         for ent in self.entities:
             if ent.alive and ent.x == x and ent.y == y:
-                if ent.data.get("type") == "hostile":
+                if ent.spec.has("hostile"):
                     return False
         return True
 
@@ -512,7 +512,7 @@ class World:
                   attacker_pos=None, facing_dx: int = 0, facing_dy: int = -1):
         fx, fy = x + facing_dx, y + facing_dy
         ent_facing = self.entity_at(fx, fy)
-        if ent_facing and ent_facing.alive and ent_facing.data.get("type") != "ocean":
+        if ent_facing and ent_facing.alive and not ent_facing.spec.has("ocean"):
             ent_facing.take_damage(damage, attacker_pos=attacker_pos)
             if not ent_facing.alive:
                 return ent_facing.entity_id, ent_facing.drop_item_id(), False
@@ -520,7 +520,7 @@ class World:
 
         for ent in self.entities:
             if ent.alive and max(abs(ent.x - x), abs(ent.y - y)) <= 1:
-                if ent.data.get("type") == "ocean":
+                if ent.spec.has("ocean"):
                     continue
                 ent.take_damage(damage, attacker_pos=attacker_pos)
                 if not ent.alive:

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import config_rl
+from creature_spec import parse_all
 
 
 class ComponentRegistry:
@@ -15,7 +16,7 @@ class ComponentRegistry:
 
     def load_all(self):
         self.items = self._load_json("items.json")
-        self.entities = self._load_json("entities.json")
+        self.entities = parse_all(self._load_json("entities.json"))
         self._validate()
 
     def _load_json(self, filename):
@@ -31,11 +32,6 @@ class ComponentRegistry:
             missing = required - set(item.keys())
             if missing:
                 raise ValueError(f"Item {item_id} missing fields: {sorted(missing)}")
-        for entity_id, entity in self.entities.items():
-            required = {"name", "type", "hp", "damage"}
-            missing = required - set(entity.keys())
-            if missing:
-                raise ValueError(f"Entity {entity_id} missing fields: {sorted(missing)}")
 
     def get_item(self, item_id):
         return self.items.get(str(item_id))
@@ -49,4 +45,4 @@ class ComponentRegistry:
 
     def entity_name(self, entity_id):
         entity = self.get_entity(entity_id)
-        return entity["name"] if entity else "Unknown"
+        return entity.name if entity else "Unknown"
