@@ -24,6 +24,7 @@ the model senses) and `docs/research/worldbox-notes.md` (how WorldBox is built).
 Creatures get **stats + flags + traits** in `assets/entities.json` (WorldBox's
 asset idea), instead of special cases in code. A new creature = new data.
 Proof it's safe: same seed, same replay before and after.
+Flow: `docs/W1-FLOW.md` (written 2026-10-13, waiting for Chalce's OK).
 
 ## W2: Beings live their own lives
 A small **job → task → step** system (WorldBox's behaviour idea). Every
