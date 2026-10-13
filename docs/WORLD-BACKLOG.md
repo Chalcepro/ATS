@@ -28,7 +28,7 @@ Flow: `docs/W1-FLOW.md`. Proof: `test_w1_fingerprint.py` matched every tick of
 5 worlds × 29 creatures. Speed unchanged (~94 → ~96 ticks/s, within noise).
 Bosses fixed to Ancient Golem + Lava Golem.
 
-## W2: Beings live their own lives
+## W2: Beings live their own lives (DONE 2026-10-13)
 A small **job → task → step** system (WorldBox's behaviour idea). Every
 being eats, rests, wanders, flees and (if a predator) hunts **whatever is prey
 by its tags**, not just the agent. Relationships by **tags** (predator / prey /
@@ -36,8 +36,10 @@ herd / guard). Only creatures on built islands tick, as today, so cost stays
 bounded. Measure ticks per second.
 Flow: `docs/W2-FLOW.md`. **Built 2026-10-13**: `test_w2_life.py` 8/8; every job
 happens in real play; speed unchanged (starting island and all-islands).
-Still to call it done: show each creature's job in the replay viewer, and
-a training run with the kept brain.
+Replay viewer shows each creature's job (and now draws creatures in the right
+place). Kept brain, no learning, 8 fixed worlds × 3000 ticks: W1 median 810 /
+mean 947 ticks survived, W2 median 988 / mean 1067. No collapse. 15 of 16
+deaths in both were **sharks**: the brain's real weakness, not the creatures.
 
 ## W3: Living land
 Food regrows on a cycle; biomes spread slowly at their edges. The world
@@ -78,5 +80,5 @@ storms.
 - **Keep the trained brain** and migrate it. The point is that it copes with a
   changing world instead of collapsing back to zero.
 
-## Next: finish W2
-Job in the replay viewer, then a short training run (ask Chalce first: heavy).
+## Next: W3 (living land)
+W2 is done. Real training on W2 starts when Chalce runs Train.bat.
