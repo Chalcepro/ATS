@@ -8,7 +8,7 @@ behaviour: hunting, fleeing, grazing, the grudge, staying on land, births.
 import random
 
 from entities import Entity
-from world import World, Tile, TILE_EMPTY
+from world import World, Tile, TILE_EMPTY, TILE_OCEAN
 
 AGENT_FAR = (10_000, 10_000)          # an agent nowhere near the scene
 
@@ -114,7 +114,7 @@ def test_creatures_stay_on_land():
     for _ in range(3000):
         run(w, 1)
     off = [e for e in w.entities if e.alive and not e.spec.has("ocean")
-           and w.tiles.get((e.x, e.y)) is None]
+           and w._tile(e.x, e.y).tile_type == TILE_OCEAN]
     assert not off, f"{len(off)} land creatures in the sea"
 
 

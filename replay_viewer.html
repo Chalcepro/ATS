@@ -93,13 +93,14 @@ const JOBS = {
   "":["creature","#ff5555"], wander:["wander","#c8c8c8"], rest:["rest","#7a7f8a"],
   graze:["graze","#7fd67f"], flee:["flee","#ffe066"], hunt:["hunt","#ff8c1a"],
   eat:["eat","#b3542d"], fight:["fight you","#ff2a2a"], chase:["chase you","#ff3df0"],
+  wait:["shark waits","#9fd3ff"], charge:["shark charges","#ff0000"],
 };
 const TILES = {
   0:["ground","#2e3a2a"], 1:["wall","#4a4a52"], 2:["hostile","#c0392b"],
   3:["object","#b9772e"], 4:["npc","#3f7fd6"], 5:["pond","#3a7fb0"],
   6:["lava","#e05a2b"], 7:["gate","#8e44ad"], 8:["ocean","#17314f"],
   9:["acid","#7fbf3f"], 10:["ice","#bfe6ee"], 11:["ash","#6b6b6b"],
-  12:["spore","#b05bd6"], 13:["bridge","#9c7a4a"]
+  12:["spore","#b05bd6"], 13:["bridge","#9c7a4a"], 14:["shark","#e8f4ff"]
 };
 const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
 let data=null, frames=[], i=0, playing=false, timer=null, bounds=null, view=5;

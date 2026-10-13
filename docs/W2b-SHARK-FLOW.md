@@ -1,6 +1,6 @@
 # W2b flow: a shark you can see coming
 
-Status: **flow written 2026-10-13, waiting for Chalce's OK. No code yet.**
+Status: **agreed with Chalce 2026-10-13 and built.** Answers at the end.
 Chalce's idea (2026-10-13), slotted before W3 because sharks are 15 of 16
 deaths in the W1/W2 survival check.
 
@@ -61,3 +61,19 @@ values just start meaning nothing) and learns them in training. This is the
    swim back), or one bite = death?
 4. Should the grace (3 ticks in the sea before a shark comes) stay, or does a
    shark come as soon as you're in open sea?
+
+## Chalce's answers (2026-10-13), as built
+
+1. **Wait 4 ticks** before locking on (`"wait": 4` on E_SHARK in entities.json).
+2. **Charge 1 tile per tick**, dodgeable.
+3. **Contact = death.** No surviving a bite.
+4. **Keep the 3-tick grace**, and the shark must surface **inside the brain's
+   view** (the 7x7 patch, radius 3), so it sees it coming and can remember it.
+5. **Lock-on rule**, like games do it: moving *after* it locks on dodges it;
+   moving *before* just changes where it aims, and it can still hit you.
+
+Built: one shark per swimmer, surfaces at the edge of the view, SHARK tile
+(14) in the patch, brain_id 29, state 1/2 feeds the brain's existing
+"telegraph / incoming" inputs while it waits / charges. `SHARK_CHARGES = False`
+in config_rl brings back the old invisible sea damage. Tests:
+`test_w2b_shark.py` (6/6), `test_shark_reach.py` updated (never reaches the beach).

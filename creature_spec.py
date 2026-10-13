@@ -21,6 +21,7 @@ HOSTILITY = {
     "strikes_instantly": {"space"},              # adjacent: hits with no warning
     "explodes":          {"space", "radius"},    # telegraphs, then blows up
     "hunts":             set(),                  # moves toward the agent
+    "charges":           {"wait"},               # waits, locks on, charges in a line
     "lingering_death":   {"range", "ticks"},     # kills if you stay near too long
 }
 STATUSES = {"poisoned", "burning", "slowed", "blinded"}

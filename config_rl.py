@@ -81,7 +81,7 @@ ENTITY_VOCAB_SIZE = 40
 # things is 51 columns of noise for the optimiser to push around, and tiles
 # are the one vocabulary here that genuinely is small.
 TILE_EMBED_DIM    = 16
-TILE_VOCAB_SIZE   = 16     # world.py defines TILE_EMPTY..TILE_SPORE = 0..12
+TILE_VOCAB_SIZE   = 16     # world.py defines TILE_EMPTY..TILE_SHARK = 0..14
 
 # Egocentric perception patch (added 2026-09-05).  Before this the agent saw
 # only the 4 adjacent tiles plus a *distance* to the nearest object/hostile
@@ -154,6 +154,11 @@ ROUTE_HINT_STAGES = ('nursery', 'corridors', 'corridors7', 'avoid')
 
 # Hazard & Ocean constants
 OCEAN_SHARK_TICKS = 3     # grace ticks in the ocean before the shark strikes
+# W2b (2026-10-13, Chalce's design): after the grace a shark SURFACES inside
+# the agent's view, waits (E_SHARK "wait" in entities.json), locks on and
+# charges in a straight line; contact kills. False = the old sea: damage
+# every tick with nothing visible attacking.
+SHARK_CHARGES = True
 
 # 2026-10-09 (Chalce): the sea should be survivable-but-brutal, not a one-shot.
 # True = past the grace ticks a shark deals SEA_DAMAGE_PER_TICK every tick, but

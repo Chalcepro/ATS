@@ -235,7 +235,14 @@ class ATSEnvironment:
         #                can never learn against.
         #   False (old): the original teleport-to-spawn / drown behaviour.
         sea_over = self.agent.ocean_ticks >= config_rl.OCEAN_SHARK_TICKS
-        if sea_over and getattr(config_rl, "SEA_SURVIVABLE", True):
+        charges = getattr(config_rl, "SHARK_CHARGES", True)
+        if sea_over and charges:
+            # W2b: one shark surfaces where the agent can see it, waits,
+            # then charges (entities.py _tick_charge). Contact kills.
+            if self.world.surface_shark(self.agent.x, self.agent.y,
+                                        config_rl.PATCH_RADIUS):
+                self.agent.log_event("A fin breaks the surface!")
+        elif sea_over and getattr(config_rl, "SEA_SURVIVABLE", True):
             self.agent.health -= config_rl.SEA_DAMAGE_PER_TICK
             self.agent.last_damage_cause = "a shark"
             self.world.spawn_shark(self.agent.x, self.agent.y)
@@ -245,7 +252,7 @@ class ATSEnvironment:
                 % config_rl.SEA_DAMAGE_PER_TICK)
             # Death is handled by the health<=0 check below, in this same tick.
 
-        if sea_over and not getattr(config_rl, "SEA_SURVIVABLE", True):
+        if sea_over and not charges and not getattr(config_rl, "SEA_SURVIVABLE", True):
             self.rewards.on_ocean_death()  # -500 punishment
             self.world.spawn_shark(self.agent.x, self.agent.y)
             if self.agent.health >= 20:

@@ -36,6 +36,7 @@ TILE_ICE     = 10  # Tundra ice (passable, 20% slip = leg injury)
 TILE_ASH     = 11  # Volcanic safe ash path (no burn damage)
 TILE_SPORE   = 12  # Mushroom spore cloud zone (applies BLINDED)
 TILE_BRIDGE  = 13  # One tile wide over open ocean; the only way to another island
+TILE_SHARK   = 14  # A shark at the surface: what the brain sees of it (W2b)
 
 
 @dataclass
@@ -465,6 +466,27 @@ class World:
     def spawn_shark(self, x: int, y: int) -> None:
         self.entities.append(Entity.from_id("E_SHARK", x, y))
 
+    def surface_shark(self, ax: int, ay: int, r: int):
+        """One shark for a swimmer: surfaces on open sea inside the agent's
+        view, as far out as the view allows, so it is seen before it moves.
+        Returns the new shark, or None if one is already out (or no open
+        sea is in view - then it tries again next tick)."""
+        for e in self.entities:
+            if e.alive and e.spec.has("ocean"):
+                return None
+        for ring in range(r, 0, -1):
+            spots = [(ax + dx, ay + dy)
+                     for dx in range(-ring, ring + 1) for dy in range(-ring, ring + 1)
+                     if max(abs(dx), abs(dy)) == ring]
+            random.shuffle(spots)
+            for x, y in spots:
+                t = self._tile(x, y)
+                if t and t.tile_type == TILE_OCEAN and self.entity_at(x, y) is None:
+                    shark = Entity.from_id("E_SHARK", x, y)
+                    self.entities.append(shark)
+                    return shark
+        return None
+
     # ------------------------------------------------------------------
     # Drop spawn
     # ------------------------------------------------------------------
@@ -550,8 +572,9 @@ class World:
     # Tile type at position
     # ------------------------------------------------------------------
     def tile_type_at(self, x: int, y: int) -> int:
-        if any(e.alive and e.x == x and e.y == y for e in self.entities):
-            return TILE_HOSTILE
+        for e in self.entities:
+            if e.alive and e.x == x and e.y == y:
+                return TILE_SHARK if e.spec.has("ocean") else TILE_HOSTILE
         tile = self._tile(x, y)
         if not tile:
             return TILE_OCEAN

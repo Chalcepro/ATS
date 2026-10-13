@@ -42,6 +42,9 @@ class Entity:
     flee_left: int = 0
     flee_from: tuple = None
     angry: bool = False         # the agent hit it; chases until far away
+    # A charging shark (W2b): ticks left to wait, and the spot it locked onto
+    wait_left: int = -1
+    charge_to: tuple = None
     _bite_ticks: int = 0
     # Creeper explosion flag
     exploded: bool = False
@@ -81,7 +84,11 @@ class Entity:
             self.hunger += 1
         self.tired += 1
 
-        # ---- Hunts: closes in, bites (the shark) ---------------------
+        # ---- Charges: surfaces, waits, locks on, charges (the shark) --
+        if kind == "charges":
+            return self._tick_charge(agent_x, agent_y, world)
+
+        # ---- Hunts: closes in, bites ---------------------------------
         if kind == "hunts":
             if dist <= 1 and _shark_can_reach(world, agent_x, agent_y):
                 return 9999
@@ -227,6 +234,48 @@ class Entity:
         return max(1, self.spec.move_every // factor)
 
     # ------------------------------------------------------------------
+    # Charging shark (W2b)
+    # ------------------------------------------------------------------
+    def _tick_charge(self, agent_x: int, agent_y: int, world) -> int:
+        """Wait `wait` ticks in plain sight, lock onto the agent's spot, then
+        charge it one tile per tick in a straight line. Contact kills. Moving
+        after the lock dodges; moving before it just changes the aim. Missed
+        or blocked, it waits again. The agent on land: it sinks and is gone."""
+        if world is not None and not _at_sea(world, agent_x, agent_y):
+            self.alive = False
+            return 0
+        if (self.x, self.y) == (agent_x, agent_y):
+            return 9999
+        if self.charge_to is None:
+            if self.wait_left < 0:
+                self.wait_left = self.spec.hostility_args["wait"]
+            self.job, self.state = "wait", 1      # state 1 = the brain's "telegraph"
+            self.wait_left -= 1
+            if self.wait_left <= 0:
+                self.charge_to = (agent_x, agent_y)
+                self.job, self.state = "charge", 2
+            return 0
+
+        tx, ty = self.charge_to
+        dx, dy = tx - self.x, ty - self.y
+        step = ((dx > 0) - (dx < 0), 0) if abs(dx) >= abs(dy) else (0, (dy > 0) - (dy < 0))
+        nx, ny = self.x + step[0], self.y + step[1]
+        if world is not None and not _passable(world, nx, ny, sea_only=True):
+            self._wait_again()
+            return 0
+        self.x, self.y = nx, ny
+        if (nx, ny) == (agent_x, agent_y):
+            return 9999
+        if (nx, ny) == self.charge_to:
+            self._wait_again()
+        return 0
+
+    def _wait_again(self):
+        self.charge_to = None
+        self.wait_left = -1
+        self.job, self.state = "wait", 1
+
+    # ------------------------------------------------------------------
     # Void proximity logic
     # ------------------------------------------------------------------
     def _tick_void(self, agent_x: int, agent_y: int, dist: int) -> int:
@@ -340,6 +389,11 @@ def _passable(world, x: int, y: int, sea_only: bool = False) -> bool:
         return tile is not None and tile.tile_type not in (1, 7, 8)
     except Exception:
         return True
+
+
+def _at_sea(world, x: int, y: int) -> bool:
+    tile = world._tile(x, y)
+    return tile is not None and tile.tile_type == 8       # TILE_OCEAN
 
 
 def _land(world, x: int, y: int) -> bool:
