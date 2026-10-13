@@ -480,7 +480,9 @@ class Agent:
                     self._check_level_up(rewards)
 
                     # Boss progression validator check
-                    if target_id in ("E009", "E023", "E025"):
+                    # Bosses: Ancient Golem and Lava Golem. Was E009/E023/E025,
+                    # left over from when E023/E025 meant other creatures.
+                    if target_id in ("E009", "E022"):
                         self.unlock_capability("CAP_BOSS_SLAYER", rewards)
                         rewards.on_boss_defeated(target_id)
                         self.log_event(f"★ Progression Validator Passed! Defeated Boss {entity_name(target_id)}!")

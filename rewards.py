@@ -30,17 +30,17 @@ _KILL_REWARDS = {
     "E006": 3.0,   # Husk
     "E007": 2.5,   # Fire Imp
     "E008": 3.0,   # Cave Spider
-    "E009": 10.0,  # Golem (boss tier progression validator)
+    "E009": 10.0,  # Ancient Golem (boss)
     "E010": 3.5,   # Witch
     "E011": 2.5,   # Wolf
     "E012": 4.0,   # Yeti
     "E013": 0.5,   # Bat (passive)
-    "E015": 1.0,   # Sheep (passive)
-    "E016": 1.0,   # Pig (passive)
-    "E017": 1.0,   # Chicken (passive)
+    "E015": 1.0,   # Deer (passive)
+    "E016": 1.0,   # Rabbit (passive)
+    "E017": 1.0,   # Sheep (passive)
     "E020": 5.0,   # Void Echo (rare)
-    "E023": 8.0,   # Lava Golem
-    "E025": 6.0,   # Cave Bat Queen
+    "E023": 8.0,   # Toxic Toad
+    "E025": 6.0,   # Frost Wraith
 }
 R_KILL_DEFAULT = 2.0
 
