@@ -46,9 +46,11 @@ Chalce's idea (2026-10-13): today the sea just hurts, with nothing visible
 attacking, so the brain can't learn what kills it (15 of 16 deaths). The shark
 surfaces in view, waits, then charges in a straight line; dodge and it waits
 again. New SHARK tile + a real brain_id.
-Flow: `docs/W2b-SHARK-FLOW.md` (waiting for Chalce's OK).
+Flow: `docs/W2b-SHARK-FLOW.md`. **Built 2026-10-13.** Kept brain, 8 worlds:
+W2 median 988 / mean 1067 ticks → W2b median 1338 / mean 1348, before any
+training on the shark.
 
-## W3: Living land
+## W3: Living land (food, scatter and villages BUILT 2026-10-13; biome spread to do)
 Food grows in patches where it belongs (wild by trees and bushes, man-made by
 huts), far apart, and regrows out of the agent's sight. Biomes spread slowly
 at their edges. The world

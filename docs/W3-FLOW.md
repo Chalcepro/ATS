@@ -1,6 +1,6 @@
 # W3 flow: living land (food that grows where it should)
 
-Status: **flow written 2026-10-13, waiting for Chalce's OK. No code yet.**
+Status: **agreed with Chalce 2026-10-13 and built.** Answers at the end.
 
 ## What's there today
 
@@ -66,3 +66,27 @@ every N ticks:
    Berries faster, bread slowest? (Numbers go in the data, easy to tune.)
 4. Should this also change the non-food scatter (sticks, stones, logs) to
    patches, or only food for now?
+
+## Chalce's answers (2026-10-13), as built
+
+1. **The "heat box"**: a second thinning pass so a patch of ~10 ends up 1-2,
+   never 0. Built at world creation (each item kept with `KEEP_CHANCE` 0.4,
+   at least one per patch), not at the moment the agent's view box arrives.
+   Same result, but done at arrival the agent's long-range "nearest object"
+   sense would point at food that then vanishes as it walks up, a mirage.
+   Easy to move to arrival time if wanted.
+2. **Villages now**, empty houses (TILE_HOUSE, 2x2, impassable). No house, no
+   village; a first house is rare; each house makes the next likelier
+   (`min(0.85, 0.35 + 0.1 n)`, max 10). Bread, water flasks, bandages, books
+   only around houses.
+3. **Regrowth**: `"regrow"` ticks per item in items.json (apple 500, berry bush
+   300, mushrooms 400, bread 1500, stick 1000, flower 800, log 1500). It grows
+   back at its own spot, only when the agent can't see that spot.
+   (1000 ticks ~ "a day" as a feel, not a day-night setting.)
+4. **Scatter too**: sticks, stones, logs, flowers, bushes in patches. Trees
+   use their own grove noise.
+
+Measured (5 worlds, all islands, 40-tile straight walks): apples on one walk
+max 8 → 1, berries 9 → 2, sticks 7 → 3. Apples in the world 2336 → 379.
+`W3_PATCHES = False` brings back the old scatter. Tests: `test_w3_land.py` 8/8.
+Biomes spreading at their edges: not built, stays in W3's list.

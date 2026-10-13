@@ -81,7 +81,7 @@ ENTITY_VOCAB_SIZE = 40
 # things is 51 columns of noise for the optimiser to push around, and tiles
 # are the one vocabulary here that genuinely is small.
 TILE_EMBED_DIM    = 16
-TILE_VOCAB_SIZE   = 16     # world.py defines TILE_EMPTY..TILE_SHARK = 0..14
+TILE_VOCAB_SIZE   = 16     # world.py defines TILE_EMPTY..TILE_HOUSE = 0..15 (full)
 
 # Egocentric perception patch (added 2026-09-05).  Before this the agent saw
 # only the 4 adjacent tiles plus a *distance* to the nearest object/hostile
@@ -159,6 +159,10 @@ OCEAN_SHARK_TICKS = 3     # grace ticks in the ocean before the shark strikes
 # charges in a straight line; contact kills. False = the old sea: damage
 # every tick with nothing visible attacking.
 SHARK_CHARGES = True
+# W3 (2026-10-13): food and scatter grow in patches far apart, trees in groves,
+# villages of empty houses with man-made things around them, and what is taken
+# regrows out of the agent's sight. False = the old even per-tile scatter.
+W3_PATCHES = True
 
 # 2026-10-09 (Chalce): the sea should be survivable-but-brutal, not a one-shot.
 # True = past the grace ticks a shark deals SEA_DAMAGE_PER_TICK every tick, but

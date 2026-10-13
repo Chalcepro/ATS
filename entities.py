@@ -386,7 +386,7 @@ def _passable(world, x: int, y: int, sea_only: bool = False) -> bool:
         if sea_only:
             return tile is not None and tile.tile_type == 8   # TILE_OCEAN
         # Land creatures stay on land: no sea, no wall, no gate
-        return tile is not None and tile.tile_type not in (1, 7, 8)
+        return tile is not None and tile.tile_type not in (1, 7, 8, 15)   # + house
     except Exception:
         return True
 

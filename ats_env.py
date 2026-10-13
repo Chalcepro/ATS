@@ -201,7 +201,7 @@ class ATSEnvironment:
             self.rewards.on_level_up()
 
         self.events.tick(self.world)
-        self.world.tick_life()
+        self.world.tick_life(self.agent.x, self.agent.y)
         self.tick += 1
 
         # Stepping onto a bridge builds the island it leads to, if it is not

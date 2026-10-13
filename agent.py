@@ -497,6 +497,7 @@ class Agent:
             for dx, dy in _neighbors_3x3:
                 tile = self.world._tile(self.x + dx, self.y + dy)
                 if tile and tile.object_id == "0023":  # Berry Bush
+                    self.world.took(self.x + dx, self.y + dy, "0023")
                     tile.object_id = ""
                     tile.tile_type = 0
                     self._add_to_inventory("0001")

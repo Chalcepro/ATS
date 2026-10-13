@@ -1,4 +1,4 @@
-﻿"""Tile world, island-ocean architecture, and entity placement.
+"""Tile world, island-ocean architecture, and entity placement.
 
 World topology is now driven by island_gen.py. All tiles outside island
 land masks are TILE_OCEAN. Ocean has sharks (spawn after OCEAN_SHARK_TICKS).
@@ -37,6 +37,7 @@ TILE_ASH     = 11  # Volcanic safe ash path (no burn damage)
 TILE_SPORE   = 12  # Mushroom spore cloud zone (applies BLINDED)
 TILE_BRIDGE  = 13  # One tile wide over open ocean; the only way to another island
 TILE_SHARK   = 14  # A shark at the surface: what the brain sees of it (W2b)
+TILE_HOUSE   = 15  # An empty house (W3): a place people will live in W5
 
 
 @dataclass
@@ -54,6 +55,30 @@ class Tile:
 # Native entity pools per island
 # ---------------------------------------------------------------------------
 GRID         = 8      # cell size for creatures_near
+
+# ---- W3: where things grow (2026-10-13, Chalce's rules) ----------------------
+# Trees grow in groves from their own smooth noise. Everything else grows in
+# PATCHES: a patch centre where its noise says the land suits it, patches of
+# one kind at least PATCH_GAP apart, each a bunch or a sparse few, then thinned
+# so a bunch is usually 1-2 left and never 0. So walking a straight line
+# doesn't keep finding apples: after one, you have to look for the next.
+TREES        = {"0021", "0022"}
+PATCH_GAP    = {"food": 14, "other": 9}   # min tiles between patches of a kind
+FERTILE      = 0.55     # noise above this: the land suits it
+BUNCH_CHANCE = 0.4      # else sparse (1-2)
+KEEP_CHANCE  = 0.4      # the thinning pass ("heat box"): each item kept with this
+GROVE_LEVEL  = 0.66     # tree noise above this is a grove...
+GROVE_FILL   = 0.45     # ...and this share of a grove's tiles hold a tree
+# Villages: no house, no village. A first house is rare; each house makes the
+# next one more likely. Houses are empty for now; man-made things (bread...)
+# are only found around them.
+VILLAGE_CELL   = 40     # one chance of a first house per 40x40 of land
+FIRST_HOUSE    = 0.35
+NEXT_HOUSE     = (0.35, 0.10, 0.85)   # chance of house n+1 = min(c, a + b*n)
+MAX_HOUSES     = 10
+MAN_MADE       = [("0032", 0.5), ("0035", 0.2), ("0005", 0.15), ("0003", 0.15)]
+MAN_MADE_PER_HOUSE = 0.7
+REGROW_EVERY   = 25     # ticks between regrowth checks
 BIRTH_EVERY  = 25     # ticks between birth checks
 BIRTH_CHANCE = 0.25   # per missing creature per check: ~1 birth per 100 ticks
 
@@ -122,6 +147,33 @@ _ISLAND_OBJECT_POOLS = {
 }
 
 
+
+def _hash01(x: int, y: int, salt: int) -> float:
+    """A fixed pseudo-random number in [0, 1) for a lattice point."""
+    h = (x * 374761393 + y * 668265263 + salt * 0x9E3779B9) & 0xFFFFFFFF
+    h = ((h ^ (h >> 13)) * 1274126177) & 0xFFFFFFFF
+    return ((h ^ (h >> 16)) & 0xFFFFFF) / float(1 << 24)
+
+
+def _noise(x: int, y: int, salt: int, scale: int) -> float:
+    """Smooth value noise in [0, 1): neighbours get similar values, so things
+    clump into areas instead of being sprinkled evenly."""
+    gx, gy = x // scale, y // scale
+    fx, fy = (x % scale) / scale, (y % scale) / scale
+    fx, fy = fx * fx * (3 - 2 * fx), fy * fy * (3 - 2 * fy)
+    a, b = _hash01(gx, gy, salt), _hash01(gx + 1, gy, salt)
+    c, d = _hash01(gx, gy + 1, salt), _hash01(gx + 1, gy + 1, salt)
+    return (a + (b - a) * fx) + ((c + (d - c) * fx) - (a + (b - a) * fx)) * fy
+
+
+def _is_food(obj_id: str) -> bool:
+    """Food = you eat it, or harvesting it gives you something you eat."""
+    info = REGISTRY.get_item(obj_id) or {}
+    if info.get("type") == "consumable":
+        return True
+    drop = REGISTRY.get_item(info.get("drop", "")) or {}
+    return drop.get("type") == "consumable"
+
 class World:
     """Island-ocean tile world. All generation driven by IslandRegistry."""
 
@@ -134,6 +186,8 @@ class World:
         self._start_counts: dict[int, dict[str, int]] = {}
         self._life_ticks = 0
         self._grid: dict[tuple[int, int], list] = {}
+        self.villages: list[list] = []          # W3: each village's houses
+        self._regrow: list[tuple] = []          # (due tick, x, y, object id)
         self.door_unlocked = True
         self.agent_spawn = (0, 0)
 
@@ -201,10 +255,14 @@ class World:
             self.tiles[(tx, ty)] = t
 
             # Place objects on empty tiles only (not on hazard/wall/water)
-            if tile_type == TILE_EMPTY and not (tx == cx and ty == cy):
+            if tile_type == TILE_EMPTY and not (tx == cx and ty == cy) \
+                    and not getattr(config_rl, "W3_PATCHES", True):
                 dist = abs(tx - cx) + abs(ty - cy)
                 if dist > 3:  # don't clutter spawn center
                     self._populate_tile_objects(t, tx, ty, idef)
+
+        if getattr(config_rl, "W3_PATCHES", True):
+            self._place_island_objects(idef)
 
     def _populate_tile_objects(self, tile: Tile, tx: int, ty: int, idef: IslandDef) -> None:
         """Deterministically place island-native resources on tile."""
@@ -221,6 +279,96 @@ class World:
                 tile.object_id  = obj_id
                 tile.tile_type  = TILE_OBJECT
                 break
+
+    # ------------------------------------------------------------------
+    # W3: groves, patches, villages
+    # ------------------------------------------------------------------
+    def _free(self, p, cx, cy) -> bool:
+        t = self.tiles.get(p)
+        return (t is not None and t.tile_type == TILE_EMPTY and not t.object_id
+                and abs(p[0] - cx) + abs(p[1] - cy) > 3)
+
+    def _put(self, p, obj_id) -> None:
+        t = self.tiles[p]
+        t.object_id = obj_id
+        t.tile_type = TILE_OBJECT
+
+    def _place_island_objects(self, idef: IslandDef) -> None:
+        cx, cy = idef.center
+        land = sorted(idef.land_tiles)
+        rng = random.Random(self.seed * 7919 + idef.island_id)
+        pool = _ISLAND_OBJECT_POOLS.get(idef.island_id, [])
+        self._place_villages(idef, land, rng)
+
+        for k, (obj_id, _) in enumerate(pool):
+            salt = self.seed * 131 + idef.island_id * 17 + k
+            if obj_id in TREES:
+                for p in land:
+                    if (_noise(p[0], p[1], salt, 9) > GROVE_LEVEL and self._free(p, cx, cy)
+                            and rng.random() < GROVE_FILL):
+                        self._put(p, obj_id)
+                continue
+            gap = PATCH_GAP["food" if _is_food(obj_id) else "other"]
+            centres = []
+            for p in land:
+                # one candidate per gap x gap cell, picked by hash
+                if _hash01(p[0] // gap, p[1] // gap, salt) * gap * gap >= 1 + \
+                        (p[0] % gap) * gap + (p[1] % gap):
+                    continue
+                if _noise(p[0], p[1], salt + 1, 12) < FERTILE or not self._free(p, cx, cy):
+                    continue
+                if any(abs(p[0] - q[0]) + abs(p[1] - q[1]) < gap for q in centres):
+                    continue
+                centres.append(p)
+                n = rng.randint(3, 6) if rng.random() < BUNCH_CHANCE else rng.randint(1, 2)
+                spots = [(p[0] + dx, p[1] + dy) for dx in range(-2, 3) for dy in range(-2, 3)]
+                rng.shuffle(spots)
+                spots = [p] + [s for s in spots if s != p]
+                placed = [s for s in spots if self._free(s, cx, cy)][:n]
+                kept = [s for s in placed if rng.random() < KEEP_CHANCE] or placed[:1]
+                for s in kept:
+                    self._put(s, obj_id)
+
+    def _place_villages(self, idef: IslandDef, land: list, rng) -> None:
+        cx, cy = idef.center
+        cells: dict = {}
+        for p in land:
+            cells.setdefault((p[0] // VILLAGE_CELL, p[1] // VILLAGE_CELL), []).append(p)
+        for _, tiles in sorted(cells.items()):
+            if len(tiles) < 200 or rng.random() >= FIRST_HOUSE:
+                continue
+            houses = []
+            spot = rng.choice(tiles)
+            while spot is not None:
+                if self._house_fits(spot, cx, cy):
+                    houses.append(spot)
+                    for dx in (0, 1):
+                        for dy in (0, 1):
+                            t = self.tiles[(spot[0] + dx, spot[1] + dy)]
+                            t.tile_type, t.object_id = TILE_HOUSE, ""
+                a, b, c = NEXT_HOUSE
+                if not houses or len(houses) >= MAX_HOUSES                         or rng.random() >= min(c, a + b * len(houses)):
+                    break
+                base = rng.choice(houses)
+                spot = (base[0] + rng.choice((-5, -4, 4, 5)), base[1] + rng.randint(-4, 4))
+            for hx, hy in houses:
+                if rng.random() < MAN_MADE_PER_HOUSE:
+                    ids, weights = zip(*MAN_MADE)
+                    item = rng.choices(ids, weights)[0]
+                    near = [(hx + dx, hy + dy) for dx in range(-2, 4) for dy in range(-2, 4)]
+                    rng.shuffle(near)
+                    for s in near:
+                        if self._free(s, cx, cy):
+                            self._put(s, item)
+                            break
+            if houses:
+                self.villages.append(houses)
+
+    def _house_fits(self, spot, cx, cy) -> bool:
+        if abs(spot[0] - cx) + abs(spot[1] - cy) < 8:
+            return False
+        return all(self._free((spot[0] + dx, spot[1] + dy), cx, cy)
+                   for dx in range(-1, 3) for dy in range(-1, 3))
 
     def _populate_island_entities(self, idef: IslandDef) -> None:
         """Spawn entities strictly native to this island type."""
@@ -265,12 +413,37 @@ class World:
                 out.extend(self._grid.get((cx, cy), ()))
         return out
 
-    def tick_life(self) -> list:
+    def took(self, x: int, y: int, obj_id: str) -> None:
+        """Something was taken from (x, y). If it grows back (items.json
+        "regrow"), it will - at the same spot."""
+        info = REGISTRY.get_item(obj_id) or {}
+        if info.get("regrow"):
+            self._regrow.append((self._life_ticks + int(info["regrow"]), x, y, obj_id))
+
+    def _tick_regrow(self, ax: int, ay: int) -> None:
+        """Due things grow back, but never where the agent can see: it never
+        watches food appear in front of it."""
+        r = config_rl.PATCH_RADIUS
+        left = []
+        for due, x, y, obj_id in self._regrow:
+            t = self.tiles.get((x, y))
+            if due > self._life_ticks or max(abs(x - ax), abs(y - ay)) <= r:
+                left.append((due, x, y, obj_id))
+            elif t is not None and t.tile_type == TILE_EMPTY and not t.object_id \
+                    and self.entity_at(x, y) is None:
+                t.object_id, t.tile_type = obj_id, TILE_OBJECT
+            else:
+                left.append((due, x, y, obj_id))   # something's on it: try later
+        self._regrow = left
+
+    def tick_life(self, ax: int = 1 << 30, ay: int = 1 << 30) -> list:
         """Births, every BIRTH_EVERY ticks: a creature below its island's
         starting count may be born beside an adult of its kind (or, if none
         is left, somewhere on its island away from the centre). The dead are
-        cleared out at the same time. Returns the newborns."""
+        cleared out at the same time. Returns the newborns. Regrowth too."""
         self._life_ticks += 1
+        if self._regrow and self._life_ticks % REGROW_EVERY == 0:
+            self._tick_regrow(ax, ay)
         if self._life_ticks % BIRTH_EVERY:
             return []
         self.entities = [e for e in self.entities if e.alive]
@@ -430,7 +603,7 @@ class World:
         if not tile:
             return False
         # Walls, lava, and gates are impassable movement
-        if tile.tile_type in (TILE_WALL, TILE_GATE):
+        if tile.tile_type in (TILE_WALL, TILE_GATE, TILE_HOUSE):
             return False
         # Lava — passable but very damaging (handled in env tick)
         # Ocean — passable but shark spawns (handled in env tick)
@@ -590,6 +763,7 @@ class World:
         if not tile or not tile.object_id:
             return ""
         item    = tile.object_id
+        self.took(x, y, item)
         reg_item = REGISTRY.get_item(item)
         drop_yield = item
         if reg_item and reg_item.get("drop"):
@@ -627,6 +801,7 @@ class World:
                 obj_id    = tile.object_id
                 item_info = REGISTRY.get_item(obj_id)
                 if item_info and item_info.get("type") == "world_object":
+                    self.took(tx, ty, obj_id)
                     drop = item_info.get("drop", obj_id)
                     tile.object_id = ""
                     tile.tile_type = TILE_EMPTY
