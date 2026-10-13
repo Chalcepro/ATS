@@ -1,6 +1,6 @@
 # W3b flow: biomes that spread at their edges
 
-Status: **answered by Chalce 2026-10-13; 4 small points to confirm** (end).
+Status: **agreed with Chalce 2026-10-13 and built.** As built at the end.
 Last part of W3.
 
 ## What's there today
@@ -86,3 +86,27 @@ killed it; W2b's visible shark was the condition for bringing it back.
    unwinnable?
 4. Turn the close islands + bridges back on before training, or keep the far
    islands for this round?
+
+Chalce's confirmations: (1) yes, the volcanic island just grows land, lava only
+moves inside; (2) acid and lava destroy food, poison-on-food is a later poison
+biome; (3) keys survive but are not called legendary to the brain; (4) close
+islands and bridges back on before training.
+
+## As built
+
+- `world._tick_spread`, from `tick_life` every `SPREAD_EVERY` (500) ticks, on
+  every built island, `SPREAD_STEP` (4) tiles per change, nothing within the
+  agent's view (PATCH_RADIUS).
+- Groves: trees spread within 2 tiles of a tree, or one dies, staying within
+  75-125% of the island's trees at the first change.
+- Lava (volcanic) and acid (mushroom): one hazard tile moves one step, onto
+  open ground or an item, never onto the ash safe path or the island middle.
+  `world.cover()` destroys common items (and their regrowth) and kills
+  creatures there; items marked `fireproof` (Key) or `gate_key` survive and
+  the lava flows round them.
+- Volcanic land (open ground) and tundra ice shelf grow into the sea from
+  the coast, reach sized by the island's starting area (volcanic 3-8, ice
+  3-20; measured 3-6 and 10-13), always keeping 3 tiles of sea to other
+  islands and bridges.
+- `W3_SPREAD = False` turns it off. Tests: `test_w3b_spread.py` 8/8; all other
+  world tests still pass. Cost: ~0.04 s per change (every 500 ticks).

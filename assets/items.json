@@ -4,7 +4,7 @@
   "0003": {"name": "Book",            "type": "curiosity",    "xp": 10, "island": 0},
   "0004": {"name": "Wool",            "type": "material", "island": 0},
   "0005": {"name": "Bandage",         "type": "consumable",   "cure_leg": true, "island": 0},
-  "0006": {"name": "Key",             "type": "tool", "island": 0},
+  "0006": {"name": "Key",             "type": "tool", "fireproof": true, "island": 0},
   "0007": {"name": "Chest",           "type": "container", "island": 0},
   "0008": {"name": "Stick",           "type": "material", "regrow": 1000, "island": 0},
   "0009": {"name": "Coal",            "type": "material", "island": 0},

@@ -50,14 +50,18 @@ Flow: `docs/W2b-SHARK-FLOW.md`. **Built 2026-10-13.** Kept brain, 8 worlds:
 W2 median 988 / mean 1067 ticks → W2b median 1338 / mean 1348, before any
 training on the shark.
 
-## W3: Living land (food, scatter and villages BUILT 2026-10-13; biome spread to do)
+## W3: Living land (DONE 2026-10-13)
 Kept brain, 8 worlds: W2b median 1338 / mean 1348 → W3 median 906 / mean 1008.
 The expected dip (food is ~6x scarcer), no collapse. Still mostly sharks, not
 hunger: searching for food likely sends it to sea more. Training should fix both.
 Food grows in patches where it belongs (wild by trees and bushes, man-made by
-huts), far apart, and regrows out of the agent's sight. Biomes spread slowly
-at their edges. The world
-changes over a run, so memory and planning start paying off.
+huts), far apart, and regrows out of the agent's sight.
+**W3b (built 2026-10-13, `W3b-BIOME-FLOW.md`):** every 500 ticks, out of
+sight, groves spread/die back, lava and acid move without growing (burning
+common items and creatures, not keys), the volcanic island grows land (3-6
+tiles out) and the tundra an ice shelf (10-13+, up to 20). `W3_SPREAD`.
+Same day: close islands + bridges back ON (`WORLD_BRIDGES`), world build
+10 s -> 3 s (numpy coastlines, identical islands).
 
 ## W4: Senses, in one batch (one brain migration)
 Design with Chalce, then add together so the brain migrates once:
@@ -74,6 +78,16 @@ to judge.
 ## W6: Ages, events, disasters
 World-wide changes over long runs (WorldBox's ages): seasons, droughts,
 storms.
+
+## Later ideas (Chalce, 2026-10-13)
+- **Real volcanoes** (needs the fake Z axis): an eruption sends lava downhill
+  from the crater, outward, as far as the volcano's size allows; a small
+  volcano on big land never reaches the sea.
+- **Poison biome**: poison flowing over food makes it poisonous (eating it
+  poisons you). Acid and lava just destroy food.
+- **Keys sit close to what they open**, outside it (not on, under or in):
+  house, cave, doorway, gate. Keys never burn, but are not labelled
+  "legendary" to the brain; legendary keys can come later as their own item.
 
 ## Parked
 - **WorldBox "visit" mod** (ROADMAP Phase 3): the trained brain among people,
@@ -94,6 +108,6 @@ storms.
 - **Keep the trained brain** and migrate it. The point is that it copes with a
   changing world instead of collapsing back to zero.
 
-## Next: W2b, then W3
-Both flows written 2026-10-13 (`W2b-SHARK-FLOW.md`, `W3-FLOW.md`), each
-ends with questions for Chalce. Build after his answers.
+## Next: train, then W4
+W2, W2b, W3 and W3b are built. Chalce trains on them (Train.bat), then the W4
+senses batch is designed with him (the tile vocab is full, 16/16).

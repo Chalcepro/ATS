@@ -163,6 +163,10 @@ SHARK_CHARGES = True
 # villages of empty houses with man-made things around them, and what is taken
 # regrows out of the agent's sight. False = the old even per-tile scatter.
 W3_PATCHES = True
+# W3b (2026-10-13): the land changes during an episode (world.SPREAD_EVERY):
+# groves spread/die back, lava and acid move without growing, the volcanic
+# island grows land and the tundra an ice shelf. False = land fixed per episode.
+W3_SPREAD = True
 
 # 2026-10-09 (Chalce): the sea should be survivable-but-brutal, not a one-shot.
 # True = past the grace ticks a shark deals SEA_DAMAGE_PER_TICK every tick, but

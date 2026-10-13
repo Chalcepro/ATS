@@ -79,6 +79,21 @@ MAX_HOUSES     = 10
 MAN_MADE       = [("0032", 0.5), ("0035", 0.2), ("0005", 0.15), ("0003", 0.15)]
 MAN_MADE_PER_HOUSE = 0.7
 REGROW_EVERY   = 25     # ticks between regrowth checks
+
+# ---- W3b: the land changes during an episode (2026-10-13, Chalce) ------------
+# Every SPREAD_EVERY ticks each built island makes one small change, never
+# where the agent can see. Groves spread and die back; lava and acid move
+# around inside their island without growing, burning what they cover; the
+# volcanic island grows new land into the sea and the tundra an ice shelf,
+# each up to a reach set by the island's size. A new world each episode
+# starts it all over.
+SPREAD_EVERY = 500
+SPREAD_STEP  = 4                # tiles in one change
+SPREAD_GAP   = 3                # grown land keeps this much sea to other land / bridges
+GROVE_RANGE  = (0.75, 1.25)     # trees stay within this share of the start
+LAND_REACH   = {ISLAND_VOLCANIC: (TILE_EMPTY, 3, 8),   # tile, reach on a small..big island
+                ISLAND_TUNDRA:   (TILE_ICE, 3, 20)}
+MOVING_HAZARD = {ISLAND_VOLCANIC: TILE_LAVA, ISLAND_MUSHROOM: TILE_ACID}
 BIRTH_EVERY  = 25     # ticks between birth checks
 BIRTH_CHANCE = 0.25   # per missing creature per check: ~1 birth per 100 ticks
 
@@ -188,6 +203,9 @@ class World:
         self._grid: dict[tuple[int, int], list] = {}
         self.villages: list[list] = []          # W3: each village's houses
         self._regrow: list[tuple] = []          # (due tick, x, y, object id)
+        self._reach: dict = {}                  # W3b: grown tile -> tiles past the first coast
+        self._trees0: dict = {}                 # W3b: island -> trees at the first change
+        self._size0: dict = {}                  # W3b: island -> radius of its first land
         self.door_unlocked = True
         self.agent_spawn = (0, 0)
 
@@ -439,6 +457,129 @@ class World:
                 left.append((due, x, y, obj_id))   # something's on it: try later
         self._regrow = left
 
+    # ------------------------------------------------------------------
+    # W3b: the land changes
+    # ------------------------------------------------------------------
+    def _tick_spread(self, ax: int, ay: int) -> None:
+        """One small change on every built island, out of the agent's sight."""
+        r = config_rl.PATCH_RADIUS
+        hidden = lambda p: max(abs(p[0] - ax), abs(p[1] - ay)) > r
+        for iid in sorted(self._materialised):
+            idef = self.island_registry.get_island(iid)
+            land = list(idef.land_tiles)
+            self._spread_groves(idef, land, hidden)
+            if iid in MOVING_HAZARD:
+                self._shift_hazard(idef, MOVING_HAZARD[iid], hidden)
+            if iid in LAND_REACH:
+                self._grow_coast(idef, land, hidden)
+
+    def _spread_groves(self, idef: IslandDef, land: list, hidden) -> None:
+        cx, cy = idef.center
+        trees = [p for p in land if self.tiles[p].object_id in TREES]
+        start = self._trees0.setdefault(idef.island_id, len(trees))
+        if not trees:
+            return
+        for _ in range(SPREAD_STEP):
+            t = random.choice(trees)
+            if len(trees) < start * GROVE_RANGE[1] and (
+                    len(trees) <= start * GROVE_RANGE[0] or random.random() < 0.5):
+                p = (t[0] + random.randint(-2, 2), t[1] + random.randint(-2, 2))
+                if self._free(p, cx, cy) and hidden(p) and self.entity_at(*p) is None:
+                    self._put(p, self.tiles[t].object_id)
+                    trees.append(p)
+            elif hidden(t):
+                tile = self.tiles[t]
+                tile.object_id, tile.tile_type = "", TILE_EMPTY
+                trees.remove(t)
+
+    def _shift_hazard(self, idef: IslandDef, hazard: int, hidden) -> None:
+        """Lava / acid moves a tile at a time: the same amount, somewhere new."""
+        cx, cy = idef.center
+        pool = [p for p in idef.internal_hazard if self.tiles[p].tile_type == hazard]
+        for _ in range(SPREAD_STEP * 5):           # tries, most picks are interior
+            if not pool:
+                return
+            h = random.choice(pool)
+            d = random.choice(((0, 1), (0, -1), (1, 0), (-1, 0)))
+            n = (h[0] + d[0], h[1] + d[1])
+            t = self.tiles.get(n)
+            if (t is None or t.tile_type not in (TILE_EMPTY, TILE_OBJECT)
+                    or n in idef.safe_path or abs(n[0] - cx) + abs(n[1] - cy) <= 3
+                    or not (hidden(h) and hidden(n))):
+                continue
+            self.tiles[h].tile_type = TILE_EMPTY
+            idef.internal_hazard.discard(h)
+            pool.remove(h)
+            self.cover(n, hazard)
+            if self.tiles[n].tile_type == hazard:    # else a key lies there: flows round it
+                idef.internal_hazard.add(n)
+                pool.append(n)
+
+    def cover(self, p, hazard: int) -> None:
+        """Lava or acid flows onto p: any common thing there is gone, and any
+        creature, alive or dead. Keys and gate items survive (fireproof)."""
+        t = self.tiles[p]
+        info = REGISTRY.get_item(t.object_id) or {}
+        if t.object_id and not (info.get("fireproof") or info.get("gate_key")):
+            t.object_id = ""
+            self._regrow = [g for g in self._regrow if (g[1], g[2]) != p]
+        for e in self.entities:
+            if e.alive and (e.x, e.y) == p and not e.guard:
+                e.alive = False
+        t.tile_type = TILE_OBJECT if t.object_id else hazard
+
+    def _grow_coast(self, idef: IslandDef, land: list, hidden) -> None:
+        """New land (volcanic) or an ice shelf (tundra) grows into the sea, up
+        to a reach that's bigger for a bigger island."""
+        tile_type, small, big = LAND_REACH[idef.island_id]
+        # size from the land it started with (idef.radius isn't scaled by
+        # LAND_SCALE in the bridged layout): ~55 tiles across .. ~95
+        r0 = self._size0.setdefault(idef.island_id, (len(land) / 3.1416) ** 0.5)
+        reach = small + (big - small) * min(1.0, max(0.0, (r0 - 55) / 40))
+        reg = self.island_registry
+        dirs = ((0, 1), (0, -1), (1, 0), (-1, 0))
+        for p in random.sample(land, min(len(land), 400)):
+            if self._reach.get(p, 0) >= reach:
+                continue
+            sea = [(p[0] + dx, p[1] + dy) for dx, dy in dirs if self._open_sea(
+                (p[0] + dx, p[1] + dy), idef.island_id, hidden)]
+            if sea:
+                break
+        else:
+            return
+        grown, at = 0, p
+        while grown < SPREAD_STEP and sea:
+            n = random.choice(sea)
+            self.tiles[n] = Tile(tile_type=tile_type, island_id=idef.island_id)
+            idef.land_tiles.add(n)
+            reg._tile_map[n] = idef.island_id
+            self._reach[n] = self._reach.get(at, 0) + 1
+            grown += 1
+            # keep going sideways along the coast, not out in a spike
+            at = n if self._reach[n] < reach else at
+            sea = [(at[0] + dx, at[1] + dy) for dx, dy in dirs if self._open_sea(
+                (at[0] + dx, at[1] + dy), idef.island_id, hidden)]
+            sea = [q for q in sea if self._reach.get(at, 0) + 1 <= reach]
+
+    def _open_sea(self, p, island_id: int, hidden) -> bool:
+        """Sea that may become land: no creature on it, out of sight, and
+        SPREAD_GAP of sea kept to any other island and to bridges."""
+        t = self.tiles.get(p)
+        if p in self.island_registry._tile_map or (t and t.tile_type != TILE_OCEAN):
+            return False
+        if not hidden(p) or self.entity_at(*p) is not None:
+            return False
+        g = SPREAD_GAP
+        for x in range(p[0] - g, p[0] + g + 1):
+            for y in range(p[1] - g, p[1] + g + 1):
+                owner = self.island_registry._tile_map.get((x, y))
+                if owner is not None and owner != island_id:
+                    return False
+                q = self.tiles.get((x, y))
+                if q is not None and q.tile_type == TILE_BRIDGE:
+                    return False
+        return True
+
     def tick_life(self, ax: int = 1 << 30, ay: int = 1 << 30) -> list:
         """Births, every BIRTH_EVERY ticks: a creature below its island's
         starting count may be born beside an adult of its kind (or, if none
@@ -447,6 +588,8 @@ class World:
         self._life_ticks += 1
         if self._regrow and self._life_ticks % REGROW_EVERY == 0:
             self._tick_regrow(ax, ay)
+        if self._life_ticks % SPREAD_EVERY == 0 and getattr(config_rl, "W3_SPREAD", True):
+            self._tick_spread(ax, ay)
         if self._life_ticks % BIRTH_EVERY:
             return []
         self.entities = [e for e in self.entities if e.alive]
