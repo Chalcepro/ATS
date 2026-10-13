@@ -3,7 +3,7 @@
     py -3 test_w2b_shark.py
 
 It surfaces inside the agent's view, waits, locks onto the agent's spot and
-charges one tile per tick in a straight line. Contact kills. Moving after the
+charges in a straight line, a tile per step the swimmer can make. Contact kills. Moving after the
 lock dodges it; moving before only changes its aim. On land it gives up.
 """
 import random
@@ -116,6 +116,38 @@ def test_env_one_visible_shark_after_grace():
     assert most == 1, f"{most} sharks at once"
     assert cause == "a shark", f"died of {cause!r}"
     assert t - seen_at >= 4, "killed before it could be seen and dodged"
+
+
+def test_deep_sea_dodge_works():
+    """In deep sea the agent moves 1 tile per 3 ticks, so the charge is paced
+    to match (world.swim_pace). Stepping sideways once it charges must
+    really pay: before the pacing it bought ~10 ticks, now several times more."""
+    U, D, L, Rt = (config_rl.ACT_MOVE_FORWARD, config_rl.ACT_MOVE_BACKWARD,
+                   config_rl.ACT_MOVE_LEFT, config_rl.ACT_MOVE_RIGHT)
+
+    def life(dodge, seed):
+        random.seed(seed)
+        env = ATSEnvironment(world_seed=7, vary_world=False)
+        env.reset()
+        env.world.entities = []
+        env.agent.x, env.agent.y = SEA
+        for t in range(150):
+            s = next((e for e in env.world.entities if e.alive and e.spec.has("ocean")), None)
+            act = 24
+            if dodge and s is not None and s.job == "charge":
+                dx, dy = s.x - env.agent.x, s.y - env.agent.y
+                # step across its line, away from its side of it
+                if abs(dx) >= abs(dy):
+                    act = (D if dy < 0 else U) if dy else random.choice((U, D))
+                else:
+                    act = (Rt if dx < 0 else L) if dx else random.choice((L, Rt))
+            if env.step(act)[2]:
+                return t
+        return 150
+
+    still = sorted(life(False, k) for k in range(5))[2]
+    dodging = sorted(life(True, k) for k in range(5))[2]
+    assert dodging >= 3 * still, f"dodging lives {dodging} ticks vs {still} standing still"
 
 
 if __name__ == "__main__":

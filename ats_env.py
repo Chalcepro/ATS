@@ -148,6 +148,12 @@ class ATSEnvironment:
 
         # --- Entity AI ticks -----------------------------------------------
         self.world.index_creatures()
+        # How many ticks one step takes the agent where it is (agent.py's
+        # water drag): a charging shark moves at this pace, so a swimmer
+        # slowed to 1/3 in deep sea can still dodge it (2026-10-13).
+        a, here = self.agent, self.world._tile(self.agent.x, self.agent.y).tile_type
+        self.world.swim_pace = (3 if here == 8 and a.sea_blocks_crossed >= 3
+                                else 2 if here in (5, 8) else 1)
         for ent in list(self.world.entities):
             if not ent.alive:
                 continue

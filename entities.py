@@ -45,6 +45,7 @@ class Entity:
     # A charging shark (W2b): ticks left to wait, and the spot it locked onto
     wait_left: int = -1
     charge_to: tuple = None
+    _pace: int = 0
     _bite_ticks: int = 0
     # Creeper explosion flag
     exploded: bool = False
@@ -238,7 +239,7 @@ class Entity:
     # ------------------------------------------------------------------
     def _tick_charge(self, agent_x: int, agent_y: int, world) -> int:
         """Wait `wait` ticks in plain sight, lock onto the agent's spot, then
-        charge it one tile per tick in a straight line. Contact kills. Moving
+        charge it in a straight line, a tile per step the swimmer can make. Contact kills. Moving
         after the lock dodges; moving before it just changes the aim. Missed
         or blocked, it waits again. The agent on land: it sinks and is gone."""
         if world is not None and not _at_sea(world, agent_x, agent_y):
@@ -254,8 +255,15 @@ class Entity:
             if self.wait_left <= 0:
                 self.charge_to = (agent_x, agent_y)
                 self.job, self.state = "charge", 2
+                self._pace = 0
             return 0
 
+        # one tile per step the swimmer can make (world.swim_pace, set by the
+        # env each tick): fast in the shallows, slower in deep sea
+        self._pace += 1
+        if self._pace < getattr(world, "swim_pace", 1):
+            return 0
+        self._pace = 0
         tx, ty = self.charge_to
         dx, dy = tx - self.x, ty - self.y
         step = ((dx > 0) - (dx < 0), 0) if abs(dx) >= abs(dy) else (0, (dy > 0) - (dy < 0))

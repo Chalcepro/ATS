@@ -77,3 +77,15 @@ Built: one shark per swimmer, surfaces at the edge of the view, SHARK tile
 "telegraph / incoming" inputs while it waits / charges. `SHARK_CHARGES = False`
 in config_rl brings back the old invisible sea damage. Tests:
 `test_w2b_shark.py` (6/6), `test_shark_reach.py` updated (never reaches the beach).
+
+## Fix after the first training (2026-10-13)
+
+Two hours of training: 98% of deaths still sharks, median life ~250 ticks.
+Cause: in deep sea the agent moves 1 tile per **3** ticks (agent.py water
+drag), but the charge moved 1 tile per tick, so a dodge almost never landed.
+Scripted agents at sea: standing still 11 ticks, best dodging only 16-21.
+
+Fix (Chalce agreed): the charge moves **a tile per step the swimmer can make**
+(`world.swim_pace`, set by the env each tick: 3 in deep sea, 2 in shallow
+water). Wait and lock-on unchanged. Now: still 16 ticks, dodging when it
+charges 103+ (of 150). Test: `test_deep_sea_dodge_works`.
