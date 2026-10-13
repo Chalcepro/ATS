@@ -9,6 +9,8 @@ Internal water bodies are native per island type.
 from __future__ import annotations
 
 import math
+
+import numpy as np
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -117,6 +119,41 @@ def _fbm(fx: float, fy: float, seed: int, octaves: int = 4) -> float:
     return value / max_val
 
 
+def _hash2d_np(x, y, seed: int):
+    """_hash2d over arrays. Each term is cut to 32 bits first (same result,
+    since the sum is cut to 32 bits anyway) so nothing overflows int64."""
+    m = 0xFFFFFFFF
+    n = ((x * 374761393) & m) + ((y * 668265263) & m) + ((seed * 0x9E3779B9) & m)
+    n &= m
+    n = (((n >> 13) ^ n) * 1274126177) & m
+    n ^= (n >> 16)
+    return (n % 1000000) / 1000000.0
+
+
+def _smooth_noise_np(fx, fy, seed: int):
+    x0, y0 = np.floor(fx).astype(np.int64), np.floor(fy).astype(np.int64)
+    x1, y1 = x0 + 1, y0 + 1
+    sx = fx - x0
+    sy = fy - y0
+    sx = sx * sx * (3.0 - 2.0 * sx)
+    sy = sy * sy * (3.0 - 2.0 * sy)
+    v00 = _hash2d_np(x0, y0, seed)
+    v10 = _hash2d_np(x1, y0, seed)
+    v01 = _hash2d_np(x0, y1, seed)
+    v11 = _hash2d_np(x1, y1, seed)
+    return (v00*(1-sx) + v10*sx)*(1-sy) + (v01*(1-sx) + v11*sx)*sy
+
+
+def _fbm_np(fx, fy, seed: int, octaves: int = 4):
+    value, amplitude, frequency, max_val = 0.0, 1.0, 1.0, 0.0
+    for i in range(octaves):
+        value    = value + _smooth_noise_np(fx * frequency, fy * frequency, seed + i * 997) * amplitude
+        max_val  += amplitude
+        amplitude *= 0.5
+        frequency *= 2.0
+    return value / max_val
+
+
 # ---------------------------------------------------------------------------
 # Island shape
 # ---------------------------------------------------------------------------
@@ -143,17 +180,18 @@ def generate_island_shape(
     scale   = getattr(config_rl, "LAND_SCALE", 2.0) if getattr(config_rl, "BIG_LAND", True) else 1.0
     radius  = int((30 + r_noise * 30) * scale)   # 60..120 tiles at scale 2
 
-    land_tiles: Set[Tuple[int, int]] = set()
-    for dy in range(-radius - 5, radius + 6):
-        for dx in range(-radius - 5, radius + 6):
-            tx, ty = cx + dx, cy + dy
-            nx, ny = (dx, dy) if relative else (tx, ty)
-            dist = math.sqrt(dx*dx + dy*dy) / radius
-            coast    = _fbm(nx * 0.12, ny * 0.12, seed + island_id * 1337, octaves=4)
-            interior = _fbm(nx * 0.04, ny * 0.04, seed + island_id * 2749, octaves=3)
-            eff_dist = dist - (coast - 0.5) * 0.45 - (interior - 0.5) * 0.15
-            if eff_dist < 0.82:
-                land_tiles.add((tx, ty))
+    # The same sums as _fbm, done for the whole square at once with numpy
+    # (bit-for-bit the same islands, ~1.6 s -> a fraction per island).
+    span = np.arange(-radius - 5, radius + 6, dtype=np.int64)
+    dx, dy = np.meshgrid(span, span)
+    nx, ny = (dx, dy) if relative else (dx + cx, dy + cy)
+    dist = np.sqrt((dx * dx + dy * dy).astype(np.float64)) / radius
+    coast    = _fbm_np(nx * 0.12, ny * 0.12, seed + island_id * 1337, octaves=4)
+    interior = _fbm_np(nx * 0.04, ny * 0.04, seed + island_id * 2749, octaves=3)
+    eff_dist = dist - (coast - 0.5) * 0.45 - (interior - 0.5) * 0.15
+    ys, xs = np.nonzero(eff_dist < 0.82)
+    land_tiles: Set[Tuple[int, int]] = set(
+        zip((xs - radius - 5 + cx).tolist(), (ys - radius - 5 + cy).tolist()))
     return land_tiles, radius
 
 

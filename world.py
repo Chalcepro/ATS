@@ -309,7 +309,7 @@ class World:
                         self._put(p, obj_id)
                 continue
             gap = PATCH_GAP["food" if _is_food(obj_id) else "other"]
-            centres = []
+            centres: dict = {}                      # gap cell -> centres in it
             for p in land:
                 # one candidate per gap x gap cell, picked by hash
                 if _hash01(p[0] // gap, p[1] // gap, salt) * gap * gap >= 1 + \
@@ -317,9 +317,12 @@ class World:
                     continue
                 if _noise(p[0], p[1], salt + 1, 12) < FERTILE or not self._free(p, cx, cy):
                     continue
-                if any(abs(p[0] - q[0]) + abs(p[1] - q[1]) < gap for q in centres):
+                cell = (p[0] // gap, p[1] // gap)
+                if any(abs(p[0] - q[0]) + abs(p[1] - q[1]) < gap
+                       for i in (-1, 0, 1) for j in (-1, 0, 1)
+                       for q in centres.get((cell[0] + i, cell[1] + j), ())):
                     continue
-                centres.append(p)
+                centres.setdefault(cell, []).append(p)
                 n = rng.randint(3, 6) if rng.random() < BUNCH_CHANCE else rng.randint(1, 2)
                 spots = [(p[0] + dx, p[1] + dy) for dx in range(-2, 3) for dy in range(-2, 3)]
                 rng.shuffle(spots)

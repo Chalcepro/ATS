@@ -190,7 +190,9 @@ LAND_SCALE = 2.0
 # world is the one it mastered (~500 reward, real survivors). Bridges + sharks
 # are kept intact behind this flag to bring back later as a GRADUAL curriculum
 # rung with a shark the agent can see and flee, not a sudden one-shot.
-WORLD_BRIDGES = False
+# 2026-10-13: back ON (Chalce), now that W2b's shark surfaces in view and
+# can be dodged - the condition set on 10-08.
+WORLD_BRIDGES = True
 
 # A shark used to walk out of the sea after the agent and chase it across the
 # island, killing on contact - logged as "the Void" (2026-10-03: 856 of 856
