@@ -51,6 +51,9 @@ W2 median 988 / mean 1067 ticks → W2b median 1338 / mean 1348, before any
 training on the shark.
 
 ## W3: Living land (food, scatter and villages BUILT 2026-10-13; biome spread to do)
+Kept brain, 8 worlds: W2b median 1338 / mean 1348 → W3 median 906 / mean 1008.
+The expected dip (food is ~6x scarcer), no collapse. Still mostly sharks, not
+hunger: searching for food likely sends it to sea more. Training should fix both.
 Food grows in patches where it belongs (wild by trees and bushes, man-made by
 huts), far apart, and regrows out of the agent's sight. Biomes spread slowly
 at their edges. The world
