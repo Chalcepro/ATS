@@ -155,9 +155,11 @@ class Recorder:
                     continue
                 ex, ey = int(getattr(e, "x", 1 << 30)), int(getattr(e, "y", 1 << 30))
                 if abs(ex - ax) <= self.view and abs(ey - ay) <= self.view:
-                    ents.append([ex - ax, ey - ay,
-                                 str(getattr(e, "kind", "") or
-                                     type(e).__name__)[:10]])
+                    # World position, name, and what it is doing (W2)
+                    spec = getattr(e, "spec", None)
+                    ents.append({"x": ex, "y": ey,
+                                 "n": spec.name if spec else type(e).__name__,
+                                 "j": getattr(e, "job", "")})
         except Exception:
             pass
 
