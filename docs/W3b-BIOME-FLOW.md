@@ -1,6 +1,7 @@
 # W3b flow: biomes that spread at their edges
 
-Status: **draft, waiting on Chalce's answers.** Last part of W3.
+Status: **answered by Chalce 2026-10-13; 4 small points to confirm** (end).
+Last part of W3.
 
 ## What's there today
 
@@ -51,3 +52,37 @@ that; a short replay check can confirm the cause first.
    spore zones, ponds. All, or only some?
 3. Speed: one small change per island every ~500 ticks, or slower?
 4. Can a hazard ever cover a remembered food spot, or do they keep apart?
+
+## Chalce's answers (2026-10-13)
+
+- **Within one episode only.** The world is rebuilt each episode
+  (`ats_env.reset` makes a new World), so every change starts fresh. Already true.
+- **Every 500 ticks**, one small change per island.
+- **Lava / acid**: the hazard area does **not** grow. Its inside shifts:
+  safe and unsafe spots move over time.
+- **Volcanic island**: the island itself grows outward, sea turning to land, up
+  to a max size.
+- **Ice (tundra)**: ice grows out over the sea as a walkable shelf, limited by
+  island size: a small island gets only a thin ring, a big one up to 10-20 tiles.
+- **Hazard over things**: lava or acid moving onto a tile destroys any common
+  item (apple, stick, sword...) and any creature, alive or dead. **Legendary**
+  items (golden apple, legendary sword: none exist yet) survive.
+  Acid can instead make food poisonous.
+- **Ice destroys nothing.** No frozen food or frozen items.
+- **Groves** (forest/grass) spread and shrink but never destroy anything.
+
+Checked: the brain does see the sea as its own tile (8 in the 7x7 patch,
+nothing else uses 8). The close-island world (8-tile gaps, bridges) exists but
+is OFF since 2026-10-08 (`WORLD_BRIDGES = False`) because the invisible shark
+killed it; W2b's visible shark was the condition for bringing it back.
+
+## To confirm
+
+1. Volcanic: the island grows into the sea (new ash/rock land) and the lava
+   inside only shifts, it doesn't grow?
+2. Acid on food: destroy it now, and a "poisoned apple" item later (eating it
+   hurts)? Destroying is simpler and needs no new item.
+3. Keys / gate items count as legendary (survive), so a run can never become
+   unwinnable?
+4. Turn the close islands + bridges back on before training, or keep the far
+   islands for this round?
