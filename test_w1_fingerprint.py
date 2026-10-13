@@ -3,6 +3,10 @@
     py -3 test_w1_fingerprint.py --record   # once, BEFORE the change
     py -3 test_w1_fingerprint.py            # after: must match tick for tick
 
+It passed at commit db30fb9 (W1). W2 changes creature behaviour on purpose,
+so from W2 on it reports DIFFERENT; it stays as the record of the W1 proof
+and the tool for the next "no behaviour change" step (re-record first).
+
 Two parts, both hashed every tick:
   worlds    - 5 fixed seeds x 2000 ticks of the real env, random actions
               from a fixed generator. Covers the state vector, rewards,

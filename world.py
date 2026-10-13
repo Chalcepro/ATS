@@ -52,12 +52,16 @@ class Tile:
 # ---------------------------------------------------------------------------
 # Native entity pools per island
 # ---------------------------------------------------------------------------
+GRID         = 8      # cell size for creatures_near
+BIRTH_EVERY  = 25     # ticks between birth checks
+BIRTH_CHANCE = 0.25   # per missing creature per check: ~1 birth per 100 ticks
+
 _ISLAND_ENTITY_POOLS = {
     ISLAND_GRASSLAND:   ["E001", "E015", "E016", "E017", "E018"],
-    ISLAND_DARK_FOREST: ["E004", "E005", "E008", "E011", "E013", "E028"],
+    ISLAND_DARK_FOREST: ["E004", "E005", "E008", "E011", "E013", "E028", "E015"],
     ISLAND_VOLCANIC:    ["E007", "E022", "E026"],
     ISLAND_MUSHROOM:    ["E010", "E023", "E024"],
-    ISLAND_TUNDRA:      ["E012", "E021", "E025"],
+    ISLAND_TUNDRA:      ["E012", "E021", "E025", "E016"],
     ISLAND_BOSS:        ["E009", "E014", "E020"],
 }
 
@@ -124,6 +128,11 @@ class World:
         self.seed = seed
         self.tiles: dict[tuple[int, int], Tile] = {}
         self.entities: list[Entity] = []
+        # How many of each creature each island started with; births refill
+        # toward it, so an island never empties out (W2).
+        self._start_counts: dict[int, dict[str, int]] = {}
+        self._life_ticks = 0
+        self._grid: dict[tuple[int, int], list] = {}
         self.door_unlocked = True
         self.agent_spawn = (0, 0)
 
@@ -234,6 +243,68 @@ class World:
                 continue
             ent_id = pool[i % len(pool)]
             self.entities.append(Entity.from_id(ent_id, tx, ty))
+            counts = self._start_counts.setdefault(idef.island_id, {})
+            counts[ent_id] = counts.get(ent_id, 0) + 1
+
+    def index_creatures(self) -> None:
+        """Sort living creatures into GRID x GRID cells, once per tick, so a
+        creature looking around checks nearby cells, not every creature."""
+        grid: dict[tuple[int, int], list] = {}
+        for e in self.entities:
+            if e.alive:
+                grid.setdefault((e.x // GRID, e.y // GRID), []).append(e)
+        self._grid = grid
+
+    def creatures_near(self, x: int, y: int, r: int) -> list:
+        """Creatures in the cells within r of (x, y), as of the last index
+        (they may have moved a tile since; callers check distance)."""
+        out = []
+        for cx in range((x - r) // GRID, (x + r) // GRID + 1):
+            for cy in range((y - r) // GRID, (y + r) // GRID + 1):
+                out.extend(self._grid.get((cx, cy), ()))
+        return out
+
+    def tick_life(self) -> list:
+        """Births, every BIRTH_EVERY ticks: a creature below its island's
+        starting count may be born beside an adult of its kind (or, if none
+        is left, somewhere on its island away from the centre). The dead are
+        cleared out at the same time. Returns the newborns."""
+        self._life_ticks += 1
+        if self._life_ticks % BIRTH_EVERY:
+            return []
+        self.entities = [e for e in self.entities if e.alive]
+        alive: dict[tuple[int, str], list] = {}
+        for e in self.entities:
+            if not e.guard:
+                t = self.tiles.get((e.x, e.y))
+                alive.setdefault((t.island_id if t else -1, e.entity_id), []).append(e)
+        born = []
+        for island_id, counts in self._start_counts.items():
+            for eid, want in counts.items():
+                adults = alive.get((island_id, eid), [])
+                if len(adults) >= want or random.random() >= BIRTH_CHANCE:
+                    continue
+                pos = self._birth_spot(island_id, adults)
+                if pos:
+                    born.append(Entity.from_id(eid, *pos))
+        self.entities.extend(born)
+        return born
+
+    def _birth_spot(self, island_id: int, adults: list):
+        bad = (TILE_WALL, TILE_LAVA, TILE_ACID, TILE_WATER)   # as at the first spawn
+        if adults:
+            mum = random.choice(adults)
+            spots = [(mum.x + dx, mum.y + dy) for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0))]
+        else:
+            idef = self.island_registry.get_island(island_id)
+            cx, cy = idef.center
+            spots = [p for p in random.sample(list(idef.land_tiles), min(20, len(idef.land_tiles)))
+                     if abs(p[0] - cx) + abs(p[1] - cy) >= 8]
+        for p in spots:
+            t = self.tiles.get(p)
+            if t and t.tile_type not in bad and self.entity_at(*p) is None:
+                return p
+        return None
 
     def _lay_bridges(self) -> None:
         reg = self.island_registry

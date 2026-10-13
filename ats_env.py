@@ -147,6 +147,7 @@ class ATSEnvironment:
         self._process_pending_drops()
 
         # --- Entity AI ticks -----------------------------------------------
+        self.world.index_creatures()
         for ent in list(self.world.entities):
             if not ent.alive:
                 continue
@@ -200,6 +201,7 @@ class ATSEnvironment:
             self.rewards.on_level_up()
 
         self.events.tick(self.world)
+        self.world.tick_life()
         self.tick += 1
 
         # Stepping onto a bridge builds the island it leads to, if it is not

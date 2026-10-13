@@ -34,7 +34,10 @@ being eats, rests, wanders, flees and (if a predator) hunts **whatever is prey
 by its tags**, not just the agent. Relationships by **tags** (predator / prey /
 herd / guard). Only creatures on built islands tick, as today, so cost stays
 bounded. Measure ticks per second.
-Flow: `docs/W2-FLOW.md` (written 2026-10-13, waiting for Chalce's OK).
+Flow: `docs/W2-FLOW.md`. **Built 2026-10-13**: `test_w2_life.py` 8/8; every job
+happens in real play; speed unchanged (starting island and all-islands).
+Still to call it done: show each creature's job in the replay viewer, and
+a training run with the kept brain.
 
 ## W3: Living land
 Food regrows on a cycle; biomes spread slowly at their edges. The world
@@ -75,5 +78,5 @@ storms.
 - **Keep the trained brain** and migrate it. The point is that it copes with a
   changing world instead of collapsing back to zero.
 
-## Next: W2
-Answer the 4 questions at the end of `docs/W2-FLOW.md`, then build.
+## Next: finish W2
+Job in the replay viewer, then a short training run (ask Chalce first: heavy).

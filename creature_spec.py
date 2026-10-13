@@ -25,7 +25,14 @@ HOSTILITY = {
 }
 STATUSES = {"poisoned", "burning", "slowed", "blinded"}
 TOP_KEYS = {"name", "brain_id", "island", "tags", "stats", "hostility",
-            "on_hit", "on_death", "reward", "killer_name", "planned"}
+            "on_hit", "on_death", "reward", "killer_name", "life", "planned"}
+# Its own life, apart from the agent (W2). All optional; a creature without
+# "life" just wanders. Who eats or fears whom is by tag, never by ID.
+#   diet: tags it eats ("grass" = grazes open ground)   hunger_max: ticks to starving
+#   sight: how far it notices food and danger           fears: tags it runs from
+#   herd: stays near its own kind                       grudge: hit by the agent, it
+#                                                       chases until this far away
+LIFE_KEYS = {"diet", "hunger_max", "sight", "fears", "herd", "grudge"}
 STAT_KEYS = {"hp", "damage", "telegraph", "move_every"}
 
 
@@ -49,6 +56,12 @@ class CreatureSpec:
     boss: bool
     killer_name: str         # how a death by it is reported
     planned: dict = field(default_factory=dict)
+    diet: frozenset = frozenset()
+    hunger_max: int = 0
+    sight: int = 0
+    fears: frozenset = frozenset()
+    herd: bool = False
+    grudge: int = 0
 
     def has(self, tag: str) -> bool:
         return tag in self.tags
@@ -76,6 +89,10 @@ def parse(cid: str, d: dict) -> CreatureSpec:
     _only(w + " on_death", death, {"drop", "spawn"})
     reward = d.get("reward", {})
     _only(w + " reward", reward, {"kill", "boss"})
+    life = d.get("life", {})
+    _only(w + " life", life, LIFE_KEYS)
+    if life.get("diet") and not life.get("hunger_max"):
+        raise ValueError(f"{w}: life has a diet but no hunger_max")
     return CreatureSpec(
         id=cid, name=d["name"], brain_id=int(d["brain_id"]), island=int(d["island"]),
         tags=frozenset(d.get("tags", ())),
@@ -88,6 +105,9 @@ def parse(cid: str, d: dict) -> CreatureSpec:
         kill_reward=float(reward["kill"]), boss=bool(reward.get("boss", False)),
         killer_name=d.get("killer_name", d["name"]),
         planned=dict(d.get("planned", {})),
+        diet=frozenset(life.get("diet", ())), hunger_max=int(life.get("hunger_max", 0)),
+        sight=int(life.get("sight", 0)), fears=frozenset(life.get("fears", ())),
+        herd=bool(life.get("herd", False)), grudge=int(life.get("grudge", 0)),
     )
 
 

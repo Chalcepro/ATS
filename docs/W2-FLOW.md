@@ -1,6 +1,7 @@
 # W2 flow: beings live their own lives
 
-Status: **flow written 2026-10-13, waiting for Chalce's OK. No code yet.**
+Status: **agreed with Chalce 2026-10-13 and built.** Decisions at the end;
+they override the first draft above where they differ.
 Step W2 of `WORLD-BACKLOG.md`. W1 made creatures data; W2 gives them a life
 that doesn't revolve around the agent.
 
@@ -112,3 +113,32 @@ W2 *changes* behaviour, so the W1 fingerprint can't match. Instead:
    only Ice Wolf (the tougher island) so the starting island stays gentle?
 3. **Births**: the "refill to starting count" rule above, fine for now?
 4. The table above: any creature you see differently?
+
+## Chalce's answers (2026-10-13), as built
+
+1. **Grazers eat any open ground.** No tile changes; W3 brings real food.
+2. **Wolves never hunt the agent, hungry or not.** Only if the agent attacks
+   one does it come after the agent (a *grudge*), and it gives up once the
+   agent is far away (`grudge: 8` tiles). Every creature that defends its
+   space got the same grudge. Starting point; one number per creature in the data.
+3. **Refill, gradually**: births beside an adult of its kind, about one per
+   100 ticks per kind that is short, so it reads as a life cycle, not an
+   empty island suddenly full. Never above the starting count.
+4. **Table as drafted.** New rule for later creatures: **small animals
+   (chickens, rats, ...) are never a threat by default**: at most they fight
+   back when attacked. Snakes and scorpions: decide when they're added.
+
+## What else changed while building
+
+- **Predators and prey lived on different islands**, so hunting would never
+  happen. Added Deer to the Dark Forest pool and Rabbit to the Tundra pool
+  (`world.py`, one line each). Both bats are now `prey`/`small` and run from
+  predators; spiders, zombies, husks and the yeti eat prey that comes close.
+- **Old wander always tried north first** (the direction list was never
+  shuffled), so idle creatures drifted north. Now random.
+- **Land creatures could walk into the sea** (`_passable` treated "no tile" as
+  open). Now land creatures stay on land.
+- **Dead creatures were never removed** from the world's list; births would
+  have grown it forever. Cleared at each birth check.
+- Not built yet, still under `planned`: pack hunting, guards attacking
+  hostiles (the Guardian NPC isn't placed on any island), ranged attacks.

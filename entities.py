@@ -13,6 +13,11 @@ from dataclasses import dataclass
 from creature_spec import CreatureSpec
 from item_ids import REGISTRY
 
+REST_AFTER = 300    # ticks awake before a rest
+REST_TICKS = 20     # how long a rest lasts
+FLEE_TICKS = 6      # how long a hit creature keeps running
+HERD_GAP   = 3      # a herd animal further than this from its kind walks back
+
 
 @dataclass
 class Entity:
@@ -29,6 +34,15 @@ class Entity:
     _void_proximity_ticks: int = 0
     # Wander timer
     _wander_ticks: int = 0
+    # Its own life (W2): needs, what it's doing, and why
+    hunger: int = 0
+    tired: int = 0
+    job: str = "wander"         # wander/graze/hunt/eat/flee/rest/fight/chase
+    rest_left: int = 0
+    flee_left: int = 0
+    flee_from: tuple = None
+    angry: bool = False         # the agent hit it; chases until far away
+    _bite_ticks: int = 0
     # Creeper explosion flag
     exploded: bool = False
     # A bridge guard holds its post: it never wanders off the bridge, only
@@ -53,17 +67,19 @@ class Entity:
     # Main AI tick
     # ------------------------------------------------------------------
     def tick_ai(self, agent_x: int, agent_y: int, world=None) -> int:
-        """Advance entity AI.  Returns damage dealt to agent this tick (0 if none)."""
+        """Advance one tick.  Returns damage dealt to agent this tick (0 if none).
+
+        Its own life - eating, fleeing, resting - is decided from the creatures
+        the world says are near it (World.creatures_near).
+        """
         if not self.alive:
             return 0
 
         dist = abs(self.x - agent_x) + abs(self.y - agent_y)
         kind = self.spec.hostility
-
-        # ---- Leaves the agent alone (fleeing happens in take_damage) --
-        if kind in ("ignores", "flees_when_hit"):
-            self._wander(world)
-            return 0
+        if self.spec.hunger_max:
+            self.hunger += 1
+        self.tired += 1
 
         # ---- Hunts: closes in, bites (the shark) ---------------------
         if kind == "hunts":
@@ -82,18 +98,26 @@ class Entity:
             self.state = 2
             return self.spec.damage
 
-        # ---- Defends its space: attacks what comes within reach ------
-        telegraph_dur = self.spec.telegraph
+        # ---- Fights the agent: within its space, or adjacent while it
+        #      holds a grudge (the agent hit it first) ----------------------
+        if self.angry and dist > self.spec.grudge:
+            self.angry = False                  # the agent got far enough away
+        space = self.spec.hostility_args.get("space", -1)
+        if dist <= space or (self.angry and dist <= 1):
+            self.job = "fight"
+            return self._attack_cycle(kind, dist)
+        self.state = 0
+        self.telegraph_ticks = 0
 
-        if dist > self.spec.hostility_args["space"]:
-            # Out of range — wander (a guard stays on its post)
-            self.state = 0
-            self.telegraph_ticks = 0
-            if not self.guard:
-                self._wander(world)
-            return 0
+        if self.angry:
+            self.job = "chase"
+            self._step(world, (agent_x, agent_y), away=False, every=self._run_every(3))
+        elif not self.guard:                    # a guard holds its post
+            self._live(world)
+        return 0
 
-        # In range — attack cycle
+    def _attack_cycle(self, kind: str, dist: int) -> int:
+        """Telegraph, then strike (the Creeper explodes instead)."""
         if self.state == 0:
             self.state = 1
             self.telegraph_ticks = 0
@@ -101,7 +125,7 @@ class Entity:
 
         if self.state == 1:
             self.telegraph_ticks += 1
-            if self.telegraph_ticks >= telegraph_dur:
+            if self.telegraph_ticks >= self.spec.telegraph:
                 self.state = 2
                 # Creeper: explode instead of normal attack
                 if kind == "explodes" and dist <= 1:
@@ -111,10 +135,96 @@ class Entity:
             return 0
 
         # state == 2: deal damage
-        damage = self.spec.damage
         self.state = 1
         self.telegraph_ticks = 0
-        return damage
+        return self.spec.damage
+
+    # ------------------------------------------------------------------
+    # Its own life: flee > eat > rest > wander, most urgent first
+    # ------------------------------------------------------------------
+    def _live(self, world) -> None:
+        spec = self.spec
+        others = (world.creatures_near(self.x, self.y, spec.sight)
+                  if spec.sight and world is not None else ())
+        if self.rest_left:                      # finishing a rest
+            self.rest_left -= 1
+            self.job = "rest"
+            return
+
+        threat = None
+        if self.flee_left:
+            self.flee_left -= 1
+            threat = self.flee_from
+        elif spec.fears:
+            near = self._nearest(others, spec.fears)
+            if near:
+                threat = (near.x, near.y)
+        if threat:
+            self.job = "flee"
+            self._step(world, threat, away=True, every=self._run_every(2))
+            return
+
+        if spec.hunger_max and self.hunger >= spec.hunger_max // 2:
+            if "grass" in spec.diet:
+                if _land(world, self.x, self.y):
+                    self.job = "graze"
+                    self.hunger = max(0, self.hunger - 20)
+                    return
+            else:
+                prey = self._nearest(others, spec.diet)
+                if prey:
+                    self.job = "hunt"
+                    if abs(prey.x - self.x) + abs(prey.y - self.y) <= 1:
+                        self._bite(prey, world)
+                    else:
+                        self._step(world, (prey.x, prey.y), away=False, every=self._run_every(3))
+                    return
+
+        if self.tired >= REST_AFTER:
+            self.tired = 0
+            self.rest_left = REST_TICKS
+            self.job = "rest"
+            return
+
+        self.job = "wander"
+        if spec.herd:
+            mate = self._nearest(others, None)
+            if mate and abs(mate.x - self.x) + abs(mate.y - self.y) > HERD_GAP:
+                self._step(world, (mate.x, mate.y), away=False, every=spec.move_every)
+                return
+        self._wander(world)
+
+    def _bite(self, prey: "Entity", world) -> None:
+        """One bite per telegraph+1 ticks; eating the kill ends its hunger."""
+        self._bite_ticks += 1
+        if self._bite_ticks <= self.spec.telegraph:
+            return
+        self._bite_ticks = 0
+        prey.take_damage(self.spec.damage, (self.x, self.y), world, by_agent=False)
+        if not prey.alive:
+            self.hunger = 0
+            self.job = "eat"
+
+    def _nearest(self, others, tags) -> "Entity | None":
+        """Nearest living creature in sight with any of `tags` (None = its
+        own kind). Never itself, never its own kind as food."""
+        best, best_d = None, self.spec.sight + 1
+        for o in others:
+            if o is self or not o.alive or o.spec.has("unkillable"):
+                continue
+            if tags is None:
+                if o.entity_id != self.entity_id:
+                    continue
+            elif o.entity_id == self.entity_id or not (o.spec.tags & tags):
+                continue
+            d = abs(o.x - self.x) + abs(o.y - self.y)
+            if d < best_d:
+                best, best_d = o, d
+        return best
+
+    def _run_every(self, factor: int) -> int:
+        """Running (chasing, fleeing) moves `factor` times faster than walking."""
+        return max(1, self.spec.move_every // factor)
 
     # ------------------------------------------------------------------
     # Void proximity logic
@@ -135,10 +245,17 @@ class Entity:
     # ------------------------------------------------------------------
     # Wander / flee movement
     # ------------------------------------------------------------------
-    def _wander(self, world, flee_from: tuple[int, int] | None = None):
+    def _step(self, world, target: tuple[int, int], away: bool, every: int):
+        """Move toward or away from `target`, once every `every` ticks."""
+        tx, ty = target
+        if not away:                       # toward = away from the mirror point
+            tx, ty = 2 * self.x - tx, 2 * self.y - ty
+        self._wander(world, flee_from=(tx, ty), every=every)
+
+    def _wander(self, world, flee_from: tuple[int, int] | None = None, every: int = 0):
         """Move randomly (wander) or away from a point (flee)."""
         self._wander_ticks += 1
-        if self._wander_ticks < self.spec.move_every:
+        if self._wander_ticks < (every or self.spec.move_every):
             return
 
         self._wander_ticks = 0
@@ -151,7 +268,11 @@ class Entity:
                 key=lambda d: -(abs(self.x + d[0] - fx) + abs(self.y + d[1] - fy))
             )
 
-        random.shuffle(directions[:2])  # some randomness even when fleeing
+            best = directions[:2]
+            random.shuffle(best)            # some randomness even when fleeing
+            directions[:2] = best
+        else:
+            random.shuffle(directions)
 
         sea_only = self.spec.has("ocean") and _sharks_stay_in_water()
         for dx, dy in directions:
@@ -167,10 +288,13 @@ class Entity:
     # ------------------------------------------------------------------
     # Take damage & split mechanics
     # ------------------------------------------------------------------
-    def take_damage(self, amount: int, attacker_pos: tuple[int, int] | None = None, world=None):
+    def take_damage(self, amount: int, attacker_pos: tuple[int, int] | None = None,
+                    world=None, by_agent: bool = True):
         if self.spec.has("unkillable"):
             return
         self.hp -= amount
+        if by_agent and self.spec.grudge:
+            self.angry = True
         if self.hp <= 0:
             self.alive = False
             # What it splits into (Magma Cube). world.attack_at doesn't pass
@@ -179,8 +303,10 @@ class Entity:
                 for sid, dx, dy in self.spec.spawn_on_death:
                     world.spawn_entity(sid, self.x + dx, self.y + dy)
         elif self.spec.hostility == "flees_when_hit" and attacker_pos:
-            # Passive entities flee when hit
-            self._wander(world, flee_from=attacker_pos)
+            # Passive creatures run from whoever hit them, for a while
+            self.flee_from = attacker_pos
+            self.flee_left = FLEE_TICKS
+            self.rest_left = 0
 
 
 def _sharks_stay_in_water() -> bool:
@@ -209,8 +335,15 @@ def _passable(world, x: int, y: int, sea_only: bool = False) -> bool:
     try:
         tile = world._tile(x, y)
         if sea_only:
-            return tile.tile_type == 8           # TILE_OCEAN
-        return tile.tile_type not in (1, 7)  # not a wall or gate
+            return tile is not None and tile.tile_type == 8   # TILE_OCEAN
+        # Land creatures stay on land: no sea, no wall, no gate
+        return tile is not None and tile.tile_type not in (1, 7, 8)
     except Exception:
         return True
+
+
+def _land(world, x: int, y: int) -> bool:
+    """Open ground a grazer can eat from (W3 replaces this with real food)."""
+    tile = world._tile(x, y) if world is not None else None
+    return tile is not None and tile.tile_type == 0    # TILE_EMPTY
 
