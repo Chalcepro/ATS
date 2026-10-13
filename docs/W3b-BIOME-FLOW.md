@@ -6,7 +6,7 @@ Last part of W3.
 ## What's there today
 
 - Each island is **one** biome (grassland, dark forest, volcanic, mushroom,
-  tundra, boss). Islands are 100+ tiles of sea apart, joined by single bridges.
+  tundra, boss). Islands are ~250 tiles of sea apart (bridges are off, see below).
 - So two biomes never touch: there is no edge *between* biomes on land.
 - Inside an island, the land is fixed for the whole run: hazard tiles (lava,
   acid, ice), spore zones, walls, ponds, groves (W3) never move.
