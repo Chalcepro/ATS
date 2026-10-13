@@ -41,8 +41,17 @@ place). Kept brain, no learning, 8 fixed worlds × 3000 ticks: W1 median 810 /
 mean 947 ticks survived, W2 median 988 / mean 1067. No collapse. 15 of 16
 deaths in both were **sharks**: the brain's real weakness, not the creatures.
 
+## W2b: A shark you can see coming
+Chalce's idea (2026-10-13): today the sea just hurts, with nothing visible
+attacking, so the brain can't learn what kills it (15 of 16 deaths). The shark
+surfaces in view, waits, then charges in a straight line; dodge and it waits
+again. New SHARK tile + a real brain_id.
+Flow: `docs/W2b-SHARK-FLOW.md` (waiting for Chalce's OK).
+
 ## W3: Living land
-Food regrows on a cycle; biomes spread slowly at their edges. The world
+Food grows in patches where it belongs (wild by trees and bushes, man-made by
+huts), far apart, and regrows out of the agent's sight. Biomes spread slowly
+at their edges. The world
 changes over a run, so memory and planning start paying off.
 
 ## W4: Senses, in one batch (one brain migration)
@@ -80,5 +89,6 @@ storms.
 - **Keep the trained brain** and migrate it. The point is that it copes with a
   changing world instead of collapsing back to zero.
 
-## Next: W3 (living land)
-W2 is done. Real training on W2 starts when Chalce runs Train.bat.
+## Next: W2b, then W3
+Both flows written 2026-10-13 (`W2b-SHARK-FLOW.md`, `W3-FLOW.md`), each
+ends with questions for Chalce. Build after his answers.
