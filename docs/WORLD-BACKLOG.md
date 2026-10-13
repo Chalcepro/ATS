@@ -20,11 +20,13 @@ the model senses) and `docs/research/worldbox-notes.md` (how WorldBox is built).
 - [x] ATS audit: lots of world content already; the model senses little of it;
       creatures only act toward the agent.
 
-## W1: Beings as data (no behaviour change)
+## W1: Beings as data (DONE 2026-10-13)
 Creatures get **stats + flags + traits** in `assets/entities.json` (WorldBox's
 asset idea), instead of special cases in code. A new creature = new data.
 Proof it's safe: same seed, same replay before and after.
-Flow: `docs/W1-FLOW.md` (written 2026-10-13, waiting for Chalce's OK).
+Flow: `docs/W1-FLOW.md`. Proof: `test_w1_fingerprint.py` matched every tick of
+5 worlds × 29 creatures. Speed unchanged (~94 → ~96 ticks/s, within noise).
+Bosses fixed to Ancient Golem + Lava Golem.
 
 ## W2: Beings live their own lives
 A small **job → task → step** system (WorldBox's behaviour idea). Every
@@ -32,6 +34,7 @@ being eats, rests, wanders, flees and (if a predator) hunts **whatever is prey
 by its tags**, not just the agent. Relationships by **tags** (predator / prey /
 herd / guard). Only creatures on built islands tick, as today, so cost stays
 bounded. Measure ticks per second.
+Flow: `docs/W2-FLOW.md` (written 2026-10-13, waiting for Chalce's OK).
 
 ## W3: Living land
 Food regrows on a cycle; biomes spread slowly at their edges. The world
@@ -72,6 +75,5 @@ storms.
 - **Keep the trained brain** and migrate it. The point is that it copes with a
   changing world instead of collapsing back to zero.
 
-## Next session: start W1
-Write W1's flow (entities.json stats/flags/traits/tags shape + the "same seed,
-same replay" proof), get Chalce's OK, then build.
+## Next: W2
+Answer the 4 questions at the end of `docs/W2-FLOW.md`, then build.
