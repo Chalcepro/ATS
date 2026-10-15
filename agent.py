@@ -749,6 +749,20 @@ class Agent:
             else:
                 self.ocean_ticks = 0
 
+        # Swimming tires you (config_rl.SEA_TIRES). The open sea cost nothing,
+        # so past the shore sharks it swam off out of sight of land and
+        # starved there - every starvation death in a 10-15 sample was 120+
+        # tiles out. Now each tick at sea costs stamina, and with none left
+        # you drown. A dip near the shore is fine; swimming away is not.
+        at_sea = (getattr(config_rl, "SEA_TIRES", False)
+                  and cur_t is not None and cur_t.tile_type == 8)
+        if at_sea:
+            self.stamina = max(0, self.stamina - config_rl.SWIM_STAMINA_COST)
+            if self.stamina <= 0:
+                self.health = max(0, self.health - config_rl.DROWN_DAMAGE_PER_TICK)
+                self.last_damage_cause = "drowning"
+                rewards.on_damage(config_rl.DROWN_DAMAGE_PER_TICK)
+
         # Status effect ticks
         if self.status["poisoned"] > 0:
             self.health -= 1
@@ -763,8 +777,8 @@ class Agent:
         if self.status["blinded"] > 0:
             self.status["blinded"] -= 1
 
-        # Stamina regen
-        if not self.sprint and self.stamina < 100:
+        # Stamina regen - not while swimming, under SEA_TIRES
+        if not self.sprint and self.stamina < 100 and not at_sea:
             self.stamina += 1
 
     # ------------------------------------------------------------------

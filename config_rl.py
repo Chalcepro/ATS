@@ -175,6 +175,17 @@ W3_SPREAD = True
 SEA_SURVIVABLE = True
 SEA_DAMAGE_PER_TICK = 25  # heavy: ~4 ticks in deep water from full HP = death
 
+# 2026-10-15 (Chalce): swimming tires you. 1,218 episodes showed the open sea
+# was free once past the shore sharks - no stamina cost, nothing to see - so
+# the agent swam out of sight of land and starved there (every starvation
+# death sampled was 120+ tiles out; sharks killed at 1-3 tiles). True = each
+# tick on an ocean tile costs SWIM_STAMINA_COST stamina and stamina does not
+# refill at sea; at 0 you drown, DROWN_DAMAGE_PER_TICK health a tick. From
+# full: ~100 ticks of swimming, then ~50 more to drown. False = the free sea.
+SEA_TIRES = True
+SWIM_STAMINA_COST = 1
+DROWN_DAMAGE_PER_TICK = 2
+
 # 2026-10-09 (Chalce): bigger land so the agent has room to live without the
 # coast always a few steps away (at ep 400 it still drowned 99% of the time -
 # the sea was just too close). Scales island radius; islands sit ~250 tiles
