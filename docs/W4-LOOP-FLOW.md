@@ -89,7 +89,35 @@ wolf dies  →  cut  →  world (random seed), next to the nearest wolf
 - Compare runs as before: life, reward, causes of death. Plus: rooms beaten
   per episode, and how many ticks each room takes.
 
-## Questions for Chalce
+## Answers so far (2026-10-16)
+
+- Goals before the world drop: **a set number** (proposal: 3, in config).
+- Equipping: **damage from the held slot only, everywhere.** The state has no
+  "what am I holding" input; the height-behind input (index 9) is always 0
+  (`get_adjacent_z` is a stub), so it becomes "held weapon damage".
+- The Loop sits **alongside** the toy-grid rehearsal.
+- Bearings: **20 ticks**.
+- Chalce: a **shore room**: go into the sea → back to the start of the room;
+  stay on land 3-4 s → done.
+
+## My take (Claude, 10-16) - waiting on Chalce
+
+Better than what we have: real-world rooms, the drop next to the real thing,
+deaths that teach instead of ending the episode, and kits that force the
+inventory. Four changes I'd make:
+
+1. **Give-up timer**: a room it can't solve would trap it for the whole
+   episode. After N ticks, a different room.
+2. **Dying costs more than a room pays**, or dying becomes a shortcut to
+   room rewards.
+3. **Half the rooms match what killed it** (drowned → shore room), half random.
+4. **A "you're in the Loop" input**, so it doesn't mix the Loop up with the world.
+
+Note: a real wolf has only 8 HP and the sword does 5, so "25% health" would be
+2 HP, and bare hands kill that too. Proposed instead: a full 8 HP wolf (2 sword
+hits) and the agent arriving at 20 HP (bare hands take 8 hits, and it dies after ~5 bites).
+
+## Questions for Chalce (first round)
 
 1. How many goals before the world drop: **one** (the wolf example), or a set number?
 2. **Equipping**: damage from the held slot only, everywhere (in the world as
