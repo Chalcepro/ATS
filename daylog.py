@@ -50,6 +50,7 @@ CAUSE_HINTS = [
     ("void", "the Void"),
     ("shark", "shark / drowning"),
     ("drowned", "shark / drowning"),
+    ("drowning", "drowning (tired out at sea)"),   # SEA_TIRES, 10-15
     ("ocean", "shark / drowning"),
     ("lava", "lava"),
     ("poison", "poison"),
