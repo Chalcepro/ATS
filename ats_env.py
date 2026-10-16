@@ -416,11 +416,12 @@ class ATSEnvironment:
         a.has_sword = any(s["id"] in ("0002", "0013", "0033", "0034") for s in a.inventory)
         self.loop_on_land = 0
         self.loop_was_on_land = False
+        self.loop_room_ticks = 0        # ticks in this try (or since the doors opened)
         self.loop_arrival_hunger = a.hunger
         a.log_event("The Loop: the %s room" % room.name)
 
     def _room_failed(self):
-        """Died in the room, or sent back to its start: the same room again,
+        """Died in the room, sent back to its start, or out of time: the same room again,
         or a different one after LOOP_ROOM_DEATHS_TO_SWAP failures in it."""
         self.loop_room_deaths += 1
         if self.loop_room_deaths >= getattr(config_rl, "LOOP_ROOM_DEATHS_TO_SWAP", 5):
@@ -450,7 +451,16 @@ class ATSEnvironment:
             self._leave_room()
             return
         self.world.wrap_all(a)
+        self.loop_room_ticks += 1
+        late = self.loop_room_ticks > getattr(config_rl, "LOOP_ROOM_TIMEOUT", 600)
         if self.world.doors_open:
+            if late:                    # it won the room; don't let finding a door eat the episode
+                self._leave_room()
+            return
+        if late:
+            self.rewards.add(getattr(config_rl, "LOOP_TIMEOUT_PENALTY", -5.0), "loop_timeout")
+            a.log_event("Out of time in the %s room" % room.name)
+            self._room_failed()
             return
         if room.sends_back and room.sends_back(self):
             a.log_event("Back to the start")
@@ -463,6 +473,7 @@ class ATSEnvironment:
                 self._leave_room()
             else:
                 self.world.doors_open = True
+                self.loop_room_ticks = 0
                 a.log_event("The doors open")
 
     def _leave_room(self):

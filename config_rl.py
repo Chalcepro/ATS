@@ -194,7 +194,10 @@ DROWN_DAMAGE_PER_TICK = 2
 LOOP = True
 LOOP_GOALS_BEFORE_DROP = 3
 LOOP_BEARINGS_TICKS = 20      # after every arrival: nothing moves or hurts, actions do nothing
-LOOP_ROOM_DEATHS_TO_SWAP = 5  # die this many times in one room -> a different room
+LOOP_ROOM_DEATHS_TO_SWAP = 5  # fail (die or time out) this many times in one room -> a different room
+LOOP_ROOM_TIMEOUT = 600      # not solved in this many ticks = a failed try (10-16: rooms
+                              # with nothing to kill it, like the lever, held it a whole episode)
+LOOP_TIMEOUT_PENALTY = -5.0   # a timed-out try: less than a death, so it's no escape hatch
 LOOP_SHORE_TICKS = 20         # shore room: this long on land in a row
 LOOP_DEATH_PENALTY = -20.0    # each death (world deaths also forfeit DEATH_FORFEIT)
 LOOP_GOAL_REWARD = 10.0       # beating a room: less than a death costs

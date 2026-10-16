@@ -188,6 +188,33 @@ def test_five_deaths_in_a_room_swap_it():
     assert env.loop_room.kind != "fight" and env.loop_room_deaths == 0
 
 
+def test_out_of_time_is_a_failed_try_and_five_swap_the_room():
+    env = fresh()
+    die(env)
+    room = into(env, loop.lever_room(random.Random(12)))
+    for _ in range(config_rl.LOOP_ROOM_TIMEOUT + 1):
+        env.step(WAIT)
+    assert env.loop_room is room and env.loop_room_deaths == 1
+    assert env.rewards.tally["loop_timeout"] == [config_rl.LOOP_TIMEOUT_PENALTY, 1]
+    for _ in range(config_rl.LOOP_ROOM_DEATHS_TO_SWAP - 1):
+        settle(env)
+        for _ in range(config_rl.LOOP_ROOM_TIMEOUT + 1):
+            env.step(WAIT)
+    assert env.loop_room.kind != "lever"
+
+
+def test_won_room_but_no_door_found_leaves_anyway():
+    env = fresh()
+    die(env)
+    env.loop_goals = 0
+    room = into(env, loop.lava_room(random.Random(13)))   # standing still is safe here
+    env.world.doors_open = True
+    env.loop_room_ticks = 0
+    for _ in range(config_rl.LOOP_ROOM_TIMEOUT + 1):
+        env.step(WAIT)
+    assert env.loop_room is not room and env.loop_goals == 1
+
+
 def test_rooms_vary():
     rng = random.Random(10)
     rooms = [loop.pick_room(None, rng) for _ in range(200)]

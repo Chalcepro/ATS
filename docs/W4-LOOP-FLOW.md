@@ -188,3 +188,12 @@ the same room, a new entry is a new one. 5 kinds, ~50 variants before layout:
 
 Note: an episode now always runs to the cap (8,000 ticks), so episodes take
 longer in wall-clock time than when a death ended them at ~550.
+
+## Room time limit (2026-10-16, Chalce: "add that")
+
+The first Loop run (4 fixed rooms) got stuck: in the lever room nothing can
+kill it, so 5 deaths to swap took a whole episode (starving is ~3,000 ticks).
+Now `LOOP_ROOM_TIMEOUT` = 600 ticks: not solved in time = a failed try
+(-5, `LOOP_TIMEOUT_PENALTY`, less than a death so it's no escape hatch), the
+room starts again; 5 failed tries of any kind = a different room. A room it
+has WON but can't find the door out of lets it go after another 600 ticks.
