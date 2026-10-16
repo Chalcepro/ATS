@@ -1,6 +1,8 @@
 # W4 flow: the Loop (rooms you can't walk out of)
 
-Status: **draft, 2026-10-16. Not built.** Waiting on the questions at the end.
+Status: **built 2026-10-16** (`loop.py`, `ats_env.py`, `test_loop.py`), behind
+`config_rl.LOOP`. See "As built" at the end; the sections in between are
+the design history.
 
 ## Why
 
@@ -125,3 +127,36 @@ hits) and the agent arriving at 20 HP (bare hands take 8 hits, and it dies after
 3. Does the Loop **replace** the toy-grid rehearsal (40% of episodes), or sit
    alongside it?
 4. Bearings: 3-4 seconds is how many ticks? (proposal: 20)
+
+## As built (2026-10-16, after Chalce's second round)
+
+Chalce's second round: dungeon look (**stone floor, walls, a doorway in each
+wall**); before the goal a doorway loops back into the room, **after the goal
+the doors open** and a doorway leads out; a room whose way out is **an object
+you interact with** (a lever, E); and the **route channel** from the primary
+maze rooms showing the way to it. Stuck room: **change after 5 deaths** in it.
+Death **-20**. Wolf at full health, agent arriving at 20 HP: agreed.
+
+| Room | Arrives with | Goal | Back in the world by |
+|---|---|---|---|
+| wolf | 20 HP, apple held, sword in slot 1 | kill the 8 HP wolf, then a door | the nearest wolf |
+| shore | in a pool of sea | 20 ticks on stone (back in the water = start over) | two tiles off the nearest beach |
+| hungry | hunger 10 | eat (apples behind walls), then a door | the nearest apple |
+| lever | - | pull the lever (that is the way out) | where it died |
+
+- Floor is `TILE_STONE` = 4 (was `TILE_NPC`, never drawn, so the brain's row
+  for it was unused; no migration). Lever = item `0088`, type `switch`.
+- Senses reuse two state slots that were always 0 (`get_adjacent_z` is a
+  stub): index 6 = in the Loop, index 9 = held weapon damage / 20. State size
+  is unchanged and the brain loads as it is.
+- Route channel: the way to the lever, or to the nearest doorway once the
+  doors are open. Never the way to the room's own challenge. Zeros in the world.
+- Death: -20 each (`LOOP_DEATH_PENALTY`); a world death also forfeits 35% of
+  what was earned, as before. A room pays +10 (`LOOP_GOAL_REWARD`).
+- Room after a world death: half the time the room about the cause
+  (drowning/shark -> shore, wolf -> wolf, starvation -> hungry), else random.
+- 3 rooms (`LOOP_GOALS_BEFORE_DROP`), then the world. Every arrival: 20
+  ticks of bearings. Back in the world: full health and hunger, kit kept.
+- An episode now always runs to its tick cap; "Survived" means it reached
+  the cap **without dying**, so the survival ladder can't be cheated.
+- Loop rooms don't pay exploration, and their creatures don't breed.

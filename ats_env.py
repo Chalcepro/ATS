@@ -12,6 +12,7 @@ from __future__ import annotations
 import random
 
 import config_rl
+import loop
 from agent import Agent
 from day_night import DayNight
 from events import EventSystem
@@ -23,7 +24,8 @@ from world import World
 
 class ATSEnvironment:
     def __init__(self, max_ticks: int | None = None,
-                 world_seed: int | None = None, vary_world: bool = True):
+                 world_seed: int | None = None, vary_world: bool = True,
+                 use_loop: bool | None = None):
         """
         world_seed
             The seed for the first episode. None means one is drawn at random,
@@ -49,6 +51,8 @@ class ATSEnvironment:
         # and raising the constant to ten days would only make each failure
         # take ten times longer to watch.
         self.max_ticks = int(max_ticks or config_rl.MAX_TICKS)
+        # W4: death lands it in the Loop instead of ending the episode.
+        self.use_loop = getattr(config_rl, "LOOP", False) if use_loop is None else use_loop
         # Its own generator, seeded once. A per-episode seed drawn from this
         # gives variety AND reproducibility: the run seed plus the episode
         # number names the world exactly, which is what makes a recorded death
@@ -77,6 +81,7 @@ class ATSEnvironment:
             self.agent.y,
             self.day_night.perception_radius(self.agent.torch_active),
         )
+        self._loop_reset()
 
     # ------------------------------------------------------------------
     # Reset
@@ -103,6 +108,7 @@ class ATSEnvironment:
             self.agent.y,
             self.day_night.perception_radius(self.agent.torch_active),
         )
+        self._loop_reset()
         return self._state()
 
     # ------------------------------------------------------------------
@@ -125,6 +131,8 @@ class ATSEnvironment:
 
         self.rewards.reset_tick()
         self._killed_this_tick = []
+        if self.bearings > 0:
+            return self._bearings_tick(action_idx)
 
         # --- Agent action --------------------------------------------------
         failed_action_flag = 0
@@ -166,11 +174,12 @@ class ATSEnvironment:
                 killer = ent.spec.killer_name
                 self.agent.health = 0
                 self.agent.last_damage_cause = killer
-                self.death_cause = killer
-                self.rewards.on_death()
                 self.agent.log_event("Consumed by the Void!" if killer == "the Void"
                                      else "Killed by %s!" % killer)
-                self.done = True
+                if not self.use_loop:       # the Loop: the death check below handles it
+                    self.death_cause = killer
+                    self.rewards.on_death()
+                    self.done = True
                 break
 
             # Creeper AoE — check radius
@@ -206,7 +215,8 @@ class ATSEnvironment:
         if self.agent.level > prev_level:
             self.rewards.on_level_up()
 
-        self.events.tick(self.world)
+        if not self.in_loop:
+            self.events.tick(self.world)
         self.world.tick_life(self.agent.x, self.agent.y)
         self.tick += 1
 
@@ -220,7 +230,9 @@ class ATSEnvironment:
         # Per-tile exploration reward (first visit only). The sea pays only
         # if EXPLORE_PAYS_OCEAN says so - see config_rl.
         here = self.world._tile(self.agent.x, self.agent.y)
-        if getattr(config_rl, "EXPLORE_PAYS_OCEAN", True) or here.tile_type != 8:
+        if self.in_loop:
+            pass                                # a room repeats: nothing new to find
+        elif getattr(config_rl, "EXPLORE_PAYS_OCEAN", True) or here.tile_type != 8:
             self.rewards.on_new_tile(self.agent.x, self.agent.y)
 
         # Island discovery (only for genuinely new islands outside the starting spawn island 0)
@@ -279,9 +291,16 @@ class ATSEnvironment:
                 self.done = True
                 self.memory.decay()
 
+        if self.in_loop and self.agent.health > 0:
+            self._loop_check()
+
         # Death / timeout
         if self.done:
             pass
+        elif self.agent.health <= 0 and self.use_loop:
+            self.death_cause = self.agent.last_damage_cause or "unknown causes"
+            self.agent.log_event("Died of %s." % self.death_cause)
+            self._died_into_loop()
         elif self.agent.health <= 0:
             self.rewards.on_death()
             # Say what actually killed it. This line read "Agent fell in
@@ -299,7 +318,8 @@ class ATSEnvironment:
             # Paid for the length actually survived, not a flat amount. With
             # an earned cap the easiest rung and the hardest would otherwise
             # pay identically - see rewards.on_survive_bonus.
-            self.rewards.on_survive_bonus(self.tick)
+            if not self.in_loop:                # paid for the life it is on
+                self.rewards.on_survive_bonus(self.tick - self.life_start)
             self.agent.log_event("Day/Night survival complete!")
             self.memory.decay()
 
@@ -321,8 +341,141 @@ class ATSEnvironment:
             "damage_dealt": self.rewards.damage_dealt,
             "island_id": island_id,
             "ocean_ticks": self.agent.ocean_ticks,
+            "in_loop": self.in_loop,
+            "deaths": self.deaths,
+            "rooms_beaten": self.rooms_beaten,
         }
         return state_vec, self.rewards.tick_reward, self.done, info
+
+    # ------------------------------------------------------------------
+    # W4: the Loop (loop.py, docs/W4-LOOP-FLOW.md)
+    # ------------------------------------------------------------------
+    def _loop_reset(self):
+        self.real_world = self.world
+        self.in_loop = False
+        self.loop_room = None
+        self.loop_goals = 0             # rooms beaten since it last died in the world
+        self.loop_room_deaths = 0       # failures in the room it is in
+        self.bearings = 0
+        self.deaths = 0
+        self.rooms_beaten = 0
+        self.death_causes: list[str] = []
+        self.world_pos = self.world.agent_spawn
+        self.life_start = 0
+        self.loop_on_land = 0
+        self.loop_was_on_land = False
+        self.loop_arrival_hunger = 0
+        self.loop_shore_ticks = getattr(config_rl, "LOOP_SHORE_TICKS", 20)
+        self._loop_rng = random.Random(self.world_seed)
+        self.agent.in_loop = False
+
+    def _bearings_tick(self, action_idx):
+        """A moment to get its bearings after arriving: the world holds
+        still, nothing hurts, and its action does nothing."""
+        self.bearings -= 1
+        self.tick += 1
+        if self.tick >= self.max_ticks:
+            self.done = True
+            if not self.in_loop:
+                self.rewards.on_survive_bonus(self.tick - self.life_start)
+            self.memory.decay()
+        info = {"tick_reward": self.rewards.tick_reward, "total_reward": self.rewards.total,
+                "action": action_idx, "action_name": "bearings", "failed_action_flag": 0,
+                "in_loop": self.in_loop, "deaths": self.deaths,
+                "rooms_beaten": self.rooms_beaten}
+        return self._state(), self.rewards.tick_reward, self.done, info
+
+    def _place(self, world, pos, health=100, hunger=100):
+        """Put the agent into `world` at `pos`, in a fresh body."""
+        a = self.agent
+        self.world = a.world = world
+        a.in_loop = self.in_loop = world is not self.real_world
+        a.x, a.y = pos
+        a.z = 0
+        a.health, a.hunger, a.stamina = health, hunger, 100
+        for k in a.status:
+            a.status[k] = 0
+        a.leg_injured = 0
+        a.ocean_ticks = a.sea_blocks_crossed = a._water_move_counter = 0
+        a._hunger_counter = 0
+        a.sprint = a.inventory_open = False
+        a.seen, a.visit = {}, {}            # a new place: its remembered map starts empty
+        self.bearings = getattr(config_rl, "LOOP_BEARINGS_TICKS", 20)
+
+    def _enter_room(self, room, again=False):
+        if not again:
+            self.loop_room_deaths = 0
+        self.loop_room = room
+        self._place(loop.LoopWorld(self.real_world, room), room.start(),
+                    room.health, room.hunger)
+        a = self.agent
+        a.inventory = [{"id": "", "count": 0} for _ in range(config_rl.INVENTORY_SLOTS)]
+        for slot, item_id, n in room.kit:
+            a.inventory[slot] = {"id": item_id, "count": n}
+        a.selected_slot = room.selected
+        a.has_sword = any(s["id"] in ("0002", "0013", "0033", "0034") for s in a.inventory)
+        self.loop_on_land = 0
+        self.loop_was_on_land = False
+        self.loop_arrival_hunger = a.hunger
+        a.log_event("The Loop: the %s room" % room.name)
+
+    def _room_failed(self):
+        """Died in the room, or sent back to its start: the same room again,
+        or a different one after LOOP_ROOM_DEATHS_TO_SWAP failures in it."""
+        self.loop_room_deaths += 1
+        if self.loop_room_deaths >= getattr(config_rl, "LOOP_ROOM_DEATHS_TO_SWAP", 5):
+            self._enter_room(loop.pick_room(self.death_cause, self._loop_rng,
+                                            avoid=self.loop_room.name))
+        else:
+            self._enter_room(self.loop_room, again=True)
+
+    def _died_into_loop(self):
+        in_world = not self.in_loop
+        self.rewards.on_loop_death(in_world, getattr(config_rl, "LOOP_DEATH_PENALTY", -20.0))
+        self.deaths += 1
+        self.death_causes.append(self.death_cause)
+        self.memory.decay()
+        if in_world:
+            self.world_pos = (self.agent.x, self.agent.y)
+            self.loop_goals = 0
+            self._enter_room(loop.pick_room(self.death_cause, self._loop_rng))
+        else:
+            self._room_failed()
+
+    def _loop_check(self):
+        """Once a tick in a room: out through an open door, sent back, or goal met."""
+        room, a = self.loop_room, self.agent
+        outside = not (0 <= a.x < loop.SIZE and 0 <= a.y < loop.SIZE)
+        if self.world.doors_open and outside:
+            self._leave_room()
+            return
+        self.world.wrap_all(a)
+        if self.world.doors_open:
+            return
+        if room.sends_back and room.sends_back(self):
+            a.log_event("Back to the start")
+            self._room_failed()
+            return
+        if room.goal(self):
+            self.rewards.add(getattr(config_rl, "LOOP_GOAL_REWARD", 10.0), "loop_goal")
+            self.rooms_beaten += 1
+            if room.goal_is_exit:
+                self._leave_room()
+            else:
+                self.world.doors_open = True
+                a.log_event("The doors open")
+
+    def _leave_room(self):
+        self.loop_goals += 1
+        room = self.loop_room
+        if self.loop_goals < getattr(config_rl, "LOOP_GOALS_BEFORE_DROP", 3):
+            self._enter_room(loop.pick_room(None, self._loop_rng, avoid=room.name))
+            return
+        spot = room.find(self.real_world, self.world_pos) or self.real_world.agent_spawn
+        self._place(self.real_world, spot)
+        self.loop_room = None
+        self.life_start = self.tick
+        self.agent.log_event("Back in the world, by the %s" % room.name)
 
 
     # ------------------------------------------------------------------

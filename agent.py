@@ -69,6 +69,7 @@ class Agent:
         self.inventory = [{"id": "", "count": 0} for _ in range(config_rl.INVENTORY_SLOTS)]
         self.selected_slot = 0
         self.inventory_open = False
+        self.in_loop = False            # W4: set by the env while in a Loop room
 
         # Assign starter gear (low class)
         self._grant_starter_gear()
@@ -150,12 +151,27 @@ class Agent:
 
     def _weapon_damage(self):
         """Return best weapon damage from inventory."""
+        if getattr(config_rl, "HELD_WEAPON_ONLY", False):
+            return self.held_damage()
         best = 1  # bare hands
         for slot in self.inventory:
             item = REGISTRY.get_item(slot["id"])
             if item and item.get("type") == "weapon":
                 best = max(best, int(item.get("damage", 5)))
         return best
+
+    @staticmethod
+    def _is_switch(tile):
+        item = REGISTRY.get_item(tile.object_id) if tile and tile.object_id else None
+        return bool(item) and item.get("type") == "switch"
+
+    def held_damage(self):
+        """Damage of the item in hand (the selected slot); 1 for bare hands."""
+        slot = self.inventory[self.selected_slot]
+        item = REGISTRY.get_item(slot["id"]) if slot["id"] and slot["count"] > 0 else None
+        if item and item.get("type") == "weapon":
+            return int(item.get("damage", 5))
+        return 1
 
     def _add_recent(self, action_idx):
         self.recent_actions.append(action_idx)
@@ -297,6 +313,11 @@ class Agent:
         for i in range(config_rl.INVENTORY_SLOTS):
             if self.inventory[i]["id"] and self.inventory[i]["count"] > 0:
                 mask[config_rl.ACT_USE_SLOT_BASE + i] = 1
+
+        # A lever within reach (W4 Loop rooms) can be pulled
+        if any(self._is_switch(world._tile(self.x + dx, self.y + dy))
+               for dx in (-1, 0, 1) for dy in (-1, 0, 1)):
+            mask[config_rl.ACT_INTERACT] = 1
 
         # Inventory management
         if not self.inventory_open:
@@ -496,6 +517,10 @@ class Agent:
             _neighbors_3x3 = [(dx, dy) for dx in range(-1, 2) for dy in range(-1, 2)]
             for dx, dy in _neighbors_3x3:
                 tile = self.world._tile(self.x + dx, self.y + dy)
+                if tile and self._is_switch(tile) and tile.flags != "pulled":
+                    tile.flags = "pulled"                       # W4 Loop lever
+                    self.log_event("Pulled the lever")
+                    return
                 if tile and tile.object_id == "0023":  # Berry Bush
                     self.world.took(self.x + dx, self.y + dy, "0023")
                     tile.object_id = ""
@@ -826,6 +851,8 @@ class Agent:
 
         cur_tile = world._tile(self.x, self.y)
         cur_island = cur_tile.island_id if cur_tile else -1
+        held = self.held_damage()
+        held = 0 if held <= 1 else held             # bare hands read as nothing held
 
         state = [
             # Vitals (5)
@@ -837,10 +864,10 @@ class Agent:
 
             # Position / height (5)
             float(self.z),
-            float(z["ahead"]),
+            float(self.in_loop) if getattr(config_rl, "LOOP_SIGNAL", False) else float(z["ahead"]),
             float(z["left"]),
             float(z["right"]),
-            float(z["behind"]),
+            held / 20.0 if getattr(config_rl, "HELD_WEAPON_ONLY", False) else float(z["behind"]),
 
             # Adjacent tile types (4)
             float(world.tile_type_at(self.x, self.y - 1)),
@@ -936,7 +963,11 @@ class Agent:
                 visit.append(self.visit.get(c, 0.0))
         state.extend(known)
         state.extend(visit)
-        state.extend([0.0] * config_rl.MEM_CELLS)      # route: not in the world
+        # Route: zeros in the world. A Loop room (W4) shows the way out once
+        # there is one - to the lever, or to a doorway after the goal is met.
+        route = world.route(self.x, self.y) if hasattr(world, "route") else ()
+        state.extend(1.0 if (self.x + dx, self.y + dy) in route else 0.0
+                     for dy in range(-mr, mr + 1) for dx in range(-mr, mr + 1))
 
         assert len(state) == config_rl.IDX_MASK_START, (
             'state layout drift: mask should start at %d, appends reached %d'

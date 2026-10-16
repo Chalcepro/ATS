@@ -26,7 +26,8 @@ TILE_EMPTY   = 0   # Open walkable ground
 TILE_WALL    = 1   # Impassable rock/cliff
 TILE_HOSTILE = 2   # Entity occupying tile (render override)
 TILE_OBJECT  = 3   # Harvestable / item on ground
-TILE_NPC     = 4   # NPC entity
+TILE_STONE   = 4   # Dungeon stone floor (W4 Loop rooms). Was TILE_NPC, which
+                   # nothing ever drew, so its brain row is unused - no migration.
 TILE_WATER   = 5   # Island-internal lake/pond (swimmable, no sharks)
 TILE_LAVA    = 6   # Volcanic floor hazard (5 HP/tick burn)
 TILE_GATE    = 7   # Progression gate (locked)

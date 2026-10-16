@@ -186,6 +186,30 @@ SEA_TIRES = True
 SWIM_STAMINA_COST = 1
 DROWN_DAMAGE_PER_TICK = 2
 
+# W4: the Loop (docs/W4-LOOP-FLOW.md, Chalce 2026-10-16). Dying no longer ends
+# the episode: it lands the agent in a room it can't walk out of until the
+# room's goal is met (loop.py). LOOP_GOALS_BEFORE_DROP rooms, then back into
+# the world beside the nearest real version of the last room. Off = death ends
+# the episode, as before.
+LOOP = True
+LOOP_GOALS_BEFORE_DROP = 3
+LOOP_BEARINGS_TICKS = 20      # after every arrival: nothing moves or hurts, actions do nothing
+LOOP_ROOM_DEATHS_TO_SWAP = 5  # die this many times in one room -> a different room
+LOOP_SHORE_TICKS = 20         # shore room: this long on land in a row
+LOOP_DEATH_PENALTY = -20.0    # each death (world deaths also forfeit DEATH_FORFEIT)
+LOOP_GOAL_REWARD = 10.0       # beating a room: less than a death costs
+# A sense of being in the Loop, in the state slot of the height-ahead input -
+# always 0 until now, get_adjacent_z is a stub. So the Loop's habits (walk out
+# a door, come back in) aren't mistaken for the world's.
+LOOP_SIGNAL = True
+IDX_LOOP_SIGNAL = 6
+
+# Damage comes from the HELD item (selected slot) only, not the best weapon
+# anywhere in the bag. What it's holding goes into the height-behind slot,
+# also always 0 until now: held weapon damage / 20.
+HELD_WEAPON_ONLY = True
+IDX_HELD = 9
+
 # 2026-10-09 (Chalce): bigger land so the agent has room to live without the
 # coast always a few steps away (at ep 400 it still drowned 99% of the time -
 # the sea was just too close). Scales island radius; islands sit ~250 tiles

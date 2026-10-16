@@ -95,7 +95,7 @@ def test_gives_up_when_agent_reaches_land():
 def test_env_one_visible_shark_after_grace():
     """Through the real step(): wait at sea; one shark, seen, then it kills."""
     random.seed(2)
-    env = ATSEnvironment(world_seed=7, vary_world=False)
+    env = ATSEnvironment(world_seed=7, vary_world=False, use_loop=False)
     env.reset()
     env.world.entities = []
     env.agent.x, env.agent.y = SEA
@@ -127,7 +127,7 @@ def test_deep_sea_dodge_works():
 
     def life(dodge, seed):
         random.seed(seed)
-        env = ATSEnvironment(world_seed=7, vary_world=False)
+        env = ATSEnvironment(world_seed=7, vary_world=False, use_loop=False)
         env.reset()
         env.world.entities = []
         env.agent.x, env.agent.y = SEA

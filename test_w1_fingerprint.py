@@ -45,7 +45,7 @@ def worlds() -> dict:
     for seed in SEEDS:
         random.seed(seed)
         acts = random.Random(seed * 7 + 1)
-        env = ATSEnvironment(world_seed=seed, vary_world=False)
+        env = ATSEnvironment(world_seed=seed, vary_world=False, use_loop=False)
         s = env.reset()
         ticks = []
         for _ in range(TICKS):

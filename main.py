@@ -466,6 +466,8 @@ def run_gui(args):
 
                 if env.agent.health <= 0:
                     reason = f"Perished (HP:{env.agent.health})"
+                elif getattr(env, "deaths", 0):
+                    reason = f"Died {env.deaths}x, {env.rooms_beaten} Loop room(s) beaten"
                 elif env.tick >= env.max_ticks:
                     reason = f"Survived the cap ({env.max_ticks})"
                 else:
@@ -477,7 +479,8 @@ def run_gui(args):
                 # curriculum rung has its own max_steps and is not what this
                 # ladder is about.
                 if getattr(gui, "active_stage", None) is None:
-                    reached.append(env.tick >= env.max_ticks)
+                    reached.append(env.tick >= env.max_ticks
+                                   and not getattr(env, "deaths", 0))
                     while len(reached) > survival.WINDOW:
                         reached.popleft()
                     if survival.earned(progress, reached):
@@ -752,13 +755,21 @@ def run_headless(args):
         eff_str = " n/a" if prog_eff is None else f"{prog_eff:.3f}"
         caps_count = len(env.agent.capabilities)
         cap = _episode_cap(env)
-        hit_cap = bool(cap) and env.tick >= cap
+        # Under the Loop (W4) a death doesn't end the episode, so every one
+        # runs to the cap: "survived" means it never died on the way.
+        deaths = getattr(env, "deaths", 0)
+        hit_cap = bool(cap) and env.tick >= cap and not deaths
         reason = "Survived" if hit_cap else "Died"
         where = ("rehearse %s %dx%d" % (env.stage.name, env.stage.grid,
                                         env.stage.grid)) if rehearsing else "WORLD"
         print(f"Episode {ep} done | {where} | reward={total:+7.2f} | "
               f"GRADE: {grade:4s} | Caps={caps_count} | Eff={eff_str} | "
               f"ticks={env.tick}/{cap} | {reason}")
+        if deaths:
+            print("  loop: %d death(s), %d room(s) beaten, ended %s | %s"
+                  % (deaths, env.rooms_beaten,
+                     "in the %s room" % env.loop_room.name if env.in_loop else "in the world",
+                     ", ".join(env.death_causes[:6])))
 
         # What the score was actually made of. Without this a run reports a
         # number and no way to ask where it came from: episodes were scoring
@@ -776,6 +787,8 @@ def run_headless(args):
         try:
             events = [t for t, _ts in
                       list(getattr(env.agent, "event_log", ()) or ())]
+            if deaths:          # the Loop: the episode's cause is its first world death
+                events = ["Died of %s." % env.death_causes[0]]
             starved = next((t for t, _hp, hun in recorder.arc if hun <= 0),
                            None)
             cause = None if hit_cap else daylog.guess_cause(

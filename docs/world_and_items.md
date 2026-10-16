@@ -57,6 +57,7 @@ This document details all world biomes, natural harvestable objects, items, enti
 | `0033` | Iron Dagger | Weapon | Damage: 6 | — |
 | `0034` | Wooden Club | Weapon | Damage: 3 | — |
 | `0035` | Water Flask | Consumable | +10 HP | — |
+| `0088` | Lever | Switch | Loop rooms only (W4): interact to pull; a lever room's way out | — |
 
 ---
 

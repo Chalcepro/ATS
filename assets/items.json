@@ -91,5 +91,6 @@
   "0084": {"name": "Ice Stalagmite",  "type": "world_object", "drop": "0067", "hp": 4, "island": 4},
   "0085": {"name": "Root Herb",       "type": "world_object", "drop": "0061", "hp": 2, "island": 3},
   "0086": {"name": "Fire Bloom Bush", "type": "world_object", "drop": "0050", "hp": 2, "island": 2},
-  "0087": {"name": "Glowshroom Cluster","type": "world_object","drop": "0063", "hp": 2, "island": 3}
+  "0087": {"name": "Glowshroom Cluster","type": "world_object","drop": "0063", "hp": 2, "island": 3},
+  "0088": {"name": "Lever",           "type": "switch",       "loop_only": true, "island": -1}
 }

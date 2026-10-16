@@ -519,6 +519,20 @@ class RewardEngine:
             out += self.add(forfeit, "death_forfeit")
         return out
 
+    def on_loop_death(self, in_world: bool, penalty: float) -> float:
+        """W4: a death that doesn't end the episode. A flat `penalty` each
+        time; a world death also forfeits DEATH_FORFEIT of what was earned,
+        which is what made dying matter (see on_death). A death in a Loop room
+        forfeits nothing more - it has already lost the world."""
+        self.deaths += 1
+        if not self.rules.get("death_penalty", True):
+            return 0.0
+        forfeit = -DEATH_FORFEIT * max(0.0, self.total) if in_world else 0.0
+        out = self.add(penalty, "death" if in_world else "loop_death")
+        if forfeit < 0.0:
+            out += self.add(forfeit, "death_forfeit")
+        return out
+
     def on_survive_bonus(self, ticks: int | None = None) -> float:
         """Paid for reaching the end of an episode, scaled by how long it was.
 

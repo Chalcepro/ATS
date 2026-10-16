@@ -141,7 +141,7 @@ Executes the primary 5-stage cognitive cycle on every simulation tick:
 | Feature Index Range | Description |
 | :--- | :--- |
 | `0..4` | Vitals (Health, Hunger, Stamina, XP, Level) |
-| `5..9` | Spatial Position & Elevation Profile ($Z$, $Z_{ahead}$, $Z_{left}$, $Z_{right}$, $Z_{behind}$) |
+| `5..9` | $Z$, **6 = in the Loop (W4, `LOOP_SIGNAL`)**, $Z_{left}$, $Z_{right}$, **9 = held weapon damage / 20 (`HELD_WEAPON_ONLY`)**. Heights are a stub and always 0. |
 | `10..13` | Adjacent Tile Types (North, West, East, South) |
 | `14..17` | Nearest Hostile Features (Distance, Type, State, Incoming Damage) |
 | `18..19` | Nearest Object Features (Distance, Item ID / 100) |
