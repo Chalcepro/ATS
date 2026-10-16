@@ -160,3 +160,31 @@ Death **-20**. Wolf at full health, agent arriving at 20 HP: agreed.
 - An episode now always runs to its tick cap; "Survived" means it reached
   the cap **without dying**, so the survival ladder can't be cheated.
 - Loop rooms don't pay exploration, and their creatures don't breed.
+
+## Generated rooms (2026-10-16, second build)
+
+Chalce: four fixed rooms were too little - "not just exactly what I said".
+Rooms are now generated on every entry (`loop.KINDS`); a retry after dying is
+the same room, a new entry is a new one. 5 kinds, ~50 variants before layout:
+
+- **fight**: any of 15 ordinary hostiles (slime, zombie, skeleton, spiders,
+  husk, fire imp, witch, wolves, yeti, toxic toad, spore fiend, frost wraith,
+  magma cube), packs for wolves/slimes/spiders. Weapon = the weakest that
+  kills one in <=3 hits, in a random slot 1-6. Slot 0 (in hand) is never it.
+  Health = enough to win armed, not to brawl. Back in the world by the
+  nearest of the same creature (its island is built if needed).
+- **food**: apple, berry bush, raw meat or bread, 1-3 placed far from the start,
+  plus 2-6 things that aren't food. Arrives hungry (5-25) and weak (25-40 HP).
+- **lever**: in plain sight (no route), or in a walled corner nook with one
+  gap (route channel shows the way in). Clutter around.
+- **shore**: a pool of 5-9 x 5-9 placed anywhere, start in its middle.
+- **lava**: a band of lava (1-2 wide) with 1-2 ash paths; a key or book across.
+  (The loop is a second way round: out one door, in at the other side.)
+- Layouts: 0-2 inner walls with gaps, 0-6 pillars. A room is rolled again
+  if it's cramped or a doorway is walled off (checked over 2,000 rooms).
+- After a death, half the time the room is about the cause: killed by a
+  creature -> a fight with that creature; drowned/shark -> shore; starved ->
+  food; lava/burning -> lava.
+
+Note: an episode now always runs to the cap (8,000 ticks), so episodes take
+longer in wall-clock time than when a death ended them at ~550.

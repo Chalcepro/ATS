@@ -406,7 +406,7 @@ class ATSEnvironment:
         if not again:
             self.loop_room_deaths = 0
         self.loop_room = room
-        self._place(loop.LoopWorld(self.real_world, room), room.start(),
+        self._place(loop.LoopWorld(self.real_world, room), room.start,
                     room.health, room.hunger)
         a = self.agent
         a.inventory = [{"id": "", "count": 0} for _ in range(config_rl.INVENTORY_SLOTS)]
@@ -425,7 +425,7 @@ class ATSEnvironment:
         self.loop_room_deaths += 1
         if self.loop_room_deaths >= getattr(config_rl, "LOOP_ROOM_DEATHS_TO_SWAP", 5):
             self._enter_room(loop.pick_room(self.death_cause, self._loop_rng,
-                                            avoid=self.loop_room.name))
+                                            avoid=self.loop_room.kind))
         else:
             self._enter_room(self.loop_room, again=True)
 
@@ -469,7 +469,7 @@ class ATSEnvironment:
         self.loop_goals += 1
         room = self.loop_room
         if self.loop_goals < getattr(config_rl, "LOOP_GOALS_BEFORE_DROP", 3):
-            self._enter_room(loop.pick_room(None, self._loop_rng, avoid=room.name))
+            self._enter_room(loop.pick_room(None, self._loop_rng, avoid=room.kind))
             return
         spot = room.find(self.real_world, self.world_pos) or self.real_world.agent_spawn
         self._place(self.real_world, spot)
