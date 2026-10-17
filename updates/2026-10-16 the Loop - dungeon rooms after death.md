@@ -35,6 +35,17 @@ taught in rooms instead.
 - "Died of drowning." is now named, not "unattributed".
 
 ## Verified
-- [x] `test_loop.py` 11/11
+- [x] `test_loop.py` 17/17
 - [x] State vector length unchanged (STATE_SIZE)
 - [ ] Training run with the Loop: measure life, deaths per episode, rooms beaten
+
+## 2026-10-17 — first run, and a per-room tally
+Run `train_20261016_164640` (~280 world episodes, 13 h): flat from start to end.
+First world death is a shark ~85% of the time; 4-5 Loop deaths and ~2.6 rooms
+beaten per episode (3 needed to get back); ~8.5 time-outs per episode, i.e.
+~5,100 of 8,000 ticks in unsolved rooms. Ends most often in lever rooms (in sight
+as often as hidden), then lava; burning (338) ties sharks (337) as top cause.
+- `ats_env.py`: `room_stats` counts how each try ended per room kind (lever split
+  hidden / in sight): won, out of time, died, sent back.
+- `main.py`: prints it per episode: `rooms won/out of time/died/sent back: ...`.
+- No training change. Next: read the tally, then fix the rooms it can't solve.

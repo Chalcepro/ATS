@@ -215,6 +215,21 @@ def test_won_room_but_no_door_found_leaves_anyway():
     assert env.loop_room is not room and env.loop_goals == 1
 
 
+def test_each_room_kind_tallies_how_its_tries_ended():
+    env = fresh()
+    die(env)
+    into(env, loop.lever_room(random.Random(12)))
+    key = env.loop_room.name
+    for _ in range(config_rl.LOOP_ROOM_TIMEOUT + 1):
+        env.step(WAIT)                       # out of time
+    settle(env)
+    die(env, "Wolf")                         # died
+    settle(env)
+    env.world.lever_pulled = lambda: True    # won
+    env.step(WAIT)
+    assert env.room_stats[key] == [1, 1, 1, 0], env.room_stats
+
+
 def test_rooms_vary():
     rng = random.Random(10)
     rooms = [loop.pick_room(None, rng) for _ in range(200)]

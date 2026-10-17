@@ -770,6 +770,10 @@ def run_headless(args):
                   % (deaths, env.rooms_beaten,
                      "in the %s room" % env.loop_room.name if env.in_loop else "in the world",
                      ", ".join(env.death_causes[:6])))
+            stats = getattr(env, "room_stats", {})
+            if stats:
+                print("  rooms won/out of time/died/sent back: %s"
+                      % ", ".join("%s %d/%d/%d/%d" % (k, *v) for k, v in sorted(stats.items())))
 
         # What the score was actually made of. Without this a run reports a
         # number and no way to ask where it came from: episodes were scoring

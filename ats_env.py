@@ -359,6 +359,7 @@ class ATSEnvironment:
         self.bearings = 0
         self.deaths = 0
         self.rooms_beaten = 0
+        self.room_stats = {}            # room tally -> [won, out of time, died, sent back]
         self.death_causes: list[str] = []
         self.world_pos = self.world.agent_spawn
         self.life_start = 0
@@ -420,6 +421,13 @@ class ATSEnvironment:
         self.loop_arrival_hunger = a.hunger
         a.log_event("The Loop: the %s room" % room.name)
 
+    def _tally_room(self, outcome):
+        """Count how a try in the current room ended (0 won, 1 out of time, 2 died,
+        3 sent back), keyed by kind; lever rooms split hidden / in sight."""
+        room = self.loop_room
+        key = room.name if room.kind == "lever" else room.kind
+        self.room_stats.setdefault(key, [0, 0, 0, 0])[outcome] += 1
+
     def _room_failed(self):
         """Died in the room, sent back to its start, or out of time: the same room again,
         or a different one after LOOP_ROOM_DEATHS_TO_SWAP failures in it."""
@@ -441,6 +449,7 @@ class ATSEnvironment:
             self.loop_goals = 0
             self._enter_room(loop.pick_room(self.death_cause, self._loop_rng))
         else:
+            self._tally_room(2)
             self._room_failed()
 
     def _loop_check(self):
@@ -460,15 +469,18 @@ class ATSEnvironment:
         if late:
             self.rewards.add(getattr(config_rl, "LOOP_TIMEOUT_PENALTY", -5.0), "loop_timeout")
             a.log_event("Out of time in the %s room" % room.name)
+            self._tally_room(1)
             self._room_failed()
             return
         if room.sends_back and room.sends_back(self):
             a.log_event("Back to the start")
+            self._tally_room(3)
             self._room_failed()
             return
         if room.goal(self):
             self.rewards.add(getattr(config_rl, "LOOP_GOAL_REWARD", 10.0), "loop_goal")
             self.rooms_beaten += 1
+            self._tally_room(0)
             if room.goal_is_exit:
                 self._leave_room()
             else:
