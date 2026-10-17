@@ -76,7 +76,7 @@ Built: one shark per swimmer, surfaces at the edge of the view, SHARK tile
 (14) in the patch, brain_id 29, state 1/2 feeds the brain's existing
 "telegraph / incoming" inputs while it waits / charges. `SHARK_CHARGES = False`
 in config_rl brings back the old invisible sea damage. Tests:
-`test_w2b_shark.py` (6/6), `test_shark_reach.py` updated (never reaches the beach).
+`tests/test_w2b_shark.py` (6/6), `tests/test_shark_reach.py` updated (never reaches the beach).
 
 ## Fix after the first training (2026-10-13)
 

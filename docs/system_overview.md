@@ -53,7 +53,7 @@ Executes the primary 5-stage cognitive cycle on every simulation tick:
   (`returns`) is `advantage + old_value`. Only the advantage is normalised.
   (Replaced raw discounted-reward-to-go advantage 2026-09-04 — that was
   unbiased but high-variance, matching a non-monotonic reward trend over a
-  300-episode run; see `docs/architecture_and_reasoning_2026-09-04.md` and
+  300-episode run; see `docs/history/architecture_and_reasoning_2026-09-04.md` and
   `updates/2026-09-04c ...` for why the earlier return-normalisation bug and
   this variance issue are separate problems. GAE fixed the variance — critic
   loss is confirmed low and stable across a full 2000-episode run.)

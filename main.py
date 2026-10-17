@@ -41,7 +41,7 @@ def parse_args():
     p.add_argument("--ticks",         type=int,   default=None,
                    help="Max ticks per episode (default: config_rl.MAX_TICKS)")
     p.add_argument("--train",         action="store_true",
-                   help="Run batch PPO training (headless, uses train_rl.py)")
+                   help="Legacy flag; does nothing now (train_rl.py is gone - use Train.bat)")
     p.add_argument("--no-gui",        action="store_true",
                    help="Headless mode — skips GUI entirely")
     p.add_argument("--gui",           action="store_true",
@@ -133,7 +133,7 @@ def _save_brain(policy, learner=None, progress=None):
     """One authoritative file, plus a mirror for the older tools.
 
     brain.pt is what is loaded; model_rl.pt / model_best.pt are written so
-    eval_behaviour, run_benchmark and the virus adapter keep working, but
+    tools/eval_behaviour.py and the virus adapter keep working, but
     nothing reads them back into a training run any more.
     """
     path = brain.save(policy, learner, progress)
@@ -882,7 +882,7 @@ def main():
         # maintained, and the old path is left in the file for reference
         # rather than left in the way.
         print("[ATS] --train runs the headless trainer "
-              "(train_rl.py is legacy and no longer wired in)")
+              "(train_rl.py was legacy and has been removed)")
         args.no_gui = True
     if args.no_gui:
         run_headless(args)

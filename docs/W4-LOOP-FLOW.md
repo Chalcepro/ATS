@@ -1,6 +1,6 @@
 # W4 flow: the Loop (rooms you can't walk out of)
 
-Status: **built 2026-10-16** (`loop.py`, `ats_env.py`, `test_loop.py`), behind
+Status: **built 2026-10-16** (`loop.py`, `ats_env.py`, `tests/test_loop.py`), behind
 `config_rl.LOOP`. See "As built" at the end; the sections in between are
 the design history.
 
@@ -84,7 +84,7 @@ wolf dies  →  cut  →  world (random seed), next to the nearest wolf
 
 ## Proof
 
-- `test_loop.py`: walk out every doorway and arrive back in the same room;
+- `tests/test_loop.py`: walk out every doorway and arrive back in the same room;
   goal met → in the world within the set distance of a wolf; die → in a room;
   no damage during the bearings ticks; sword in hand kills a 25% wolf in 1-2
   hits, bare hands mostly don't.

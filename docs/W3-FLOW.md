@@ -88,5 +88,5 @@ every N ticks:
 
 Measured (5 worlds, all islands, 40-tile straight walks): apples on one walk
 max 8 → 1, berries 9 → 2, sticks 7 → 3. Apples in the world 2336 → 379.
-`W3_PATCHES = False` brings back the old scatter. Tests: `test_w3_land.py` 8/8.
+`W3_PATCHES = False` brings back the old scatter. Tests: `tests/test_w3_land.py` 8/8.
 Biomes spreading at their edges: not built, stays in W3's list.

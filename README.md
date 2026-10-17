@@ -32,22 +32,27 @@ Source: [logo/logo_Style.txt](logo/logo_Style.txt)
 
 ## Quick start
 
+Double-click `Train.bat` to train (headless, restarts itself, carries on from
+the saved brain). `Watch training.bat` and `Trend.bat` show how it is going.
+
 ```powershell
-cd C:\Users\Virus\Documents\github\ATS
 py -3 -m pip install -r requirements.txt
-py -3 create_rl.py
-py -3 main.py --episodes 2
+py -3 main.py --episodes 2        # the pygame CRT window
+py -3 main.py --no-gui            # headless, what Train.bat runs
 ```
 
-This opens a **pygame window styled like a CRT terminal** (green monospace on black).
-It is not the Windows console. Close with ESC or the window X.
+The GUI is a **pygame window styled like a CRT terminal**, not the Windows
+console. Close with ESC or the window X. A missing brain is created on first run.
 
-Headless (no window):
+## Where things live
 
-```powershell
-py -3 main.py --no-gui --episodes 1
-py -3 train_rl.py
-```
+- **Root** - only what training runs: `main.py`, `ats_env.py`, `agent.py`,
+  `world.py`, `loop.py`, `rewards.py`, `model_rl.py`, `brain.py`, `config_rl.py`
+  and their helpers, plus `components/`, `domains/`, `mind/`, `assets/`, `data/`.
+- **`tests/`** - run from the repo root: `py -3 tests/test_loop.py`.
+- **`tools/`** - diagnostics and helpers; training never imports them.
+- **`docs/`** - living docs; `docs/history/` is the August-era write-ups.
+- **`updates/`** - one note per change, by date.
 
 ## Virus dual-model integration
 
@@ -80,7 +85,7 @@ py -3 generate_v3.py --profile ats --prompt "### INPUT: action narration`n### OU
 ```powershell
 cd ..\ATS
 py -3 main.py --virus-profile ats --no-gui --episodes 1
-py -3 export_virus_corpus.py data\runtime_log.txt
+py -3 tools/export_virus_corpus.py data\runtime_log.txt
 ```
 
 Active profile metadata is written to `ATS/data/active_virus_profile.json`.
@@ -92,8 +97,8 @@ Runtime narration/corpus appends to `Virus/data_ats/ats_runtime_corpus.txt`.
 whole way; only the room changes, and it grows back up as the policy earns it.
 A rung is passed when greedy play - not sampled play - clears its bar.
 
-    python train_curriculum.py                    # the whole ladder
-    python train_curriculum.py --stage warden     # one rung
+    python tools/train_curriculum.py                    # the whole ladder
+    python tools/train_curriculum.py --stage warden     # one rung
 
 Each rung adds **exactly one** new thing. That rule is the whole design: an
 earlier version went from the nursery straight to "maze + hazards + damage +
@@ -165,8 +170,8 @@ consolidation.
 
 Two different jobs, two commands:
 
-    python train_curriculum.py     # climb: one rung at a time, promote, move on
-    python consolidate.py          # hold: every rung interleaved, all scored
+    python tools/train_curriculum.py     # climb: one rung at a time, promote, move on
+    python tools/consolidate.py          # hold: every rung interleaved, all scored
 
 Climbing ratchets. Each pass gains the rung it is on and gives back a little
 of the rungs below, because the thing being *scored* is always one room and
@@ -178,7 +183,7 @@ Consolidating fixed all six and improved every rung in the ladder, several
 by twenty points. The expected cost of interleaving - that no single rung
 goes as high as training it alone - did not appear.
 
-    python diag_ladder.py          # what it actually plays, with error bars
+    python tools/diag_ladder.py          # what it actually plays, with error bars
 
 ### Two bugs worth knowing about
 
@@ -205,12 +210,12 @@ looked fine and was not:
 
 | tool | question |
 |------|----------|
-| `diag_combat.py` | is the combat tier a fight, and a winnable one? |
-| `diag_clock.py` | how much does the clock decide the rung? |
-| `diag_stumble.py` | can a random walker stumble into the goal? |
-| `diag_senior.py` | did training the top un-teach the bearing? |
+| `tools/diag_combat.py` | is the combat tier a fight, and a winnable one? |
+| `tools/diag_clock.py` | how much does the clock decide the rung? |
+| `tools/diag_stumble.py` | can a random walker stumble into the goal? |
+| `tools/diag_senior.py` | did training the top un-teach the bearing? |
 
-`diag_combat.py` gates on four numbers a rung can fail while still running:
+`tools/diag_combat.py` gates on four numbers a rung can fail while still running:
 how often a hostile is actually met, what a competent agent scores, what a
 random walker scores, and how often the competent one dies. It is what caught
 the first combat tier clearing 100% of its rooms while picking up a sword in
@@ -225,23 +230,6 @@ Add/edit JSON component files:
 
 World/entity/reward systems load through `components/registry.py` and `item_ids.py`.
 New IDs (e.g. next item after `0014`) are data-only additions.
-
-## Phase 1 systems
-
-| Module | Role |
-|--------|------|
-| `ats_env.py` | Tick loop, episode reset |
-| `world.py` | Starting room, tiles, door unlock |
-| `agent.py` | Stats, actions 0–12, state array |
-| `entities.py` | Telegraph attack state machine |
-| `rewards.py` | Reward table |
-| `crafting.py` | Recipes + auto-close menu |
-| `day_night.py` | Cycle + perception radius |
-| `memory.py` | Cross-episode confidence decay |
-| `events.py` | Hooks for fire/raids (stubs) |
-| `model_rl.py` / `train_rl.py` / `create_rl.py` | PPO-style policy scaffold |
-| `debug_gui.py` | Pygame terminal-look window (not OS console) |
-| `ats_virus_adapter.py` | Profile select / train / export |
 
 ## State / actions (GDD contract)
 

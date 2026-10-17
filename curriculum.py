@@ -621,7 +621,7 @@ def senior_tier(grid=15, grow_to=19):
 
     The bearing did survive, which was the open question. argmax 3.23/4 before
     the tier and 3.24/4 after, sensitivity 0.0510 -> 0.0583. The trail did not
-    un-teach it this time. (diag_senior.py prints the same figure for all
+    un-teach it this time. (tools/diag_senior.py prints the same figure for all
     three rungs because only the bearing varies in what the probe shows the
     policy - it is one measurement of the brain, not three independent ones.)
 
@@ -650,7 +650,7 @@ def senior_tier(grid=15, grow_to=19):
     3.25/4, sensitivity 0.0581 -> 0.0602.
     """
     # The clock tightens as the trail shortens, and each multiple is measured
-    # (diag_clock.py, oracle = BFS shortest route, 120 episodes a cell):
+    # (tools/diag_clock.py, oracle = BFS shortest route, 120 episodes a cell):
     #
     #   rung            clock   oracle   random walker
     #   trail, 5 legs     12x     100%       0%

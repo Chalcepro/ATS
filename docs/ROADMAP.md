@@ -22,7 +22,7 @@ Battery changes and physical repair only. Every choice below is judged by
 | Experience | 27,749 episodes, 14.6 million ticks lived |
 | Room ladder | 21 rungs passed (nursery → warden 19x19) |
 | Survival ladder | rung 2 of 5 — earned an 8,000-tick (2-day) cap |
-| Growth | it can grow width, vocabulary, meanings, actions, and inputs without losing what it knows (`test_growth.py`, `test_insert_sense.py`) |
+| Growth | it can grow width, vocabulary, meanings, actions, and inputs without losing what it knows (`tests/test_growth.py`, `tests/test_insert_sense.py`) |
 
 ---
 
@@ -47,12 +47,12 @@ always there, but the body still works if it's unplugged.
 
 | Step | What | Gate / test |
 |---|---|---|
-| **H0** ✅ | The brain can take a new sense *before* the action mask without scrambling itself | `test_insert_sense.py` — done 2026-10-02 |
+| **H0** ✅ | The brain can take a new sense *before* the action mask without scrambling itself | `tests/test_insert_sense.py` — done 2026-10-02 |
 | **H1** | `ear.py` — the ear. Turns sound into ~24 numbers per moment: loudness, pitch, pitch rising/falling, voiced or not, brightness, energy across ~13 frequency bands, how fast it's changing. Plain maths (numpy), no model, no internet. Runs on a Raspberry Pi. | Feed it a recording of a calm voice and a shouting voice: loudness, pitch and pitch-movement must clearly separate them |
 | **H2** | Sounds in the island world. Things make noise: a shark splashes, a hostile growls before it attacks, an NPC calls for help. The agent hears them through the same ear (synthetic sound). It learns that some sounds mean *danger* or *someone needs you*. | A "listening" rung: a threat it can **hear before it can see**. Gate = it reacts to the sound more often than chance |
 | **H3** | Real audio. Bob records example clips (calm, urgent, scared, angry, crying for help). They go through the same `ear.py`. The brain learns urgency from **how** it's said, before it knows **what** is said. | Held-back clips it's never heard: urgent vs calm judged correctly most of the time |
 | **H4** | Words. An offline speech recogniser (Vosk-class, ~50 MB, runs on a Pi, no network) is the inner ear that turns sound into word ids. Those word ids go into the brain the same way item ids do now. Later, it can be swapped for one the model trains itself. | It hears "help", "stop", "they took her" from Bob's voice and from others |
-| **H5** | Its own voice. Piper (already used by `say.py`) speaks for it. The model **picks its own voice once**, its virtual gender, and keeps it. | It speaks a sentence it chose, in its voice, with no network |
+| **H5** | Its own voice. Piper (already used by `tools/say.py`) speaks for it. The model **picks its own voice once**, its virtual gender, and keeps it. | It speaks a sentence it chose, in its voice, with no network |
 
 **Honest limits:** voice pitch tells you high or low voice, not gender. Lots of
 men speak high and women speak low, so the model should treat pitch as a
@@ -153,7 +153,7 @@ same charter, with real motors in place of tile moves (a new `Domain`, see
    model run locally through Ollama or llama.cpp) can do the H-steps; they're
    small, and each one has a test to say if it worked.
 3. **The rule that saved the brain on 2026-09-29:** before anything changes
-   the brain's shape, a backup is taken (`migrate_scheme.py` does it). Never
+   the brain's shape, a backup is taken (`tools/migrate_scheme.py` does it). Never
    delete `checkpoints/brain_*` backups.
 4. **Never change numbers by hand while unsure.** Bob was right not to on
    2026-09-29.

@@ -34,7 +34,7 @@ class RLPolicy(nn.Module):
         # nn.Embedding defaults to N(0, 1), which is large next to typical
         # activations.  With the patch contributing 25 rows, the embedding
         # branch otherwise swamps fc1(state) at init and drowns the rest of
-        # the observation (caught by sanity_train.py).  Start small; the
+        # the observation (caught by tests/sanity_train.py).  Start small; the
         # tables grow their own scale if the information is worth it.
         for table in (self.item_embed, self.entity_embed, self.tile_embed):
             nn.init.normal_(table.weight, mean=0.0, std=0.1)

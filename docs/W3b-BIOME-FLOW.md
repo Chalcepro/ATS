@@ -108,5 +108,5 @@ islands and bridges back on before training.
   the coast, reach sized by the island's starting area (volcanic 3-8, ice
   3-20; measured 3-6 and 10-13), always keeping 3 tiles of sea to other
   islands and bridges.
-- `W3_SPREAD = False` turns it off. Tests: `test_w3b_spread.py` 8/8; all other
+- `W3_SPREAD = False` turns it off. Tests: `tests/test_w3b_spread.py` 8/8; all other
   world tests still pass. Cost: ~0.04 s per change (every 500 ticks).

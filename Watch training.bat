@@ -5,4 +5,4 @@ cd /d "%~dp0"
 set "PY=python"
 %PY% -c "import tkinter" >nul 2>&1
 if errorlevel 1 set "PY=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
-start "" "%PY%" trainwatch.py %*
+start "" "%PY%" tools/trainwatch.py %*

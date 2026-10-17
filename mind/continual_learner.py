@@ -4,9 +4,6 @@ Instead of training only at the end of an episode (offline), this module
 keeps a rolling buffer of transitions and performs mini PPO updates
 every N ticks.  The same policy object is shared with the solution loop
 so improvements are immediate.
-
-``train_rl.py`` can still be used as an accelerated batch trainer —
-it calls the same policy and the same PPO maths.
 """
 
 from __future__ import annotations

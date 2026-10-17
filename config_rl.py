@@ -101,7 +101,7 @@ PATCH_TILES  = PATCH_SIZE * PATCH_SIZE        # 25
 # NOTE: the new blocks are inserted *before* the action mask on purpose —
 # indices 0..53 keep their historical meaning (mind/need_detector.py and
 # ExperienceMemory's state[:20] slice depend on them) and the mask stays at
-# the tail (sanity_env.py writes it as s[-ACTION_SIZE:]).
+# the tail (tests/sanity_env.py writes it as s[-ACTION_SIZE:]).
 IDX_ENT_TYPE   = 15        # nearest entity type, RAW int -> entity_embed
 IDX_OBJ_ID     = 19        # nearest object id, NORMALISED (id/ITEM_VOCAB_SIZE)
 IDX_INV_START  = 20        # 7 slots x (norm_item_id, norm_count)
@@ -143,7 +143,7 @@ IDX_MASK_START  = IDX_MEM_ROUTE_START + MEM_CELLS
 # the TAIL of the state vector. Adding an action therefore changes the STATE
 # size too, and a saved brain will be refused for an input-width mismatch even
 # after its actor has been grown correctly. Both have to be migrated together -
-# see RLPolicy.expand_state and migrate_scheme.py. The old value was 495 at
+# see RLPolicy.expand_state and tools/migrate_scheme.py. The old value was 495 at
 # ACTION_SIZE 25; do not hardcode it anywhere.
 STATE_SIZE = IDX_MASK_START + ACTION_SIZE
 

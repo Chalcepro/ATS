@@ -37,7 +37,10 @@
 | `mind/need_detector.py` | Maps state vector to 4-D urgency needs |
 | `mind/continual_learner.py` | Online PPO mini-updates between episodes |
 | `memory.py` | Cross-episode spatial confidence decay |
-| `docs/` | **Living documentation** — update these when you change things |
+| `loop.py` | W4 the Loop — dungeon rooms after death |
+| `tests/` | Every test; run from the repo root, e.g. `py -3 tests/test_loop.py` |
+| `tools/` | Diagnostics and helpers (trend, trainwatch, say, migrate_scheme, diag_*) — never imported by training |
+| `docs/` | **Living documentation** — update these when you change things; `docs/history/` is August-era, kept for reference |
 | `updates/` | **Chronological change logs** — add a new file for each session |
 
 ---
@@ -149,7 +152,7 @@ One line summary of what this session changed.
 | :--- | :--- |
 | [`docs/system_overview.md`](docs/system_overview.md) | State vector changes, action space changes, architecture changes |
 | [`docs/world_and_items.md`](docs/world_and_items.md) | New items, entity changes, biome changes, crafting recipes |
-| [`docs/how_to_use.md`](docs/how_to_use.md) | GUI flow changes, new buttons, startup flags |
+| [`docs/history/how_to_use.md`](docs/history/how_to_use.md) (Aug, old GUI) | GUI flow changes, new buttons, startup flags |
 | [`updates/`](updates/) | **Every session** — log what you changed |
 
 ---
