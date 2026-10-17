@@ -213,6 +213,40 @@ IDX_LOOP_SIGNAL = 6
 HELD_WEAPON_ONLY = True
 IDX_HELD = 9
 
+# Interact is a way of looking (2026-10-17). Measured on the trained brain in
+# Loop rooms: 0/10 lever rooms, even with the lever in plain sight - it almost
+# never pressed interact, because interact was masked off except beside a
+# lever or a passive creature, so it had never learned that E does anything.
+# Now E always works: beside a lever or bush it uses them as before, otherwise
+# it inspects the best thing in reach (a creature > a thing faced > a thing
+# beside it > the ground faced) and its senses say what kind of thing that
+# was. The first look at each kind in an episode pays INSPECT_NEW_REWARD;
+# looking at the same thing again straight away costs a wait.
+INSPECT = True
+IDX_INSPECT_KIND = 7          # what it last looked at, kind code / INSPECT_KINDS (was z "left", a stub)
+IDX_INSPECT_FRESH = 8         # how recently it looked: x INSPECT_FADE a tick (was z "right", a stub)
+INSPECT_KINDS = 12
+INSPECT_FADE = 0.8
+INSPECT_NEW_REWARD = 0.3
+
+# Toggles that undo themselves cost a wait. ~40% of its actions in Loop rooms
+# were sprint on/off and inventory open/close back to back: no cost, no
+# effect, and with a step back and forth now and then, a way to stand around
+# without paying R_WAIT. A toggle is pointless when it reverses the last
+# toggle of the same thing with nothing done in between (a wait isn't doing).
+POINTLESS_TOGGLE_COSTS = True
+
+# Sprinting is faster. It drained stamina and gave nothing - the agent moved
+# one tile a tick either way. Now, on dry footing with stamina left, a sprint
+# step goes two tiles (it can't vault water, lava, acid, spores or ice).
+SPRINT_DOUBLE_STEP = True
+
+# Payouts it can farm pay nothing. Harvesting paid R_PICKUP_DEFAULT on every
+# swing at a tree (about a hundred times an episode), and picking up a kind it
+# already had paid too. Now only the first of each kind pays (discovery);
+# eating still pays by need. False restores the old payouts.
+FARMABLE_PAYOUTS = False
+
 # 2026-10-09 (Chalce): bigger land so the agent has room to live without the
 # coast always a few steps away (at ep 400 it still drowned 99% of the time -
 # the sea was just too close). Scales island radius; islands sit ~250 tiles

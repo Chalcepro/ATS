@@ -165,7 +165,10 @@ class ATSEnvironment:
         for ent in list(self.world.entities):
             if not ent.alive:
                 continue
-            dmg = ent.tick_ai(self.agent.x, self.agent.y, self.world)
+            ax, ay = self.agent.x, self.agent.y
+            if self.in_loop:                # the room repeats: the short way round
+                ax, ay = self.world.near_image(ent.x, ent.y, ax, ay)
+            dmg = ent.tick_ai(ax, ay, self.world)
 
             # Instant kill (the Void, or a shark). Named after what it was:
             # every one of these used to say "the Void", which hid that
@@ -409,6 +412,7 @@ class ATSEnvironment:
         self.loop_room = room
         self._place(loop.LoopWorld(self.real_world, room), room.start,
                     room.health, room.hunger)
+        self.agent.stamina = room.stamina
         a = self.agent
         a.inventory = [{"id": "", "count": 0} for _ in range(config_rl.INVENTORY_SLOTS)]
         for slot, item_id, n in room.kit:

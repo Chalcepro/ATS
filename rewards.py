@@ -201,6 +201,7 @@ class RewardEngine:
         self.deaths = 0
 
         self.discovered_items: set[str] = set()
+        self.inspected: set = set()     # kinds of thing looked at this episode (INSPECT)
         self.discovered_islands: set[int] = set()
         self.discovered_tiles: set[tuple[int, int]] = set()
         self.discovered_biomes: set[int] = set()
@@ -362,6 +363,10 @@ class RewardEngine:
             self.discovered_items.add(item_id)
             self.progression_points += 0.5
             return self.add(R_PICKUP_DISCOVERY, "pickup_discovery")
+        # A kind it already has: the old payouts could be farmed (a swing at a
+        # tree paid every time). config_rl.FARMABLE_PAYOUTS restores them.
+        if not getattr(config_rl, "FARMABLE_PAYOUTS", True):
+            return 0.0
         if item and item.get("type") == "consumable":
             return self.add(R_PICKUP_CONSUMABLE, "pickup_consumable")
         return self.add(R_PICKUP_DEFAULT, "pickup_default")
@@ -456,10 +461,18 @@ class RewardEngine:
         self.progression_points += 2.0
         return self.add(R_VILLAGE_FOUND, "village_found")
 
-    def on_wait(self) -> float:
+    def on_wait(self, reason: str = "wait") -> float:
         if not self.rules.get("wait_penalty", True):
             return 0.0
-        return self.add(R_WAIT, "wait")
+        return self.add(R_WAIT, reason)
+
+    def on_inspect(self, kind) -> float:
+        """Looked at something (config_rl.INSPECT): the first look at each
+        kind of thing in an episode pays; the rest are free."""
+        if kind in self.inspected:
+            return 0.0
+        self.inspected.add(kind)
+        return self.add(getattr(config_rl, "INSPECT_NEW_REWARD", 0.3), "inspect_new")
 
     def on_damage(self, amount: float = 1.0) -> float:
         self.damage_taken += amount

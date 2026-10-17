@@ -197,3 +197,36 @@ Now `LOOP_ROOM_TIMEOUT` = 600 ticks: not solved in time = a failed try
 (-5, `LOOP_TIMEOUT_PENALTY`, less than a death so it's no escape hatch), the
 room starts again; 5 failed tries of any kind = a different room. A room it
 has WON but can't find the door out of lets it go after another 600 ticks.
+
+## Looking, toggles, sprint, payouts, chase (2026-10-17)
+Probe of the trained brain, 10 tries per room kind: shore 9/10, food 5/10,
+lava 1/10, fight 0/10, lever 0/10 (in sight too). ~40% of its actions were
+sprint on/off and inventory open/close: free, and with a step now and then
+a way to stand around without paying R_WAIT. It almost never pressed
+interact. And sprinting drained stamina for no extra speed. Chalce's calls:
+
+- **Interact is a way of looking** (`INSPECT`). E is always available. Beside
+  a lever or bush it uses them; otherwise it looks at a creature in reach, a
+  thing faced, a thing beside it, or the ground faced, and state 7/8 carry
+  what kind it was (hostile, other creature, food, weapon/tool, switch,
+  tree/rock, other thing, harmful ground, water, wall, ground) and how
+  recently. First look at each kind per episode +0.3; the same thing again
+  straight away costs a wait. Chalce asked for text ("this is grass"); the
+  model can't read, so the answer goes into its senses instead.
+- **Pointless toggles cost a wait** (`POINTLESS_TOGGLE_COSTS`): flipping
+  sprint, inventory or crafting straight back with nothing done between.
+- **Sprint is faster** (`SPRINT_DOUBLE_STEP`): two tiles a step on dry
+  footing, same stamina (2 a step, +1 a tick back when not sprinting).
+- **No farmable payouts** (`FARMABLE_PAYOUTS = False`): a kind it already
+  has pays nothing to pick up or harvest; the first of each kind still
+  does, and eating still pays by need. Chalce proposed "hardcore" (only
+  survival time pays). Not built: with only negatives left, doing nothing
+  is safest, which is the stalling just measured, and it would cut the
+  signal that leads to food.
+- **Lever at hand**: a third of lever rooms put the lever beside the start.
+- **Chase room** (Chalce's Dark Souls ghosts): a creature hunts it at ~1.5
+  tiles a tick (faster than a walk, slower than a sprint), with 6x its hp so
+  bare hands can't win. Get 8 away round the loop and it loses you. Room
+  stamina 40-100, so it has to save it. A creature's death can match a fight
+  or a chase. Creatures in rooms now go for the agent the short way round.
+

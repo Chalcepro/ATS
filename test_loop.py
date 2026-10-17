@@ -230,10 +230,63 @@ def test_each_room_kind_tallies_how_its_tries_ended():
     assert env.room_stats[key] == [1, 1, 1, 0], env.room_stats
 
 
+def test_a_lever_at_hand_is_one_press():
+    env = fresh()
+    die(env)
+    rng = random.Random(14)
+    room = loop.lever_room(rng)
+    while room.about != "lever at hand":
+        room = loop.lever_room(rng)
+    env.loop_goals = 0
+    into(env, room)
+    env.step(INTERACT)
+    assert env.loop_room is not room and env.loop_goals == 1
+
+
+def test_the_room_repeats_so_a_creature_comes_the_short_way_round():
+    assert loop.LoopWorld.near_image(1, 7, 13, 7) == (-2, 7)
+    assert loop.LoopWorld.loop_dist((1, 7), (13, 7)) == 3
+    assert loop.LoopWorld.loop_dist((3, 3), (4, 5)) == 3
+
+
+def _chase(seed):
+    env = fresh()
+    die(env)
+    room = into(env, loop.chase_room(random.Random(seed), "E002"))
+    hunter = env.world.entities[0]
+    assert hunter.hp == loop.REGISTRY.get_entity("E002").hp * loop.CHASE_HP_TIMES
+    return env, room, hunter
+
+
+def test_chase_standing_still_it_gets_caught():
+    env, room, hunter = _chase(15)
+    hp = env.agent.health
+    for _ in range(60):
+        env.step(WAIT)
+    assert env.agent.health < hp, "it hunts the whole time"
+
+
+def test_chase_far_enough_away_it_loses_you_and_the_doors_open():
+    env, room, hunter = _chase(16)
+    a = env.agent
+    a.x, a.y = (hunter.x + 7) % loop.SIZE, (hunter.y + 7) % loop.SIZE   # 14 round the loop
+    env.step(WAIT)
+    assert env.world.doors_open and not hunter.alive
+    assert env.room_stats["chase"][0] == 1
+
+
+def test_chase_rooms_vary_and_a_named_killer_can_be_a_chase():
+    rng = random.Random(17)
+    kinds = Counter(loop.pick_room("Zombie", rng).kind for _ in range(400))
+    assert kinds["chase"] > 60 and kinds["fight"] > 60, kinds
+    rooms = [loop.chase_room(rng) for _ in range(50)]
+    assert len({r.about for r in rooms}) > 8 and len({r.stamina for r in rooms}) > 10
+
+
 def test_rooms_vary():
     rng = random.Random(10)
     rooms = [loop.pick_room(None, rng) for _ in range(200)]
-    assert len(Counter(r.kind for r in rooms)) == 5
+    assert len(Counter(r.kind for r in rooms)) == len(loop.KINDS) == 6
     assert len({r.about for r in rooms}) > 25
     assert len({tuple(r.layout) for r in rooms}) > 150, "layouts are rolled, not fixed"
 
@@ -241,7 +294,7 @@ def test_rooms_vary():
 def test_cause_picks_the_matching_room_about_half_the_time():
     rng = random.Random(11)
     kinds = Counter(loop.pick_room("Wolf", rng).about for _ in range(400))
-    wolf = sum(n for k, n in kinds.items() if k.startswith("fight Wolf"))
+    wolf = sum(n for k, n in kinds.items() if k.startswith(("fight Wolf", "chase Wolf")))
     assert 150 < wolf < 260, wolf
 
 

@@ -37,6 +37,43 @@ for _i in range(config_rl.INVENTORY_SLOTS):
     ACTION_NAMES[config_rl.ACT_USE_SLOT_BASE + _i] = f"use_slot_{_i}"
 
 
+# Toggles: an action that flips one switch. Two flips of the same switch with
+# nothing done between them is a pointless toggle (POINTLESS_TOGGLE_COSTS).
+_TOGGLES = {
+    config_rl.ACT_SPRINT_ON: "sprint", config_rl.ACT_SPRINT_OFF: "sprint",
+    config_rl.ACT_OPEN_INVENTORY: "inventory", config_rl.ACT_CLOSE_INVENTORY: "inventory",
+    config_rl.ACT_OPEN_CRAFTING: "crafting", config_rl.ACT_CLOSE_CRAFTING: "crafting",
+}
+
+# Footing a sprint can't carry it across in one stride (SPRINT_DOUBLE_STEP):
+# water, lava, the sea, acid, ice and spores.
+_NO_STRIDE = (5, 6, 8, 9, 10, 12)
+
+# What a look (INSPECT) tells it: the kind of thing, as a code its senses carry
+# at IDX_INSPECT_KIND (code / INSPECT_KINDS). 0 = hasn't looked at anything.
+_GROUND_NAMES = {0: "ground", 1: "a wall", 4: "stone floor", 5: "water", 6: "lava",
+                 7: "a gate", 8: "the sea", 9: "acid", 10: "ice", 11: "ash",
+                 12: "spores", 13: "a bridge", 14: "a shark", 15: "a house"}
+
+
+def _thing_kind(item_id):
+    """3 food/drink, 4 weapon/tool/armour, 5 switch, 6 tree/bush/rock, 7 other."""
+    t = (REGISTRY.get_item(item_id) or {}).get("type")
+    return {"consumable": 3, "weapon": 4, "tool": 4, "armour": 4, "switch": 5,
+            "world_object": 6}.get(t, 7)
+
+
+def _ground_kind(tile_type):
+    """8 hurts (lava, acid, spores), 9 water or sea, 10 wall or gate, 11 ground."""
+    if tile_type in (6, 9, 12):
+        return 8
+    if tile_type in (5, 8, 14):
+        return 9
+    if tile_type in (1, 7):
+        return 10
+    return 11
+
+
 class Agent:
     """RL agent with 7-slot inventory, context-masked actions, facing tracking, and stat tracking."""
 
@@ -99,6 +136,10 @@ class Agent:
         self._pending_kills: list[tuple[str, str, int, int]] = []  # (entity_id, drop_id, x, y)
         self.last_action_name = "none"
         self.last_failed_action = 0
+        self._last_toggle = None        # the switch flipped last, if nothing was done since
+        self._last_look = None          # what it looked at, if it has done nothing since
+        self.inspect_kind = 0           # INSPECT: kind code of what it last looked at
+        self.inspect_fresh = 0.0        # set to 1.0 by a look, fades each tick
 
         # Minecraft-style emergent capability set
         self.capabilities: set[str] = set()
@@ -164,6 +205,36 @@ class Agent:
     def _is_switch(tile):
         item = REGISTRY.get_item(tile.object_id) if tile and tile.object_id else None
         return bool(item) and item.get("type") == "switch"
+
+    def _inspect(self, rewards):
+        """Look at the best thing in reach: a creature, then a thing faced,
+        then a thing beside it, then the ground faced. Its senses then say
+        what kind of thing that was (IDX_INSPECT_KIND / _FRESH)."""
+        w = self.world
+        fx, fy = self.x + self.facing[0], self.y + self.facing[1]
+        around = [(fx, fy)] + [(self.x + dx, self.y + dy) for dy in (-1, 0, 1)
+                               for dx in (-1, 0, 1) if (dx or dy) and (self.x + dx, self.y + dy) != (fx, fy)]
+        ent = next((e for p in around for e in [w.entity_at(*p)] if e), None)
+        if ent:
+            key = ("creature", ent.entity_id)
+            code = 1 if ent.spec.has("hostile") else 2
+            what = entity_name(ent.entity_id)
+        else:
+            spot = next((p for p in around if (w._tile(*p) and w._tile(*p).object_id)), None)
+            if spot:
+                oid = w._tile(*spot).object_id
+                key, code, what = ("thing", oid), _thing_kind(oid), item_name(oid)
+            else:
+                t = w._tile(fx, fy)
+                tt = t.tile_type if t else 1
+                key, code, what = ("ground", tt), _ground_kind(tt), _GROUND_NAMES.get(tt, "ground")
+        if key == self._last_look:
+            rewards.on_wait("look_again")       # the same thing, straight away
+        else:
+            rewards.on_inspect(key)
+        self._last_look = key
+        self.inspect_kind, self.inspect_fresh = code, 1.0
+        self.log_event("Looked at %s" % what)
 
     def held_damage(self):
         """Damage of the item in hand (the selected slot); 1 for bare hands."""
@@ -314,8 +385,9 @@ class Agent:
             if self.inventory[i]["id"] and self.inventory[i]["count"] > 0:
                 mask[config_rl.ACT_USE_SLOT_BASE + i] = 1
 
+        # Interact is a way of looking (config_rl.INSPECT): always available.
         # A lever within reach (W4 Loop rooms) can be pulled
-        if any(self._is_switch(world._tile(self.x + dx, self.y + dy))
+        if getattr(config_rl, "INSPECT", False) or any(self._is_switch(world._tile(self.x + dx, self.y + dy))
                for dx in (-1, 0, 1) for dy in (-1, 0, 1)):
             mask[config_rl.ACT_INTERACT] = 1
 
@@ -360,6 +432,19 @@ class Agent:
     def apply_action(self, action_idx, rewards, day_night):
         self._add_recent(action_idx)
         self.last_action_name = ACTION_NAMES.get(action_idx, str(action_idx))
+
+        if action_idx not in (config_rl.ACT_INTERACT, config_rl.ACT_WAIT):
+            self._last_look = None
+        # Flipping a switch straight back costs a wait (see config_rl).
+        if getattr(config_rl, "POINTLESS_TOGGLE_COSTS", False):
+            switch = _TOGGLES.get(action_idx)
+            if switch is None:
+                if action_idx != config_rl.ACT_WAIT:
+                    self._last_toggle = None    # it did something
+            else:
+                if switch == self._last_toggle:
+                    rewards.on_wait("pointless_toggle")
+                self._last_toggle = switch
 
         # --- Wait ---
         if action_idx == config_rl.ACT_WAIT:
@@ -529,6 +614,8 @@ class Agent:
                     rewards.on_pickup("0001")
                     self.log_event("Gathered fresh Berries/Apples from bush!")
                     return
+            if getattr(config_rl, "INSPECT", False):
+                self._inspect(rewards)
             return
 
         # --- Jump ---
@@ -558,6 +645,15 @@ class Agent:
         else:
             return
 
+        if (self._stride(dx, dy, rewards) and getattr(config_rl, "SPRINT_DOUBLE_STEP", False)
+                and self.sprint and self.stamina > 0 and not self.leg_injured):
+            here = self.world._tile(self.x, self.y)
+            if here and here.tile_type not in _NO_STRIDE:
+                self._stride(dx, dy, rewards, second=True)
+
+    def _stride(self, dx, dy, rewards, second=False):
+        """One tile of movement. True if it moved. The second stride of a
+        sprint costs no extra stamina and doesn't count as a wall hit."""
         nx, ny = self.x + dx, self.y + dy
 
         # Check if attempting to pass through a progression gate
@@ -568,12 +664,15 @@ class Agent:
             self.log_event(f"★ Unlocked Gate: {unlocked_gate}!")
 
         if not self.world.in_bounds_passable(nx, ny, self.world.door_unlocked):
-            rewards.on_wall_hit()
-            return
+            if not second:
+                rewards.on_wall_hit()
+            return False
 
         # Water & Sea speed penalty
         cur_tile = self.world._tile(self.x, self.y)
         new_tile = self.world._tile(nx, ny)
+        if second and new_tile and new_tile.tile_type in (5, 8):
+            return False                # a stride ends at the water's edge
         in_water = (cur_tile and cur_tile.tile_type in (5, 8)) or (new_tile and new_tile.tile_type in (5, 8))
 
         if in_water:
@@ -583,7 +682,7 @@ class Agent:
             if self._water_move_counter < needed_subticks:
                 drag_name = "Deep Sea (1/3 speed)" if is_deep_sea else "Water/H2O (1/2 speed)"
                 self.log_event(f"Wading in {drag_name}...")
-                return
+                return False
             self._water_move_counter = 0
             if new_tile and new_tile.tile_type == 8:
                 self.sea_blocks_crossed += 1
@@ -593,7 +692,7 @@ class Agent:
             self._water_move_counter = 0
             self.sea_blocks_crossed = 0
 
-        if self.sprint and self.stamina > 0 and not self.leg_injured:
+        if self.sprint and self.stamina > 0 and not self.leg_injured and not second:
             self.stamina = max(0, self.stamina - 2)
 
         # Fall damage calculation
@@ -614,6 +713,7 @@ class Agent:
                 self.sprint = False
                 rewards.on_leg_injury()
                 self.log_event("Slipped on Ice! (Leg Injured)")
+        return True
 
     # ------------------------------------------------------------------
     # Use item logic
@@ -736,6 +836,7 @@ class Agent:
         # is negative and dying early is the better play - see the long note
         # in rewards.py.
         rewards.tick_alive()
+        self.inspect_fresh *= getattr(config_rl, "INSPECT_FADE", 0.8)
         self._hunger_counter += 1
         # Hunger drains 1 point every 15 ticks
         if self.hunger > 0 and self._hunger_counter % 15 == 0:
@@ -865,8 +966,8 @@ class Agent:
             # Position / height (5)
             float(self.z),
             float(self.in_loop) if getattr(config_rl, "LOOP_SIGNAL", False) else float(z["ahead"]),
-            float(z["left"]),
-            float(z["right"]),
+            (self.inspect_kind / config_rl.INSPECT_KINDS) if getattr(config_rl, "INSPECT", False) else float(z["left"]),
+            self.inspect_fresh if getattr(config_rl, "INSPECT", False) else float(z["right"]),
             held / 20.0 if getattr(config_rl, "HELD_WEAPON_ONLY", False) else float(z["behind"]),
 
             # Adjacent tile types (4)

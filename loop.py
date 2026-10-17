@@ -8,7 +8,7 @@ itself. Once the goal is met the doors open and a doorway leads out. A lever
 room's way out is the lever.
 
 Rooms are GENERATED, not drawn: each entry rolls a kind (fight, food, lever,
-shore, lava) and then the details - the layout's inner walls and pillars,
+shore, lava, chase) and then the details - the layout's inner walls and pillars,
 which creature and how many, which weapon in which slot, which food and where,
 whether the lever is in plain sight or tucked away, the pool's shape. So it
 can't learn four rooms by heart. A retry after dying is the SAME room
@@ -19,6 +19,7 @@ it is back in the world beside the nearest real version of the last room.
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 import random
 from collections import deque
@@ -46,6 +47,8 @@ WEAPONS = ["0034", "0002", "0033", "0013"]          # club 3, sword 5, dagger 6,
 FOODS = ["0001", "0023", "0031", "0032"]            # apple, berry bush, raw meat, bread
 CLUTTER = ["0008", "0010", "0012", "0003", "0024"]  # stick, wood, stone, book, fallen log
 TREASURE = ["0006", "0003"]                         # key, book: what the lava room guards
+CHASE_SAFE = 8          # chase room: this far from the chaser (around the loop) and it loses you
+CHASE_HP_TIMES = 6      # a chaser can't be fought off bare-handed, only outrun
 
 
 @dataclass
@@ -64,6 +67,8 @@ class Room:
     sends_back: Callable | None = None    # (env) -> True: back to the start, no death
     goal_is_exit: bool = False            # the lever: meeting it IS leaving
     route_hint: bool = False              # route channel shows the way to the lever
+    stamina: int = 100
+    chase: bool = False                   # its creatures hunt it, faster than it walks
     about: str = ""                       # what it is, for the log
 
     @property
@@ -101,12 +106,27 @@ class LoopWorld(World):
         for p, item_id in room.objects.items():
             self.tiles[p].object_id = item_id
         for eid, x, y in room.creatures:
-            self.entities.append(Entity.from_id(eid, x, y))
+            e = Entity.from_id(eid, x, y)
+            if room.chase:              # hunts it the whole time, and can't be beaten
+                e.spec = dataclasses.replace(e.spec, hp=e.spec.hp * CHASE_HP_TIMES, grudge=99)
+                e.hp, e.angry = e.spec.hp, True
+            self.entities.append(e)
         self.agent_spawn = room.start
 
     @staticmethod
     def wrap(x, y):
         return x % SIZE, y % SIZE
+
+    @staticmethod
+    def near_image(fx, fy, x, y):
+        """(x, y) moved by whole rooms to the copy nearest (fx, fy): the room
+        repeats, so a creature goes for the agent the short way round."""
+        return (x + round((fx - x) / SIZE) * SIZE, y + round((fy - y) / SIZE) * SIZE)
+
+    @classmethod
+    def loop_dist(cls, a, b):
+        x, y = cls.near_image(a[0], a[1], b[0], b[1])
+        return abs(x - a[0]) + abs(y - a[1])
 
     def wrap_all(self, agent) -> None:
         agent.x, agent.y = self.wrap(agent.x, agent.y)
@@ -150,6 +170,13 @@ class LoopWorld(World):
 
     def tick_life(self, ax=0, ay=0):
         self._life_ticks += 1           # nothing is born or regrows in a room
+        if self.room.chase and self._life_ticks % 2:
+            # A chaser's extra stride every other tick: ~1.5 tiles a tick, so
+            # walking away loses and a sprint (2) gets away while stamina lasts.
+            for e in self.entities:
+                tx, ty = self.near_image(e.x, e.y, ax, ay)
+                if e.alive and abs(tx - e.x) + abs(ty - e.y) > e.spec.hostility_args.get("space", 1):
+                    e._step(self, (tx, ty), away=False, every=1)
         return []
 
     def lever_pulled(self):
@@ -370,6 +397,18 @@ def _pulled(env):
     return env.world.lever_pulled()
 
 
+def _got_away(env):
+    """Chase: CHASE_SAFE from every chaser (the short way round the loop).
+    It loses the trail and is gone."""
+    a, w = env.agent, env.world
+    hunters = [e for e in w.entities if e.alive]
+    if all(w.loop_dist((e.x, e.y), (a.x, a.y)) >= CHASE_SAFE for e in hunters):
+        for e in hunters:
+            e.alive = False
+        return True
+    return False
+
+
 def _holds(item_id):
     def goal(env):
         return any(s["id"] == item_id and s["count"] > 0 for s in env.agent.inventory)
@@ -450,7 +489,8 @@ def lever_room(rng):
     g = _shell()
     _decorate(g, rng)
     start = (MID, MID + 1)
-    hidden = rng.random() < 0.5
+    where = rng.choice(["at hand", "in sight", "hidden"])
+    hidden = where == "hidden"
     if hidden:
         left, top = rng.random() < 0.5, rng.random() < 0.5
         xs = range(1, 4) if left else range(SIZE - 4, SIZE - 1)
@@ -470,7 +510,9 @@ def lever_room(rng):
     reach = _reach(g, start)
     if _bad(reach):
         return lever_room(rng)                          # walled itself in: roll again
-    if not hidden:
+    if where == "at hand":      # right beside it: pressing E once is the whole lesson
+        lever = rng.choice([c for c in _around(*start) if c in reach and c not in DOORS])
+    elif not hidden:
         lever = _floor(g, reach, {start}, rng)
     elif not any(n in reach for n in _around(*lever)):
         return lever_room(rng)
@@ -480,7 +522,7 @@ def lever_room(rng):
         objects[_floor(g, reach, taken, rng)] = rng.choice(CLUTTER)
     return Room("lever", _rows(g), start, _pulled, find_start, objects=objects,
                 goal_is_exit=True, route_hint=hidden,
-                about="lever %s" % ("hidden" if hidden else "in sight"))
+                about="lever %s" % where)
 
 
 def shore_room(rng):
@@ -524,8 +566,31 @@ def lava_room(rng):
                 % REGISTRY.get_item(treasure)["name"])
 
 
+def chase_room(rng, eid=None):
+    """Chalce's Dark Souls ghosts: something hunts it, faster than it walks
+    and slower than it sprints, and too tough to fight with what it has. Get
+    far enough away and it loses you - if there's stamina left to run."""
+    eid = eid or rng.choice(FIGHTERS)
+    g = _shell()
+    _decorate(g, rng)
+    start = (MID, MID + 1)
+    g[start[1]][start[0]] = "."
+    reach = _reach(g, start)
+    if _bad(reach):
+        return chase_room(rng, eid)
+    near = [c for c in reach if c not in DOORS and 3 <= LoopWorld.loop_dist(c, start) <= 5
+            and g[c[1]][c[0]] == "."]
+    if not near:
+        return chase_room(rng, eid)
+    x, y = rng.choice(near)
+    return Room("chase", _rows(g), start, _got_away, find_creature(eid),
+                creatures=[(eid, x, y)], kit=_kit_with(rng) if rng.random() < 0.5 else [],
+                health=rng.randint(30, 60), stamina=rng.randint(40, 100), chase=True,
+                about="chase %s" % REGISTRY.get_entity(eid).name)
+
+
 KINDS = {"fight": fight_room, "food": food_room, "lever": lever_room,
-         "shore": shore_room, "lava": lava_room}
+         "shore": shore_room, "lava": lava_room, "chase": chase_room}
 
 
 def pick_room(cause: str | None, rng: random.Random, avoid: str | None = None) -> Room:
@@ -535,8 +600,9 @@ def pick_room(cause: str | None, rng: random.Random, avoid: str | None = None) -
     low = (cause or "").lower()
     if rng.random() < 0.5 and low:
         named = [e for e in FIGHTERS if REGISTRY.get_entity(e).name.lower() in low]
-        if named and avoid != "fight":
-            return fight_room(rng, rng.choice(named))
+        kinds = [k for k in ("fight", "chase") if k != avoid]
+        if named and kinds:             # fight it, or get away from it
+            return KINDS[rng.choice(kinds)](rng, rng.choice(named))
         for kind, words in (("shore", ("drown", "shark")), ("food", ("starv",)),
                             ("lava", ("lava", "burn"))):
             if kind != avoid and any(w in low for w in words):
