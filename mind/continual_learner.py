@@ -196,6 +196,9 @@ class ContinualLearner:
             entropy_bonus = -self.entropy_coeff * entropy.mean()
 
             loss = actor_loss + 0.5 * critic_loss + entropy_bonus
+            spread_coef = getattr(config_rl, "LOGIT_SPREAD_COEF", 0.0)
+            if spread_coef:
+                loss = loss + spread_coef * self.policy.last_logit_spread
 
             self.optimizer.zero_grad()
             loss.backward()

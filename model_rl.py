@@ -194,8 +194,16 @@ class RLPolicy(nn.Module):
         return action, log_prob, value, h_out
 
     def evaluate(self, states, actions, action_masks=None, hxs=None):
-        """Evaluate log-probs, values, entropy for a batch (PPO update)."""
-        logits, values, _ = self.forward(states, action_mask=action_masks, hx=hxs)
+        """Evaluate log-probs, values, entropy for a batch (PPO update).
+
+        Also leaves last_logit_spread: the mean squared distance of every
+        logit, masked ones included, from that state's mean logit
+        (config_rl.LOGIT_SPREAD_COEF). Read from the raw logits, since after
+        masking a hidden action's logit is -1e8 and says nothing."""
+        logits, values, _ = self.forward(states, hx=hxs)
+        self.last_logit_spread = (logits - logits.mean(-1, keepdim=True)).pow(2).mean()
+        if action_masks is not None:
+            logits = logits + (1.0 - action_masks) * (-1e8)
         dist = torch.distributions.Categorical(logits=logits)
         log_probs = dist.log_prob(actions)
         entropy = dist.entropy()
@@ -328,9 +336,15 @@ class RLPolicy(nn.Module):
 
         Existing action logits keep their exact weights, so every action the
         brain already understands still means what it meant. New actions start
-        at zero weight and zero bias, which puts their logit at 0 - neither
-        suppressed nor preferred, and reachable as soon as the mask allows and
-        the advantage points that way.
+        as the AVERAGE of the old rows, which puts their logit at the mean of
+        the old logits in every state - neither suppressed nor preferred, and
+        reachable as soon as the mask allows and the advantage points that way.
+
+        It used to be zero weight and zero bias, "logit 0". That is only
+        neutral when the live logits sit near 0, and a trained head doesn't:
+        on 2026-10-17 the move logits sat around 90, so a logit of 0 was a
+        probability of 1e-38 - an action that can never be sampled, and so
+        can never be learned. See revive_actions().
 
         Deliberately not output-preserving, and it cannot be: a new action
         with a logit of 0 changes the softmax over the others. That is the
@@ -341,12 +355,33 @@ class RLPolicy(nn.Module):
             return
         old = self.action_size
         new_actor = nn.Linear(self.hidden_size, new_action_size)
-        nn.init.zeros_(new_actor.weight)
-        nn.init.zeros_(new_actor.bias)
         new_actor.weight.data[:old, :] = self.actor.weight.data
         new_actor.bias.data[:old] = self.actor.bias.data
+        new_actor.weight.data[old:, :] = self.actor.weight.data.mean(0)
+        new_actor.bias.data[old:] = self.actor.bias.data.mean()
         self.actor = new_actor
         self.action_size = new_action_size
+
+    def revive_actions(self, dead, live):
+        """Give each action in *dead* the average of the *live* actions' rows.
+
+        An action the mask hides gets no gradient while hidden, so its logit
+        stays where it was while the sampled ones drift. Measured 2026-10-17:
+        interact, attack, wait, use_item and others sat 20-88 below the moves,
+        a probability of 1e-10 to 1e-38. Once an action is that far down it
+        is never sampled, and an action that is never sampled is never learned
+        - unmasking it changes nothing. That is why it never pressed interact
+        after INSPECT made E always available, and never won a fight room.
+
+        Its logit becomes the mean of the live logits in every state: a fair
+        chance, from which PPO pushes it up or down on what it actually does.
+        """
+        live = list(live)
+        w = self.actor.weight.data[live].mean(0)
+        b = self.actor.bias.data[live].mean()
+        for i in dead:
+            self.actor.weight.data[i] = w
+            self.actor.bias.data[i] = b
 
     # ------------------------------------------------------------------
     # Vocabulary growth: more SYMBOLS

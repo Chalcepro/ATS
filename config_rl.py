@@ -416,6 +416,16 @@ ENTROPY_TARGET_FRAC = 0.45     # ...of ln(available actions)
 ENTROPY_COEFF_MAX = 0.10               # ceiling = 20x ENTROPY_COEFF
 ENTROPY_ADAPT_UP = 1.08                # multiplicative step when entropy < target
 ENTROPY_ADAPT_DOWN = 0.98              # multiplicative step when entropy >= target
+# Keep every action's logit near the others, masked or not (2026-10-17).
+# The entropy bonus only sees the actions the mask allows, so a hidden action
+# gets no gradient and stays put while the sampled ones drift: the trained
+# brain had interact 83 below the moves (p = 1e-38) and attack 23 below, so
+# unmasking interact changed nothing and it never won a fight room. This pulls
+# each logit toward the mean of all logits, which only matters for actions
+# PPO has no say over: at a gap of 5 it is ~1000x weaker than the actor loss.
+# 0 = off. See RLPolicy.revive_actions / tools/revive_actions.py.
+LOGIT_SPREAD_COEF = 1e-3
+
 # NOTE: the floor is `ENTROPY_COEFF` itself (not a separate baked constant),
 # on purpose — debug_gui.py's Hyperparameter Studio lets the user live-tune
 # ENTROPY_COEFF at runtime; a separate ENTROPY_COEFF_MIN captured once at
