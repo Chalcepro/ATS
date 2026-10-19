@@ -361,11 +361,13 @@ class Agent:
             if (f_tile and f_tile.object_id) or (c_tile and c_tile.object_id):
                 mask[config_rl.ACT_ATTACK] = 1
 
-        # Pick up — object on current or any of 8 neighbors (3×3 square)
+        # Pick up — object on current or any of 8 neighbors (3×3 square).
+        # Not a lever: it is pulled, never carried (LEVERS_ARE_LEVERS).
+        levers = getattr(config_rl, "LEVERS_ARE_LEVERS", False)
         _neighbors_3x3 = [(dx, dy) for dx in range(-1, 2) for dy in range(-1, 2)]
         for dx, dy in _neighbors_3x3:
             adj = world._tile(self.x + dx, self.y + dy)
-            if adj and adj.object_id:
+            if adj and adj.object_id and not (levers and self._is_switch(adj)):
                 mask[config_rl.ACT_PICK_UP] = 1
                 break
 
@@ -1060,7 +1062,7 @@ class Agent:
                 c = (self.x + dx, self.y + dy)
                 t = self.seen.get(c)
                 known.append(0.0 if t is None
-                             else (t + 1.0) / (config_rl.TILE_VOCAB_SIZE + 1.0))
+                             else (t + 1.0) / (config_rl.MEM_TILE_NORM + 1.0))
                 visit.append(self.visit.get(c, 0.0))
         state.extend(known)
         state.extend(visit)

@@ -98,6 +98,39 @@ def incompatible(blob, policy) -> list[str]:
     return bad
 
 
+_TABLES = ("item_embed.weight", "entity_embed.weight", "tile_embed.weight")
+
+
+def grow_tables(blob, policy) -> list[str]:
+    """Give a saved brain the embedding rows this network has and it lacks.
+
+    A new tile, item or entity id is a new row (RLPolicy.expand_vocab), and a
+    brain saved before it existed is otherwise refused outright - which sends
+    main.py to a FRESH policy. The old rows are kept exactly; the new ones get
+    the tables' starting init, and Adam's moments for them start at zero.
+    Edits `blob` in place. Returns what grew.
+    """
+    sd = blob.get("policy") or {}
+    mine = policy.state_dict()
+    order = [name for name, _ in policy.named_parameters()]
+    opt_state = (blob.get("optimizer") or {}).get("state") or {}
+    grown = []
+    for key in _TABLES:
+        old, want = sd.get(key), mine.get(key)
+        if (old is None or want is None or old.shape[1] != want.shape[1]
+                or old.shape[0] >= want.shape[0]):
+            continue
+        extra = torch.randn(want.shape[0] - old.shape[0], old.shape[1]) * 0.1
+        sd[key] = torch.cat([old, extra])
+        if blob.get("param_shapes"):
+            blob["param_shapes"][key] = tuple(want.shape)
+        for k, v in (opt_state.get(order.index(key)) or {}).items():
+            if torch.is_tensor(v) and tuple(v.shape) == tuple(old.shape):
+                opt_state[order.index(key)][k] = torch.cat([v, v.new_zeros(extra.shape)])
+        grown.append("%s %d->%d" % (key.split(".")[0], old.shape[0], want.shape[0]))
+    return grown
+
+
 def is_loadable(policy, path: Path | None = None) -> bool:
     """Whether the brain on disk belongs to this network at all."""
     path = Path(path or DEFAULT_PATH)
@@ -107,6 +140,7 @@ def is_loadable(policy, path: Path | None = None) -> bool:
         blob = torch.load(path, map_location="cpu", weights_only=False)
     except Exception:
         return False
+    grow_tables(blob, policy)
     return not incompatible(blob, policy)
 
 
@@ -215,6 +249,9 @@ def load(policy, learner=None, path: Path | None = None, strict_shape: bool = Tr
         print("[brain] refusing to load: saved %s, this policy is %s" % (shape, mine))
         return {}
 
+    grown = grow_tables(blob, policy)
+    if grown:
+        print("[brain] grew %s - new symbols, everything learned kept" % ", ".join(grown))
     bad = incompatible(blob, policy)
     if strict_shape and bad:
         # The progress record goes with the weights. Returning {} here is the

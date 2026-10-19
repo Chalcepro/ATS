@@ -43,6 +43,9 @@ T_WALL = 1
 T_HOSTILE = 2         # TILE_HOSTILE  - something standing there
 T_OBJECT = 3          # TILE_OBJECT   - something lying there to be picked up
 T_HAZARD = 6          # TILE_LAVA in world.py
+T_GATE = 7            # TILE_GATE     - a locked cage over the goal
+T_SWITCH = 16         # TILE_SWITCH   - a lever, pulled with ACT_INTERACT
+LEVER_ID = 88         # item 0088 in the real registry: the Loop rooms' lever
 
 MOVES = {
     config_rl.ACT_MOVE_FORWARD:  (0, -1),
@@ -69,7 +72,7 @@ class Stage:
                  grow_goals=True, clock_growth=1.5,
                  swords=0, hostile_hp=1, hostile_damage=0, chase=0,
                  aggro=0, grow_hostiles=False, guards=False,
-                 weapon_first=False, pick_goals=False):
+                 weapon_first=False, pick_goals=False, switch=False):
         self.name = name
         self.grid = grid
         self.walls = walls
@@ -232,6 +235,10 @@ class Stage:
         # a policy that has passed all of them chooses ACT_PICK_UP 2% of the
         # time and ACT_ATTACK *never* - measured 0 times in 3,495 ticks.
         self.pick_goals = bool(pick_goals)
+        # A lever stands between the agent and the goal: the goal is caged
+        # (seen, out of reach) or not there yet (the lamp is off) until
+        # ACT_INTERACT pulls the lever. See the `switches` rung.
+        self.switch = bool(switch)
         # Goals scaling with room size undoes a compass rung (see grow_goals).
         # Hostiles scaling is the opposite: on a combat rung the encounter
         # rate IS the lesson, and a bigger room with the same two hostiles is
@@ -312,7 +319,7 @@ class Stage:
                     hostile_damage=self.hostile_damage, chase=self.chase,
                     aggro=self.aggro, grow_hostiles=self.grow_hostiles,
                     guards=self.guards, weapon_first=self.weapon_first,
-                    pick_goals=self.pick_goals)
+                    pick_goals=self.pick_goals, switch=self.switch)
         return nxt
 
     def __repr__(self):
@@ -361,6 +368,9 @@ R_KILL = 1.0            # finishing one off
 R_SWING = -0.05         # swinging at empty air. Small, but ATTACK is free
                         # otherwise and a policy that mashes it loses nothing.
 R_GRAB = -0.05          # reaching for a tile with nothing on it.
+                        # Also pressing interact with no lever in reach.
+R_PULL = 0.5            # pulling the lever, once - the same size as R_SWORD,
+                        # the other "the button did something" payout.
 #
 # These two are charged whatever `punitive` says, and that is the opposite of
 # how every other cost on this ladder works. The reason is that they are not
@@ -501,6 +511,28 @@ def default_ladder(max_grid=12, with_trail=False, senior_grid=15,
     L.append(Stage("avoid", 7, walls=True, hazards=3, goals=1, respawn=True,
                    damage=False, max_steps=200, target=3,
                    pass_rate=0.75, window=60))
+
+    # New thing: the hand that operates things. Nothing on the ladder taught
+    #    ACT_INTERACT, and it showed: measured 2026-10-19 the brain pressed it
+    #    about 1 tick in 500 in the world and 1 in 5,000 in the Loop, and won
+    #    0 of 45 lever rooms - standing on the lever pressing pick-up, because
+    #    the lever was drawn as an apple. Now it is TILE_SWITCH, and these two
+    #    rungs make pulling it the only way to the goal.
+    #
+    #    Each lever is wired to one thing it can see, never a random roll
+    #    (Chalce: not a roguelike): half the rooms cage the goal where it can
+    #    be seen, half keep it dark until the lamp comes on. The nursery's
+    #    rules first - no walls, no costs, the lever never far - then a maze,
+    #    where the lever has to be found.
+    #
+    #    Before `hazards`, by Chalce's rule: the brain had lost hazards
+    #    (15 of 200 rooms on 10-19), so the lever is not made to wait on it.
+    L.append(Stage("switches", 5, walls=False, hazards=0, goals=1, respawn=False,
+                   damage=False, punitive=False, shaped=False, switch=True,
+                   max_steps=120, target=1, pass_rate=0.85, window=50))
+    L.append(Stage("switches7", 7, walls=True, hazards=0, goals=1, respawn=False,
+                   damage=False, switch=True, max_steps=200, target=1,
+                   pass_rate=0.75, window=50))
 
     # 5. New thing: now it can kill you.
     L.append(Stage("hazards", 7, walls=True, hazards=3, goals=1, respawn=True,
@@ -1215,10 +1247,13 @@ class CurriculumEnv:
         return self._state()
 
     def _playable(self):
-        """Every goal reachable from the agent, 4-connected, without lava."""
+        """Every goal reachable from the agent, 4-connected, without lava -
+        and the lever too, with the cage still shut."""
         from collections import deque
         n = self.stage.grid
         block = set(self.hazards)
+        if self.cage:
+            block.add(self.cage)
         seen = {(self.ax, self.ay)}
         q = deque([(self.ax, self.ay)])
         while q:
@@ -1231,7 +1266,11 @@ class CurriculumEnv:
                     continue
                 seen.add(c)
                 q.append(c)
-        return all(g in seen for g in self.goals)
+        if self.lever and self.lever not in seen:
+            return False
+        return all(g in seen or (g == self.cage and any(
+                       (g[0] + dx, g[1] + dy) in seen for dx, dy in MOVES.values()))
+                   for g in self.goals + self.dark)
 
     def _build(self, force_no_hazards=False):
         s = self.stage
@@ -1246,6 +1285,16 @@ class CurriculumEnv:
         # A trail starts with exactly one goal on the floor however many it
         # will eventually ask for; the rest arrive as it is walked.
         self.goals = self._place(taken, 1 if s.sequence else s.goals)
+        # The lever, and what it is wired to: a cage over the goal, or the
+        # lamp of a room whose goal is not there until it is lit.
+        self.lever, self.pulled, self.cage, self.dark = None, False, None, []
+        if s.switch:
+            self.lever = self._place(taken, 1)[0]
+            if self.rng.random() < 0.5:
+                self.cage = self.goals[0]
+                self.grid[self.cage[1]][self.cage[0]] = T_GATE
+            else:
+                self.dark, self.goals = self.goals, []
         want = 0 if force_no_hazards else s.hazards
         self.hazards = (self._place_hazards(taken, want)
                         if getattr(config_rl, 'HAZARDS_LEAVE_A_SAFE_ROUTE', True)
@@ -1320,6 +1369,8 @@ class CurriculumEnv:
             m[config_rl.ACT_PICK_UP] = 1
         if self.stage.can_attack:
             m[config_rl.ACT_ATTACK] = 1
+        if self.stage.switch:
+            m[config_rl.ACT_INTERACT] = 1
         return m
 
     # -- state -------------------------------------------------------------
@@ -1371,10 +1422,12 @@ class CurriculumEnv:
         the one object on the floor being drawn as floor.
         """
         raw = self._tile(x, y)
-        if raw == T_WALL:
+        if raw in (T_WALL, T_GATE):
             return raw
         if (x, y) in self.hostiles:
             return T_HOSTILE
+        if (x, y) == self.lever:
+            return T_SWITCH
         if ((x, y) in self.swords or (x, y) in self.good
                 or (x, y) in self.trash or (x, y) in self.goals):
             return T_OBJECT
@@ -1415,6 +1468,11 @@ class CurriculumEnv:
             pos, d = self._nearest(want)
             if pos is not None and d <= self.stage.weapon_first:
                 return pos, d, "sword"
+        if self.lever and not self.pulled:
+            # The lever is the next thing to deal with, so it is what the
+            # object slots describe - as the real world's nearest object would.
+            pos, d = self._nearest([self.lever])
+            return pos, d, "lever"
         pos, d = self._nearest(self.goals)
         return pos, d, "goal"
 
@@ -1447,7 +1505,9 @@ class CurriculumEnv:
                     # would spend the rest of the episode routing around
                     # somewhere nothing is standing.
                     t = self.grid[y][x]
-                    if t != T_WALL and ((x, y) in self.swords
+                    if (x, y) == self.lever:
+                        t = T_SWITCH
+                    elif t not in (T_WALL, T_GATE) and ((x, y) in self.swords
                                         or (x, y) in self.good
                                         or (x, y) in self.trash
                                         or (x, y) in self.goals):
@@ -1475,6 +1535,11 @@ class CurriculumEnv:
         block = set(self.hazards)
         start = (self.ax, self.ay)
         goals = set(self.goals)
+        if self.lever and not self.pulled:
+            goals = {(self.lever[0] + dx, self.lever[1] + dy)
+                     for dx in (-1, 0, 1) for dy in (-1, 0, 1)}
+            if start in goals:
+                return {start}
         prev = {start: None}
         q = deque([start])
         end = None
@@ -1484,7 +1549,7 @@ class CurriculumEnv:
                 c = (cur[0] + dx, cur[1] + dy)
                 if not (0 <= c[0] < n and 0 <= c[1] < n) or c in prev or c in block:
                     continue
-                if self.grid[c[1]][c[0]] == T_WALL:
+                if self.grid[c[1]][c[0]] in (T_WALL, T_GATE):
                     continue
                 prev[c] = cur
                 if c in goals:
@@ -1531,6 +1596,8 @@ class CurriculumEnv:
         # or the hand rung teaches a situation that never recurs.
         if aim is None:
             s[config_rl.IDX_OBJ_ID] = 0.0
+        elif kind == "lever":
+            s[config_rl.IDX_OBJ_ID] = LEVER_ID / float(config_rl.ITEM_ID_SCALE)
         elif aim in self.swords:
             s[config_rl.IDX_OBJ_ID] = STONE_SWORD / float(config_rl.ITEM_ID_SCALE)
         else:
@@ -1606,7 +1673,7 @@ class CurriculumEnv:
                 if c in self.seen:
                     # +1 so that 0 means "never seen", which is a different
                     # thing from "seen, and it was empty floor".
-                    s[k0 + i] = (self.seen[c] + 1.0) / (config_rl.TILE_VOCAB_SIZE + 1.0)
+                    s[k0 + i] = (self.seen[c] + 1.0) / (config_rl.MEM_TILE_NORM + 1.0)
                 s[v0 + i] = self.visit.get(c, 0.0)
                 s[r0 + i] = 1.0 if c in route else 0.0
                 i += 1
@@ -1626,7 +1693,7 @@ class CurriculumEnv:
         if action in MOVES:
             dx, dy = MOVES[action]
             nx, ny = self.ax + dx, self.ay + dy
-            if self._tile(nx, ny) == T_WALL:
+            if self._tile(nx, ny) in (T_WALL, T_GATE):
                 reward += R_WALL if s.punitive else 0.0
             else:
                 # Stepping off a weapon without having taken it is a refusal.
@@ -1685,6 +1752,19 @@ class CurriculumEnv:
                 # costs nothing gets mashed.
                 reward += R_SWING
 
+        elif action == config_rl.ACT_INTERACT and s.switch:
+            # The world's rule: a lever anywhere in the 3x3 around the agent.
+            lx, ly = self.lever
+            if not self.pulled and max(abs(lx - self.ax), abs(ly - self.ay)) <= 1:
+                self.pulled = True
+                reward += R_PULL
+                if self.cage:
+                    self.grid[self.cage[1]][self.cage[0]] = T_FLOOR
+                self.goals.extend(self.dark)
+                self.dark = []
+            else:
+                reward += R_GRAB
+
         # Standing still. The point is to stop the policy parking itself
         # somewhere safe and running the clock out - which is exactly what the
         # full world's agent learned to do. Small and periodic, not a cliff:
@@ -1707,7 +1787,7 @@ class CurriculumEnv:
         # This is the same trap as respawning a goal at the instant of
         # reward, which is what made the first nursery unlearnable.
         _, after, now_aimed = self._aim()
-        if s.shaped and now_aimed == aimed_at and (self.goals or self.swords):
+        if s.shaped and now_aimed == aimed_at and (self.goals or self.swords or self.dark):
             reward += R_TOWARDS * (before - after)
 
         # Reaching a goal - or, where the rung says so, reaching it AND
@@ -1785,14 +1865,15 @@ class CurriculumEnv:
                 reward += R_INCOMPLETE
             success = finished and not self.dead
         else:
-            done = self.dead or self.steps >= s.max_steps or (not s.respawn and not self.goals)
+            done = (self.dead or self.steps >= s.max_steps
+                    or (not s.respawn and not self.goals and not self.dark))
             success = self.collected >= s.target and not self.dead
         self._observe()          # memory updates once per tick, after moving
         return self._state(), reward, done, {
             "collected": self.collected, "success": success,
             "dead": self.dead, "steps": self.steps, "health": self.health,
             "kills": self.kills, "armed": self.armed, "met": self.met,
-            "hits_taken": self.hits_taken,
+            "hits_taken": self.hits_taken, "pulled": self.pulled,
         }
 
 
@@ -1815,7 +1896,7 @@ def _first_step(env, stage, targets, block):
             nx, ny = x + dx, y + dy
             if not (0 <= nx < n and 0 <= ny < n) or (nx, ny) in prev:
                 continue
-            if env.grid[ny][nx] == T_WALL:
+            if env.grid[ny][nx] in (T_WALL, T_GATE):
                 continue
             if (nx, ny) in block and (nx, ny) not in targets:
                 continue
@@ -1884,6 +1965,16 @@ def oracle_step(env, stage):
     #    not enough. Nothing else can be worth a tick more than this.
     if stage.pick_goals and stage.can_pick and start in goals:
         return config_rl.ACT_PICK_UP
+
+    # 0b. A lever still to pull: pull it if it is in reach, else go to it.
+    if stage.switch and env.lever and not env.pulled:
+        lx, ly = env.lever
+        if max(abs(lx - start[0]), abs(ly - start[1])) <= 1:
+            return config_rl.ACT_INTERACT
+        near = {(lx + dx, ly + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)}
+        act = _first_step(env, stage, near, set(env.hazards))
+        if act is not None:
+            return act
 
     # 1. Standing on a weapon with empty hands. Always worth one tick.
     if stage.can_pick and not env.armed and start in env.swords:

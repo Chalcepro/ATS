@@ -307,8 +307,16 @@ def main(argv=None):
     # most recent episode - the thing to look at when the reward is climbing
     # and you want to know whether the route makes sense yet.
     tracer = pathtrace.PathTracer(per_tick=not a.no_trace)
-    policy = RLPolicy()
+    # As wide as the brain on disk. RLPolicy() is MIND_HIDDEN_SIZE (256), and
+    # the world grows a brain past that - so a 1024-wide brain was refused here,
+    # a fresh 256 one trained instead, and stash() then saved it OVER brain.pt.
+    shape = {} if a.fresh else brain.saved_shape()
+    policy = RLPolicy(hidden_size=int(shape.get("hidden_size", config_rl.MIND_HIDDEN_SIZE)))
     learner = ContinualLearner(policy)
+    if not a.fresh and brain.DEFAULT_PATH.exists() and not brain.is_loadable(policy):
+        print("refusing to train: %s does not fit this network, and training would "
+              "save over it. Move it aside, or pass --fresh." % brain.DEFAULT_PATH)
+        return 1
 
     # Weights, optimiser moments, the adapted entropy coefficient, and which
     # rungs are already behind it - all of it, or a week-old brain re-learns

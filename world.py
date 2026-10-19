@@ -39,6 +39,12 @@ TILE_SPORE   = 12  # Mushroom spore cloud zone (applies BLINDED)
 TILE_BRIDGE  = 13  # One tile wide over open ocean; the only way to another island
 TILE_SHARK   = 14  # A shark at the surface: what the brain sees of it (W2b)
 TILE_HOUSE   = 15  # An empty house (W3): a place people will live in W5
+TILE_SWITCH  = 16  # A lever (W4 Loop rooms): operated with interact, not carried
+
+
+def is_switch(object_id) -> bool:
+    item = REGISTRY.get_item(object_id) if object_id else None
+    return bool(item) and item.get("type") == "switch"
 
 
 @dataclass
@@ -899,6 +905,8 @@ class World:
         if not tile:
             return TILE_OCEAN
         if tile.object_id:
+            if getattr(config_rl, "LEVERS_ARE_LEVERS", False) and is_switch(tile.object_id):
+                return TILE_SWITCH
             return TILE_OBJECT
         return tile.tile_type
 

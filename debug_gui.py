@@ -85,7 +85,8 @@ W, H = WINDOW_WIDTH, WINDOW_HEIGHT
 TRACKS = [
     ("NURSERY",    ["nursery"],
      "One room, one goal, nothing that can hurt you", True),
-    ("PRIMARY",    ["corridors", "corridors7", "avoid", "hazards", "foraging", "primary"],
+    ("PRIMARY",    ["corridors", "corridors7", "avoid", "switches", "switches7", "hazards",
+                    "foraging", "primary"],
      "Walls, then danger, then scarcity, then size", True),
     # Unlocked 2026-09-19. It was never unfinished - the stage has always
     # been complete in curriculum.py. It was flagged "coming soon" because

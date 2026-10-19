@@ -81,7 +81,20 @@ ENTITY_VOCAB_SIZE = 40
 # things is 51 columns of noise for the optimiser to push around, and tiles
 # are the one vocabulary here that genuinely is small.
 TILE_EMBED_DIM    = 16
-TILE_VOCAB_SIZE   = 16     # world.py defines TILE_EMPTY..TILE_HOUSE = 0..15 (full)
+TILE_VOCAB_SIZE   = 17     # world.py defines TILE_EMPTY..TILE_SWITCH = 0..16 (full)
+# The remembered map writes a tile as (id + 1) / (MEM_TILE_NORM + 1). Pinned at
+# the 16 it was trained with: dividing by TILE_VOCAB_SIZE would have quietly
+# rescaled every remembered tile the day the vocabulary grew. TILE_SWITCH (16)
+# reads as 1.0, still inside the range.
+MEM_TILE_NORM     = 16
+
+# A lever is a lever (2026-10-19). It used to render as TILE_OBJECT - the same
+# tile as an apple on the ground - and the action mask offered PICK_UP beside
+# it, so the brain did what its senses said: it stood on the lever pressing
+# pick-up for 600 ticks (0 wins in 45 lever rooms; interact chosen ~1 tick in
+# 5,000 in the Loop). Now it has its own tile (TILE_SWITCH) and pick-up is not
+# offered for one. False = the old rendering and mask.
+LEVERS_ARE_LEVERS = True
 
 # Egocentric perception patch (added 2026-09-05).  Before this the agent saw
 # only the 4 adjacent tiles plus a *distance* to the nearest object/hostile
@@ -150,7 +163,7 @@ STATE_SIZE = IDX_MASK_START + ACTION_SIZE
 # The route channel is a teaching aid, not a permanent sense.  Stages named
 # here get it; everything else sees zeros, so the skill has to survive its
 # removal rather than depend on it.
-ROUTE_HINT_STAGES = ('nursery', 'corridors', 'corridors7', 'avoid')
+ROUTE_HINT_STAGES = ('nursery', 'corridors', 'corridors7', 'avoid', 'switches', 'switches7')
 
 # Hazard & Ocean constants
 OCEAN_SHARK_TICKS = 3     # grace ticks in the ocean before the shark strikes
