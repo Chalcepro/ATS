@@ -43,4 +43,16 @@ mask offered PICK_UP next to it. The brain did what its senses said.
 ## Verified
 - [x] State vector length still 502
 - [x] tests/test_switches.py (10), test_loop (22), test_combat, test_revive_actions, test_look_and_stride, test_w3_land
-- [ ] Trial training of `switches` on a copy of the brain (see below)
+- [x] Trial training on a copy of the live brain (10:36 save), each rung alone, no rehearsal:
+  `switches` passed in 454 episodes (2% -> 100% by ep 200); `switches7` in 1,600 (98% sampled
+  throughout; greedy took longer).
+- [x] Same Loop lever probe as before (15 rooms each, sampled play):
+
+  | lever      | before | after switches | after switches7 |
+  | :--------- | -----: | -------------: | --------------: |
+  | at hand    |   0/15 |          11/15 |           14/15 |
+  | in sight   |   0/15 |           4/15 |           11/15 |
+  | hidden     |   0/15 |           3/15 |            7/15 |
+
+  Interact chosen in the world: 0.2% of ticks before, 8% after (it is also how it looks at
+  things). Beside a lever it now presses interact, not pick-up.
