@@ -331,8 +331,11 @@ def main(argv=None):
     episodes_total = int(progress.get("episodes") or 0)
 
     def stash():
+        # Everything else in progress kept: it used to be just these two keys,
+        # which dropped the world's earned episode cap (survival_rung) and
+        # sent a 2-day brain back to half-day episodes.
         brain.save(policy, learner,
-                   {"passed": passed, "episodes": episodes_total})
+                   {**progress, "passed": passed, "episodes": episodes_total})
 
     passed_all = True
     for stage in ladder:
