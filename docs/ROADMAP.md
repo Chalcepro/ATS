@@ -197,7 +197,7 @@ brain only learns from what it is graded on. So watching becomes a test:
 
 | Step | What | Gate |
 |---|---|---|
-| **M1** | Export every `desk.*` clip as (pose, next pose) pairs; a ~100k-parameter predictor, CPU | Predicts held-out frames of his clips better than "no change" by a clear margin |
+| **M1** ✅ | Export every `desk.*` clip as (pose, next pose) pairs; a ~100k-parameter predictor, CPU | Predicts held-out frames of his clips better than "no change" by a clear margin. **Passed 2026-10-20** (RewriteDesk `tools/train_motion.py`): 55k parameters, 3.2x better than the best shortcut on an unseen recording; trained on life.py's moves plus his one clip so far |
 | **M2** | Condition on intent tags (walk, idle, happy, angry...); roll it out frame by frame, through the joint limits | Rolled-out motion stays inside the limits and Bob can tell which intent it was asked for |
 | **M3** | RewriteDesk uses it in place of the hand-written Life for one state (idle), side by side with his clips | Bob prefers it, or can't tell, in a blind A/B |
 | **M4** | Trains nightly during sleep on any new clips; exam gate as for the brain | A new clip shows up in his movement the next day, nothing else regresses |
