@@ -173,6 +173,35 @@ agree with you."
 
 - Gate: a test that edits one old entry and proves the check catches it.
 
+## Phase 3b: Movement, learned from Bob's animations (RewriteDesk first)
+
+Bob's idea (2026-10-20): don't make the brain learn wrists and knees from
+scratch; show it every animation he makes. Done naively (stream the clips into
+the brain's input during island runs) it stays noise forever, because the
+brain only learns from what it is graded on. So watching becomes a test:
+
+- A small separate **movement model** sees a moment of an animation and
+  predicts the next pose. Every wrong guess teaches it; after enough of them
+  it knows how Rewrite moves. (Robotics calls a clip library used this way a
+  motion prior.) It trains during **sleep**, with the Sleep steps above.
+- The **ATS brain** only gives intent ("go left", "happy", "look at that").
+  The movement model turns intent into joint targets in Rewrite's style, new
+  movement rather than replays, and the body's muscles carry them out.
+- **Joint limits live in the body, not the model** (already built in
+  RewriteDesk `life.py` `JOINT_LIMITS`): knees and elbows bend one way only,
+  feet about 60 degrees, a part pulled off its socket is free. Whatever any
+  model outputs, the body can't bend past them.
+- **Its world is a box**: the screen plus a hidden strip each side (already
+  built: he leaves the screen, hides, peeks, drops in, pops up). The brain can
+  look at the whole screen (the 64x36 screen sense) but never act outside it.
+
+| Step | What | Gate |
+|---|---|---|
+| **M1** | Export every `desk.*` clip as (pose, next pose) pairs; a ~100k-parameter predictor, CPU | Predicts held-out frames of his clips better than "no change" by a clear margin |
+| **M2** | Condition on intent tags (walk, idle, happy, angry...); roll it out frame by frame, through the joint limits | Rolled-out motion stays inside the limits and Bob can tell which intent it was asked for |
+| **M3** | RewriteDesk uses it in place of the hand-written Life for one state (idle), side by side with his clips | Bob prefers it, or can't tell, in a blind A/B |
+| **M4** | Trains nightly during sleep on any new clips; exam gate as for the brain | A new clip shows up in his movement the next day, nothing else regresses |
+
 ## Phase 4 — The body (Metal Sonic)
 
 Hardware, sensors, battery. Only after phases 2–3. Same brain, same ear,

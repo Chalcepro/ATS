@@ -1,0 +1,14 @@
+# ATS Update — 2026-10-20
+## Summary
+Roadmap: Phase 3b, a movement model learned from Bob's Blender animations (docs only).
+
+## Changes
+### Roadmap — docs/ROADMAP.md
+- Bob's idea, made learnable: a separate small model predicts the next pose of his
+  desk.* clips (a motion prior), trains during sleep; the ATS brain only gives intent.
+- Joint limits stay in the body (RewriteDesk life.py JOINT_LIMITS); its world is a box
+  (screen plus hidden side strips), both already built in RewriteDesk.
+- Steps M1-M4 with gates.
+
+## Verified
+- [x] Docs only; no code or training changed (training kept running)
