@@ -128,6 +128,39 @@ Exam room idea (parked, 2026-10-12): a WorldBox mod as a **visit world**
 where the trained brain lives among people and Chalce walks in first person.
 For watching and meeting it, not for training.
 
+## Sleep: learning happens offline, and is checked before it counts
+
+Chalce, 2026-10-19: the model shouldn't be static, but it shouldn't rewrite
+itself mid-task either. On the island today it learns while it acts
+(`mind/continual_learner.py` updates every N ticks). In the body that
+changes to two modes:
+
+- **Awake:** the brain's weights are **frozen**. It acts, senses and records:
+  every episode, surprise, mistake and success goes into the day's log (and
+  the witness log). What it does today is exactly the brain that passed
+  yesterday's exams.
+- **Asleep:** eyes closed (the rig's `blink` = 1), body idle, only hearing on,
+  so a loud sound or its name wakes it. It **replays the day** and trains on
+  it, mixed with old memories so it doesn't forget (the same idea as rehearsing
+  earned rungs). That's how people consolidate memory in sleep, and it's how it
+  turns "documents that guide me" into actually remembering.
+- **Before waking, the exams.** The new brain must pass the charter scenarios
+  (Phase 3) and its old skills. Pass: it wakes up as the new brain, and last
+  night's is kept as a backup. Fail: it wakes up as **yesterday's** brain, and
+  the failure goes in the log for Chalce.
+
+So nothing it learns can change how it behaves until it has been checked, and
+a bad night can always be rolled back. That's the safety answer to "what if it
+learns something wrong": learning goes through a door, and the door is the
+exams.
+
+| Step | What | Gate / test |
+|---|---|---|
+| **Z1** | Freeze switch: `awake` mode loads the brain read-only; the continual learner only records | A test that runs 1,000 awake ticks and proves the weights didn't change by a single bit |
+| **Z2** | `sleep.py`: replay the day's log plus a sample of old ones, train, save as a candidate | Candidate brain trains without touching the live one |
+| **Z3** | Exam gate: candidate runs the ladder rehearsal and the conscience exams; promote or roll back | A deliberately broken candidate is rejected and yesterday's brain wakes up |
+| **Z4** | Body side: `blink` closes during sleep, opens on waking; a loud sound or its name wakes it early | Wakes to its name, keeps sleeping through normal room noise |
+
 ## Side track — the witness log (can start any time)
 
 The model's word is only worth something if nobody, **Bob included**, can
