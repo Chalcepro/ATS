@@ -293,6 +293,11 @@ class ContinualLearner:
         if self._total_ticks % config_rl.MIND_GROWTH_CHECK_EVERY != 0:
             return
         if self.policy.hidden_size >= config_rl.MIND_MAX_HIDDEN_SIZE:
+            # say so, once: it used to stop here without a word
+            why = 'at the ceiling (MIND_MAX_HIDDEN_SIZE = %d)' % config_rl.MIND_MAX_HIDDEN_SIZE
+            if why != self._last_growth_refusal:
+                print('[MIND GROWTH] holding at %d wide: %s' % (self.policy.hidden_size, why))
+                self._last_growth_refusal = why
             return
 
         avg_reward = self._reward_accumulator / max(self._reward_count, 1)

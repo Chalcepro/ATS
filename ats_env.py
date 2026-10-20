@@ -236,7 +236,7 @@ class ATSEnvironment:
         if self.in_loop:
             pass                                # a room repeats: nothing new to find
         elif getattr(config_rl, "EXPLORE_PAYS_OCEAN", True) or here.tile_type != 8:
-            self.rewards.on_new_tile(self.agent.x, self.agent.y)
+            self.rewards.on_new_tile(self.agent.x, self.agent.y, self.agent.hunger)
 
         # Island discovery (only for genuinely new islands outside the starting spawn island 0)
         cur_t = self.world._tile(self.agent.x, self.agent.y)

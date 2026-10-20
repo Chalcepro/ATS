@@ -93,7 +93,9 @@ DEATH_FORFEIT = 0.35
 # Scaled by need so it cannot be farmed: eating at full hunger closes no
 # deficit and pays nearly nothing, so the flat value is what a starving agent
 # gets for saving itself.
-R_EAT = 1.5
+# Under HUNGER_DRIVES (scheme 5) a meal when starving is worth about thirty new
+# tiles, where 1.5 was worth seven - and the agent was paid ~3,000 tiles a run.
+R_EAT = 6.0 if getattr(config_rl, "HUNGER_DRIVES", False) else 1.5
 # Ocean/shark penalty. Was -500.0 — but ats_env applies it on every shark
 # trigger, including *survived* strikes, and a single -500 tick under gamma=0.99
 # dominates the whole discounted return and (after advantage normalisation)
@@ -325,15 +327,21 @@ class RewardEngine:
     # ------------------------------------------------------------------
     # Event handlers
     # ------------------------------------------------------------------
-    def on_new_tile(self, x: int, y: int) -> float:
-        """Per-tile exploration reward (first visit only)."""
+    def on_new_tile(self, x: int, y: int, hunger: float = 100.0) -> float:
+        """Per-tile exploration reward (first visit only). Under HUNGER_DRIVES
+        it fades while hungry - full at EXPLORE_FULL_ABOVE and over, down to
+        EXPLORE_HUNGRY_FLOOR when starving - so a hungry agent is paid to find
+        food, not to keep wandering."""
         if not self.rules.get("explore_reward", True):
             return 0.0
         pos = (x, y)
         if pos not in self.discovered_tiles:
             self.discovered_tiles.add(pos)
             self.progression_points += 0.02
-            return self.add(R_TILE_EXPLORE, "tile_explore")
+            share = 1.0
+            if getattr(config_rl, "HUNGER_DRIVES", False):
+                share = min(1.0, max(config_rl.EXPLORE_HUNGRY_FLOOR, float(hunger) / config_rl.EXPLORE_FULL_ABOVE))
+            return self.add(R_TILE_EXPLORE * share, "tile_explore")
         return 0.0
 
     def on_island_discovery(self, island_id: int) -> float:

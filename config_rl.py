@@ -343,7 +343,10 @@ MIND_HIDDEN_SIZE = 256                 # starting hidden width (increased from 1
 MIND_GROWTH_ENABLED = True
 MIND_GROWTH_CHECK_EVERY = 500          # ticks between growth checks
 MIND_GROWTH_THRESHOLD = 0.02           # reward plateau delta that triggers growth
-MIND_MAX_HIDDEN_SIZE = 1024            # eventual upper bound (not a hard ceiling)
+# Raised 1024 -> 2048 on 2026-10-20: the brain reached 1024 on 10-18 and had
+# been held there ever since, silently. 2048 is about 4x the numbers in the
+# square layers: slower to train on the laptop, and a brain file near 400 MB.
+MIND_MAX_HIDDEN_SIZE = 2048            # the most it may grow to
 # A flat reward plateau is three different situations wearing the same face:
 # mastered, stuck, and converged-correct.  Only ONE of them wants more
 # capacity.  These narrow the trigger to that one.
@@ -500,7 +503,17 @@ BEST_MODEL_PATH = CHECKPOINT_DIR / "model_best.pt"
 #    +1,172 episode, so the agent explored until it starved - correctly, for
 #    that arithmetic. A brain trained under 3 keeps its policy but its VALUE
 #    function was fitted to the old scale and will need to relearn.
-REWARD_SCHEME_VERSION = 4
+# 5: HUNGER_DRIVES (rewards.py) - eating pays 6 x need (was 1.5) and, while
+#    hungry, exploring pays less (down to a fifth when starving). Measured on
+#    2026-10-20: a starved episode earned +570 exploring and +9.5 from eight
+#    meals, so it explored until it starved. Migrate with tools/migrate_scheme.py.
+REWARD_SCHEME_VERSION = 5
+
+# The hungry agent's priorities change, as an animal's do: food first. False
+# restores scheme 4's numbers (and needs REWARD_SCHEME_VERSION = 4 again).
+HUNGER_DRIVES = True
+EXPLORE_FULL_ABOVE = 40.0      # hunger at or above this: exploring pays in full
+EXPLORE_HUNGRY_FLOOR = 0.2     # starving: exploring still pays this share
 
 # ---------------------------------------------------------------------------
 # Logging / TensorBoard

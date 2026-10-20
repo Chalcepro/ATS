@@ -1,0 +1,22 @@
+# ATS Update — 2026-10-20
+## Summary
+Starvation: eating now pays and a hungry agent is paid less to wander (reward scheme 5); the brain may grow to 2048; growth says when it is at its ceiling.
+
+## Changes
+### Why — measured on today's log (2026-10-20.jsonl, 159 island runs)
+- "Starved" runs also last 8,000 ticks: after dying they go on in the Loop. The real line is in `cause`, e.g. "starvation since tick 2400".
+- A typical starved run: 8 meals in 7,800 ticks; paid +570 for exploring, +9.5 for all its meals, -41 for starving. Survivors eat ~16, starved ~5 (median).
+- So it explored until it starved - correctly, for that arithmetic.
+
+### Rewards — rewards.py, config_rl.py, ats_env.py
+- `HUNGER_DRIVES` (config_rl): R_EAT 1.5 -> 6.0 (still x need); exploration pays in full at hunger >= 40 (`EXPLORE_FULL_ABOVE`), less below, down to 0.2 of it when starving (`EXPLORE_HUNGRY_FLOOR`). `on_new_tile` takes the hunger.
+- REWARD_SCHEME_VERSION 4 -> 5; brain migrated with tools/migrate_scheme.py (critic reset; backup checkpoints/brain_scheme4_20261020_120312.pt). Set HUNGER_DRIVES = False and the scheme back to 4 (and restore the backup) to undo.
+
+### Growth — config_rl.py, mind/continual_learner.py
+- The brain reached 1024 wide on 10-18 and growth stopped there without a word. MIND_MAX_HIDDEN_SIZE 1024 -> 2048, and at the ceiling it now prints "holding at N wide: at the ceiling".
+- Cost if it grows: ~4x the square-layer numbers, slower ticks on the laptop, brain.pt near 400 MB (ATS-brain LFS: 1 GB free quota).
+
+## Verified
+- [x] rewards.audit() passes; env reset state length 502
+- [x] tests/test_growth.py, test_growth_trigger.py, test_loop.py pass
+- [ ] next: compare starvation share and meals per run over the next few hundred episodes (critic refits first)
