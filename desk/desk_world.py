@@ -17,7 +17,7 @@ import brain, config_rl
 from ats_env import ATSEnvironment
 from model_rl import RLPolicy
 from mind.solution_loop import SolutionLoop
-from world import World, Tile, TILE_EMPTY, TILE_OCEAN, TILE_OBJECT
+from world import World, Tile, TILE_EMPTY, TILE_OCEAN, TILE_OBJECT, TILE_WALL
 
 TILE_PX = 32        # one island tile is this many screen pixels
 HIDDEN = 3          # tiles of walkable land past each side edge (off screen)
@@ -42,6 +42,7 @@ class DeskWorld(World):
         self.agent_spawn = (cols // 2, rows - 2)
         self.order = {}             # (x, y) -> when it was made; first made is drawn at the back
         self.blocked = set()        # tiles nobody may step on (where the player stands)
+        self.walls = set()          # window edges (window_rooms.py)
         self._made = 0
 
     def on_land(self, x, y):
@@ -53,6 +54,27 @@ class DeskWorld(World):
             t = Tile(tile_type=TILE_EMPTY, island_id=0) if self.on_land(x, y) else Tile(tile_type=TILE_OCEAN)
             self.tiles[(x, y)] = t
         return t
+
+    def set_walls(self, walls):
+        """Window top/bottom edges become wall tiles; an object already there keeps its tile."""
+        for p in self.walls - walls:
+            t = self.tiles.get(p)
+            if t and t.tile_type == TILE_WALL:
+                t.tile_type = TILE_EMPTY
+        for p in walls:
+            t = self._tile(*p)
+            if not t.object_id and t.tile_type == TILE_EMPTY:
+                t.tile_type = TILE_WALL
+        self.walls = walls
+
+    def free_near(self, x, y):
+        """The nearest tile to (x, y) that can be stood on, searching outward."""
+        for r in range(0, 6):
+            for dy in range(-r, r + 1):
+                for dx in range(-r, r + 1):
+                    if max(abs(dx), abs(dy)) == r and self.in_bounds_passable(x + dx, y + dy)                             and self.on_land(x + dx, y + dy):
+                        return x + dx, y + dy
+        return x, y
 
     def get_island_id_at(self, x, y):
         return 0 if self.on_land(x, y) else -1

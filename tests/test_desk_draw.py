@@ -36,3 +36,19 @@ out = np.where(img[..., 3:4] > 0, img, bg)
 path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.environ.get("TEMP", "."), "desk_draw.png")
 Image.fromarray(out[..., :3]).resize((1280, 640), Image.NEAREST).save(path)
 print("ok")
+
+# windows as rooms: top/bottom edges are walls, sides are doorways, a moved window carries the brain
+p.rooms = playground.Rooms(0, 0, 32, p.cols, p.rows)
+p.rooms.refresh([(1, 32 * 8, 32 * 1, 32 * 14, 32 * 5)])      # tiles x 8..13, walls on rows 1 and 4
+w.set_walls(p.rooms.walls())
+assert not w.in_bounds_passable(10, 1) and not w.in_bounds_passable(10, 4), "top/bottom are walls"
+assert w.in_bounds_passable(7, 2) and w.in_bounds_passable(8, 2), "the side is a doorway"
+p.drop(("bot",), (10, 1))                                     # dropped on the top edge: lands inside or next to it
+p.place_bot(10, 2); assert p.rooms.room_of(10, 2) == 1
+bot_in = p.rooms.room_of(a.x, a.y)
+moved = p.rooms.refresh([(1, 32 * 10, 32 * 3, 32 * 16, 32 * 7)])  # window dragged 2 right, 2 down
+w.set_walls(p.rooms.walls())
+dx, dy = moved[bot_in]; p.place_bot(*w.free_near(a.x + dx, a.y + dy))
+assert (a.x, a.y) == (12, 4) and p.rooms.room_of(12, 4) == 1, (a.x, a.y)
+assert w.in_bounds_passable(10, 1), "the old wall is gone"
+print("rooms ok")

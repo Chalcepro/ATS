@@ -7,6 +7,10 @@ cursor, remove them, call it back when it has wandered off screen, pause.
   arrows      move the player (only while the desktop is focused)
   E           player picks up the thing it stands on or faces / puts it down
 
+Open windows are rooms: their top and bottom edges are walls, their sides are
+doorways. Drop the brain on a window to put it inside; move the window and it
+rides along.
+
 Items stack in the order they were made (first made at the back). Characters
 use the top-down trick: an item whose base is lower on screen is drawn over
 them, so they walk behind a tree's crown; only the base tile blocks.
@@ -24,11 +28,13 @@ import window
 from window import OverlayWindow, user32
 from sprites import Sheet, paste, bar, SCALE
 from desk_world import DeskMind, SPAWNABLE, TILE_PX
+from window_rooms import Rooms
 
 LOG_DIR = os.path.join(os.environ.get("APPDATA", HERE), "ATSPlayground")
 FPS = 15
 BRAIN_HZ = 5                        # brain ticks a second at 1x speed
 PLAYER_HZ = 8                       # player steps a second while an arrow is held
+ROOMS_EVERY = 0.5                   # seconds between re-reading the open windows
 VK_SHIFT, VK_A, VK_E = 0x10, 0x41, 0x45
 ARROWS = {0x25: (-1, 0), 0x26: (0, -1), 0x27: (1, 0), 0x28: (0, 1)}
 DESKTOP_CLASSES = {"Progman", "WorkerW"}
@@ -88,6 +94,7 @@ class Playground:
         self.mind = DeskMind(self.cols, self.rows)
         self.sheet = Sheet()
         self.win = OverlayWindow(self.W, self.H, self.on_event)
+        self.rooms = Rooms(self.left, self.top, TILE_PX, self.cols, self.rows)
         self.setup()
 
     def setup(self):
@@ -103,6 +110,7 @@ class Playground:
         self.eat_until = self.tick_t = self.step_t = 0.0
         self.keys_was = set()
         self.drag = None                        # ("item", tile) | ("bot",) | ("player",), plus the cursor
+        self.rooms_t = 0.0
         self.dirty = True
 
     # ── tiles <-> pixels ──
@@ -147,12 +155,43 @@ class Playground:
         tx, ty = max(0, min(self.cols - 1, tile[0])), max(0, min(self.rows - 1, tile[1]))
         if what[0] == "item":
             w.move(what[1], (tx, ty))
-        elif what[0] == "bot" and w.in_bounds_passable(tx, ty):
-            a.x, a.y = tx, ty
-            self.bot.jump(tx, ty)
-        elif what[0] == "player" and w.in_bounds_passable(tx, ty) and (tx, ty) != (a.x, a.y):
-            self.player.jump(tx, ty)
-            w.blocked = {(tx, ty)}
+        elif what[0] == "bot":
+            self.place_bot(*w.free_near(tx, ty))
+        elif what[0] == "player":
+            self.place_player(*w.free_near(tx, ty))
+
+    def place_bot(self, x, y):
+        a = self.mind.agent
+        if (x, y) != self.player.now:
+            a.x, a.y = x, y
+            self.bot.jump(x, y)
+
+    def place_player(self, x, y):
+        a = self.mind.agent
+        if (x, y) != (a.x, a.y):
+            self.player.jump(x, y)
+            self.mind.world.blocked = {(x, y)}
+
+    # ── windows as rooms ──
+    def update_rooms(self):
+        w, a = self.mind.world, self.mind.agent
+        r = self.rooms
+        bot_in, player_in = r.room_of(a.x, a.y), r.room_of(*self.player.now)
+        moved = r.refresh()
+        w.set_walls(r.walls())
+        # whoever is inside a window that moved goes with it
+        if bot_in in moved:
+            dx, dy = moved[bot_in]
+            self.place_bot(*w.free_near(a.x + dx, a.y + dy))
+        if player_in in moved:
+            dx, dy = moved[player_in]
+            self.place_player(*w.free_near(self.player.now[0] + dx, self.player.now[1] + dy))
+        # a window that opened on top of someone: step them off the wall
+        if (a.x, a.y) in w.walls:
+            self.place_bot(*w.free_near(a.x, a.y))
+        if self.player.now in w.walls:
+            self.place_player(*w.free_near(*self.player.now))
+        self.dirty = self.dirty or bool(moved)
 
     # ── the brain ──
     def brain_tick(self, t):
@@ -332,6 +371,9 @@ class Playground:
         while self.win.pump():
             t = time.time()
             self.check_keys(t)
+            if t - self.rooms_t >= ROOMS_EVERY:
+                self.rooms_t = t
+                self.update_rooms()
             if not self.paused and t - self.tick_t >= 1.0 / (BRAIN_HZ * self.speed):
                 self.tick_t = t
                 self.brain_tick(t)
