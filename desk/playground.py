@@ -6,6 +6,7 @@ cursor, remove them, call it back when it has wandered off screen, pause.
   drag        any item, the brain or the player, with the mouse
   arrows      move the player (only while the desktop is focused)
   E           player picks up the thing it stands on or faces / puts it down
+  Ctrl+M      mute / unmute the ear (the microphone); starts muted
 
 Open windows are rooms: their top and bottom edges are walls, their sides are
 doorways. Drop the brain on a window to put it inside; move the window and it
@@ -24,6 +25,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import numpy as np
 
+sys.path.insert(0, os.path.dirname(HERE))
+from ear import Ear
 import window
 from window import OverlayWindow, user32
 from sprites import Sheet, paste, bar, SCALE
@@ -35,7 +38,7 @@ FPS = 15
 BRAIN_HZ = 5                        # brain ticks a second at 1x speed
 PLAYER_HZ = 8                       # player steps a second while an arrow is held
 ROOMS_EVERY = 0.5                   # seconds between re-reading the open windows
-VK_SHIFT, VK_A, VK_E = 0x10, 0x41, 0x45
+VK_SHIFT, VK_CTRL, VK_A, VK_E, VK_M = 0x10, 0x11, 0x41, 0x45, 0x4D
 ARROWS = {0x25: (-1, 0), 0x26: (0, -1), 0x27: (1, 0), 0x28: (0, 1)}
 DESKTOP_CLASSES = {"Progman", "WorkerW"}
 
@@ -95,6 +98,7 @@ class Playground:
         self.sheet = Sheet()
         self.win = OverlayWindow(self.W, self.H, self.on_event)
         self.rooms = Rooms(self.left, self.top, TILE_PX, self.cols, self.rows)
+        self.ear = Ear()
         self.setup()
 
     def setup(self):
@@ -209,10 +213,14 @@ class Playground:
         if not desktop_focused():
             self.keys_was = set()
             return
-        down = {vk for vk in (VK_A, VK_E, *ARROWS) if key_down(vk)}
+        down = {vk for vk in (VK_A, VK_E, VK_M, *ARROWS) if key_down(vk)}
         pressed, self.keys_was = down - self.keys_was, down
         if VK_A in pressed and key_down(VK_SHIFT):
             self.open_menu()
+            return
+        if VK_M in pressed and key_down(VK_CTRL):
+            self.ear.set_muted(not self.ear.muted)
+            self.dirty = True
             return
         if VK_E in pressed:
             self.player_use()
@@ -267,6 +275,9 @@ class Playground:
             (7, "Resume" if self.paused else "Pause", False),
             ("Speed", [(10 + s, f"{s}x", self.speed == s) for s in (1, 2, 4)]),
             (8, "New life (reset)", False),
+            (20, ("Unmute the ear" if self.ear.muted else "Mute the ear") + "   Ctrl+M", False),
+            (21, "Ear: " + (self.ear.error or "muted") if self.ear.muted else
+             f"Ear: loudness {self.ear.loudness():.3f}  ·  pitch {self.ear.pitch_hz():.0f} Hz", False, False),
             None,
             (9, "Type a word to it (yes / no)  — next step", False, False),
             None,
@@ -298,7 +309,10 @@ class Playground:
             m.reset()
             self.bot.jump(m.agent.x, m.agent.y)
             m.world.blocked = {self.player.now}
+        elif pick == 20:
+            self.ear.set_muted(not self.ear.muted)
         if pick == 99:
+            self.ear.close()
             self.win.close()
         else:
             focus_desktop()
@@ -335,6 +349,7 @@ class Playground:
             py += 0 if mv else int(np.sin(t * 3 + (who == "player")) * 1.5) * SCALE
             paste(c, img, px, py)
             if who == "bot":
+                self.draw_ear(c, px + img.shape[1] + 4, py)
                 a = self.mind.agent
                 bar(c, px, py - 12, img.shape[1], a.health / 100, (220, 50, 50))
                 bar(c, px, py - 7, img.shape[1], a.hunger / 100, (240, 200, 60))
@@ -366,11 +381,30 @@ class Playground:
         self.win.show_pixels(c[::-1], self.left, self.top)
         return moving or bool(self.drag)
 
+    def draw_ear(self, c, x, y):
+        """Beside its head: grey with a red slash when muted, else a live loudness meter."""
+        H, W = c.shape[:2]
+        if not (0 <= x < W - 8 and 0 <= y < H - 24):
+            return
+        if self.ear.muted:
+            c[y + 6:y + 18, x:x + 6] = (120, 120, 120, 230)
+            for i in range(12):
+                c[y + 6 + i, x + 6 - i // 2 - 1:x + 7 - i // 2] = (220, 40, 40, 255)
+            return
+        level = min(1.0, self.ear.loudness() * 8)
+        c[y:y + 24, x:x + 6] = (20, 20, 20, 200)
+        h = int(22 * level)
+        if h:
+            c[y + 23 - h:y + 23, x + 1:x + 5] = (90, 200, 255, 255)
+
     def run(self):
         frame, last_draw = 1.0 / FPS, 0.0
         while self.win.pump():
             t = time.time()
             self.check_keys(t)
+            if not self.ear.muted:
+                self.ear.update(t)
+                self.dirty = True       # the meter moves
             if t - self.rooms_t >= ROOMS_EVERY:
                 self.rooms_t = t
                 self.update_rooms()

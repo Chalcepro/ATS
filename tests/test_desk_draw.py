@@ -13,7 +13,7 @@ class FakeWin:
 p = playground.Playground.__new__(playground.Playground)
 p.left = p.top = 0; p.W, p.H = 640, 320; p.cols, p.rows = 20, 10
 p.mind = playground.DeskMind(p.cols, p.rows); p.sheet = playground.Sheet(); p.win = FakeWin()
-p.setup()
+p.setup(); p.ear = playground.Ear()
 w, a = p.mind.world, p.mind.agent
 # a tree one row below the brain: its crown must cover the brain's head
 a.x, a.y = 5, 5; p.bot.jump(5, 5)

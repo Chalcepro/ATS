@@ -16,3 +16,4 @@ The trained brain on Chalce's desktop: a playground he can test it in by hand.
 ## Verified
 - tests/test_desk_world.py, tests/test_desk_draw.py pass; live window ran without errors.
 - Windows are rooms (desk/window_rooms.py): top/bottom edges are walls, sides are doorways; a moved window carries whoever is inside.
+- The ear (H1): ear.py on senses prosody (34 numbers), live mic, starts muted, Ctrl+M on the desktop toggles; a meter beside its head. Not a brain input yet (H2).
