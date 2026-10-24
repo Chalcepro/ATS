@@ -32,6 +32,10 @@ SPAWNABLE = {"Apple": "0001", "Berry bush": "0023", "Stick": "0008", "Wood": "00
 # only the base tile of these blocks walking (the top-down trick: you walk
 # behind the tall part). On the island every object can be stepped on.
 SOLID = {"0021", "0024", "0012"}
+# Desktop only (Chalce, 10-24): hunger runs out this many times faster than on
+# the island, and an empty stomach costs health this many times faster too.
+# The island keeps its own rules; this is the playground's.
+HUNGER_SPEED = 3
 
 
 class DeskWorld(World):
@@ -151,6 +155,7 @@ class DeskMind:
         self.cols, self.rows = cols, rows
         self.recent = deque(maxlen=10)      # its last 10 steps (2 s at 1x), for yes/no feedback
         self.ate = 0
+        self._drain = 0.0               # extra hunger owed, in points
         self.reset()
 
     def reset(self):
@@ -166,6 +171,23 @@ class DeskMind:
         self.sl.reset_memory()
         self.last_action = "wait"
         self.done = False
+
+    def _starve_faster(self, a):
+        """On top of the island's 1 hunger per 15 ticks and 1 health per 30 ticks starving."""
+        extra = HUNGER_SPEED - 1
+        if a.hunger > 0:
+            self._drain += extra / 15.0
+            while self._drain >= 1 and a.hunger > 0:
+                a.hunger -= 1
+                self._drain -= 1
+        else:
+            self._drain += extra / 30.0
+            while self._drain >= 1:
+                a.health = max(0, a.health - 1)
+                a.last_damage_cause = "starvation"
+                self._drain -= 1
+            if a.health <= 0:
+                self.done = True
 
     @property
     def hidden(self):
@@ -194,6 +216,7 @@ class DeskMind:
         self.state, _, self.done, info = env.step(action)
         self.recent.append({"state": [round(v, 4) for v in before], "action": int(action)})
         self.ate += env.agent.hunger > hunger0 + 0.5
+        self._starve_faster(env.agent)
         from agent import ACTION_NAMES
         self.last_action = ACTION_NAMES.get(action, str(action))
         return info

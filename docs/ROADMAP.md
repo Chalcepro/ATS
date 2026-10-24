@@ -38,6 +38,12 @@ Keep training. Nothing to change by hand.
   rising for several days of training, that is the signal to look at the
   death log (`replay.py`), not to change numbers.
 
+**2026-10-24, food first:** on the desktop the brain stood next to an apple 98 times
+with pick-up allowed and pressed it 0 times - every rung it had passed is won by
+arriving. The satchel rungs (pick the goal up) moved from the combat tier to straight
+after switches7 (`config_rl.EAT_FIRST`), ahead of listening. Smell (a food scent past
+sight, with a direction) is the next sense after that, once taking food is learned.
+
 ## Phase 2 — Hearing (next)
 
 Hearing is a **sense inside the brain**, not a tool it calls. Same as eyes:

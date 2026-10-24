@@ -162,6 +162,10 @@ HEAR_RADIUS = 9                               # tiles; sight is the 7x7 patch
 IDX_HEAR_START = IDX_MEM_ROUTE_START + MEM_CELLS
 
 IDX_MASK_START  = IDX_HEAR_START + (HEAR_DIM if HEARING else 0)
+
+# The hand rungs (satchel, satchel7: pick the goal up, arriving is not enough)
+# straight after switches7 instead of deep in the combat tier. Food first.
+EAT_FIRST = True
 # NOTE: this is derived from ACTION_SIZE, because the action mask is carried as
 # the TAIL of the state vector. Adding an action therefore changes the STATE
 # size too, and a saved brain will be refused for an input-width mismatch even

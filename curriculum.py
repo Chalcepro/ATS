@@ -537,6 +537,16 @@ def default_ladder(max_grid=12, with_trail=False, senior_grid=15,
                    damage=False, switch=True, max_steps=200, target=1,
                    pass_rate=0.75, window=50))
 
+    # New thing: the hand, moved up (Chalce, 2026-10-24). On the desktop the
+    #    brain stood next to an apple 98 times with pick-up allowed and pressed
+    #    it 0 times: every rung it had passed is won by arriving, and taking a
+    #    thing was only taught in the combat tier, far up the ladder. Food is
+    #    the survival gate, so the satchel rungs (press pick-up on the goal,
+    #    arriving is not enough) come first now. EAT_FIRST = False puts them
+    #    back at the start of the combat tier.
+    if getattr(config_rl, "EAT_FIRST", False):
+        L.extend(combat_tier(grid=senior_grid, grow_to=senior_to)[:2])   # satchel, satchel7
+
     # New thing: ears (H2, 2026-10-24). An open 13x13 room, far bigger than its sight,
     #    one hostile that chases (one step every 2 ticks: it can be outrun) and
     #    bites, a goal to keep collecting. The usual sixth sense - the nearest
@@ -583,7 +593,8 @@ def default_ladder(max_grid=12, with_trail=False, senior_grid=15,
     # senior rungs teach: a room this size has to be navigated before it is
     # worth learning to fight your way across one.
     if with_combat:
-        L.extend(combat_tier(grid=senior_grid, grow_to=senior_to))
+        L.extend(combat_tier(grid=senior_grid, grow_to=senior_to,
+                             with_hand=not getattr(config_rl, "EAT_FIRST", False)))
     return L
 
 
@@ -743,7 +754,7 @@ def senior_tier(grid=15, grow_to=19):
     ]
 
 
-def combat_tier(grid=15, grow_to=19, weapon_first=4):
+def combat_tier(grid=15, grow_to=19, weapon_first=4, with_hand=True):
     """Senior, but the room fights back.
 
     Bob's ask: "it can pick up items, it can pick up swords, all this stuff,
@@ -833,7 +844,7 @@ def combat_tier(grid=15, grow_to=19, weapon_first=4):
                   # (True) held the agent on a sword it would not pick up;
                   # 0 left it never arming at all. See Stage.weapon_first.
                   weapon_first=weapon_first)
-    return tier + [
+    return (tier if with_hand else []) + [
         # 1. New thing: a weapon. Hostiles stand still exactly as they have
         #    since junior, so nothing about avoiding them has changed - but
         #    they now take three blows bare-handed and one with the sword,
