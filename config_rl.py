@@ -521,7 +521,15 @@ BEST_MODEL_PATH = CHECKPOINT_DIR / "model_best.pt"
 #    hungry, exploring pays less (down to a fifth when starving). Measured on
 #    2026-10-20: a starved episode earned +570 exploring and +9.5 from eight
 #    meals, so it explored until it starved. Migrate with tools/migrate_scheme.py.
-REWARD_SCHEME_VERSION = 5
+# 6: STILL_NEEDS (rewards.still_need) - standing still costs only with a reason
+#    (hungry, danger in earshot, food in sight while hungry); fed and safe, resting
+#    is free. Under 5 it cost always, so the brain never rested (Chalce, 2026-10-24).
+REWARD_SCHEME_VERSION = 6
+
+# Scheme 6: standing still needs a reason to cost. False = scheme 5's flat cost
+# (and REWARD_SCHEME_VERSION = 5 again).
+STILL_NEEDS = True
+STILL_FED_ABOVE = 60.0         # hunger at or above this counts as fed
 
 # The hungry agent's priorities change, as an animal's do: food first. False
 # restores scheme 4's numbers (and needs REWARD_SCHEME_VERSION = 4 again).

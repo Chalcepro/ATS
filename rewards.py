@@ -580,9 +580,11 @@ class RewardEngine:
     # ------------------------------------------------------------------
     # Standing-still detection — call once per tick from env
     # ------------------------------------------------------------------
-    def update_standing_still(self, x: int, y: int):
+    def update_standing_still(self, x: int, y: int, need: float = 1.0):
         """Track agent position. If it hasn't moved for STANDING_STILL_THRESHOLD
-        ticks, apply a penalty each additional tick."""
+        ticks, apply a penalty each additional tick, scaled by `need` (scheme 6,
+        STILL_NEEDS): 0 when it is fed, healthy and nothing dangerous is near -
+        resting is free - and up to 1.5 when it is hungry with food in sight."""
         if not self.rules.get("standing_still", True):
             self._still_ticks = 0
             self._last_pos = (x, y)
@@ -596,9 +598,39 @@ class RewardEngine:
 
         if self._still_ticks >= STANDING_STILL_THRESHOLD:
             multiplier = min(self._still_ticks - STANDING_STILL_THRESHOLD + 1, 4)
-            self.add_nuisance(R_STANDING_STILL * multiplier, "standing_still")
+            if need > 0:
+                self.add_nuisance(R_STANDING_STILL * multiplier * need, "standing_still")
 
 
+
+
+def still_need(agent, world) -> float:
+    """How much standing still should cost right now (scheme 6, Chalce 2026-10-24).
+
+    The flat penalty fixed parking in a safe corner for the alive wage, and
+    over-fixed it: the brain never rests, even with nothing to do. Now stillness
+    needs a reason to cost:
+      fed (hunger >= STILL_FED_ABOVE), healthy, nothing dangerous in earshot  -> 0, resting is free
+      hungry                                    -> up to 1, the hungrier the more
+      danger growling / splashing in earshot    -> 1
+      hungry with food in sight                 -> x1.5, it's right there
+    Parking to dodge danger while hungry still costs, and starvation finishes it."""
+    import config_rl, sounds
+    fed_above = config_rl.STILL_FED_ABOVE
+    need = max(0.0, min(1.0, (fed_above - agent.hunger) / fed_above))
+    if sounds.danger_near(world, agent.x, agent.y):
+        need = 1.0
+    if agent.hunger < fed_above:
+        oid, dist, pos = world.nearest_object(agent.x, agent.y)
+        r = config_rl.PATCH_RADIUS
+        if pos and max(abs(pos[0] - agent.x), abs(pos[1] - agent.y)) <= r and _is_food_id(oid):
+            need *= 1.5
+    return need
+
+
+def _is_food_id(oid) -> bool:
+    from world import _is_food
+    return bool(oid) and _is_food(oid)
 
 
 # ---------------------------------------------------------------------------

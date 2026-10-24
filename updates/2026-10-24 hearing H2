@@ -24,3 +24,4 @@ H2: the brain has ears. Island sounds, 36 hearing inputs before the mask, brain 
 - [ ] Training loop on the listening rung (waiting on Chalce's go)
 - 10-24: desk edges are walls (was water past a hidden strip; it spent 60% of its time by the right-edge water). It still drifts right: the brain picks right ~3x as often as left (learned lean). Hunger bar hidden. Finding: next to food 98 times, picked up 0 - picking up is taught on foraging, 2 rungs ahead.
 - 10-24: EAT_FIRST - satchel/satchel7 (pick up) moved to right after switches7, before listening. Desk hunger 3x faster (HUNGER_SPEED), dies in ~5 min without food.
+- 10-24: scheme 6, STILL_NEEDS - standing still costs only with a reason (rewards.still_need): 0 when fed (>=60), healthy and no danger in earshot; up to 1 when hungry; 1 with danger growling/splashing near; x1.5 hungry with food in sight. Brain migrated (backup brain_scheme5_20261024_054712.pt). Rungs unchanged: a rung always has a goal to go to.

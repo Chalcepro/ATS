@@ -149,7 +149,12 @@ class ATSEnvironment:
         self.agent.crafting.tick()
 
         # --- Standing-still penalty ----------------------------------------
-        self.rewards.update_standing_still(self.agent.x, self.agent.y)
+        if getattr(config_rl, "STILL_NEEDS", False):
+            from rewards import still_need
+            self.rewards.update_standing_still(self.agent.x, self.agent.y,
+                                               still_need(self.agent, self.world))
+        else:
+            self.rewards.update_standing_still(self.agent.x, self.agent.y)
 
         # Propagate agent attack / harvest results
         self._process_pending_drops()

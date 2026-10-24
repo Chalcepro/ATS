@@ -68,6 +68,27 @@ def heard(kind, dist):
     return v
 
 
+def growls(e, dist):
+    """A hostile that is chasing, winding up, angry or about to step into its space."""
+    spec = e.spec
+    if not (spec.has("hostile") or spec.hostility in DANGER_KINDS):
+        return False
+    space = spec.hostility_args.get("space", -1)
+    return bool(e.angry or e.state == 1 or e.job in ("chase", "fight") or dist <= space + 3
+                or spec.hostility == "hunts")
+
+
+def danger_near(world, x, y):
+    """Is something dangerous growling or splashing in earshot? (No dice: safe for rewards.)"""
+    for e in world.entities:
+        if not e.alive:
+            continue
+        d = abs(e.x - x) + abs(e.y - y)
+        if 0 < d <= HEAR_RADIUS and (e.spec.has("ocean") or growls(e, d)):
+            return True
+    return False
+
+
 def sound_of(e, agent_x, agent_y):
     """What this creature sounds like right now, or None if it's quiet."""
     spec = e.spec
@@ -75,11 +96,7 @@ def sound_of(e, agent_x, agent_y):
     if spec.has("ocean"):
         return "splash"
     if spec.has("hostile") or spec.hostility in DANGER_KINDS:
-        space = spec.hostility_args.get("space", -1)
-        if e.angry or e.state == 1 or e.job in ("chase", "fight") or dist <= space + 3 \
-                or spec.hostility == "hunts":
-            return "growl"
-        return None
+        return "growl" if growls(e, dist) else None
     if spec.hostility in ("ignores", "flees_when_hit") and _rng.random() < CHIRP_CHANCE:
         return "chirp"
     return None
