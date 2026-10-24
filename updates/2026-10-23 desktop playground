@@ -1,0 +1,17 @@
+# ATS Update — 2026-10-23
+## Summary
+The trained brain on Chalce's desktop: a playground he can test it in by hand.
+
+## Changes
+### desk/ (new) — desk_world.py, playground.py, sprites.py, window.py; Playground.bat
+- DeskWorld: a real World with the islands wiped, reshaped to the screen grid (32 px tiles,
+  3 hidden tiles each side, water past them), stepped by the real ATSEnvironment. Frozen brain copy.
+- Shift+A, polled (not a global hotkey), opens the menu only while the desktop is focused.
+- Drag items/brain/player; items stack in creation order; top-down walk-behind; tree, log and
+  stone bases are solid (desk only: on the island every object can be stepped on).
+- A player Chalce drives with the arrow keys, E to pick up / put down.
+- Finding: the brain walks past apples next to it and starves, same as the island log.
+- The brain does NOT see windows or screen pixels; it sees only the desk world's tiles.
+
+## Verified
+- tests/test_desk_world.py, tests/test_desk_draw.py pass; live window ran without errors.

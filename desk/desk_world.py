@@ -25,6 +25,9 @@ HIDDEN = 3          # tiles of walkable land past each side edge (off screen)
 # what the Shift+A menu can spawn: label -> item id from the island's registry
 SPAWNABLE = {"Apple": "0001", "Berry bush": "0023", "Stick": "0008", "Wood": "0010",
              "Stone": "0012", "Oak tree": "0021", "Fallen log": "0024", "Coal": "0009"}
+# only the base tile of these blocks walking (the top-down trick: you walk
+# behind the tall part). On the island every object can be stepped on.
+SOLID = {"0021", "0024", "0012"}
 
 
 class DeskWorld(World):
@@ -37,6 +40,9 @@ class DeskWorld(World):
         self.villages.clear()
         self._regrow.clear()
         self.agent_spawn = (cols // 2, rows - 2)
+        self.order = {}             # (x, y) -> when it was made; first made is drawn at the back
+        self.blocked = set()        # tiles nobody may step on (where the player stands)
+        self._made = 0
 
     def on_land(self, x, y):
         return -HIDDEN <= x < self.cols + HIDDEN and 0 <= y < self.rows
@@ -54,6 +60,12 @@ class DeskWorld(World):
     def get_island_tier_at(self, x, y):
         return 0
 
+    def in_bounds_passable(self, x, y, door_unlocked=True):
+        t = self.tiles.get((x, y))
+        if (t and t.object_id in SOLID) or (x, y) in self.blocked:
+            return False
+        return super().in_bounds_passable(x, y, door_unlocked)
+
     def materialise(self, island_id):
         return False
 
@@ -65,17 +77,33 @@ class DeskWorld(World):
             return False
         t = self._tile(x, y)
         t.object_id, t.tile_type = item_id, TILE_OBJECT
+        self._made += 1
+        self.order[(x, y)] = self._made
+        return True
+
+    def move(self, src, dst):
+        """Drag an object to another free land tile; it keeps its place in the stack."""
+        t = self.tiles.get(src)
+        if src == dst or not (t and t.object_id) or not self.on_land(*dst) or self._tile(*dst).object_id:
+            return False
+        seq, item = self.order.get(src, 0), t.object_id
+        self.remove(*src)
+        self.put(*dst, item)
+        self.order[dst] = seq
         return True
 
     def remove(self, x, y):
         t = self.tiles.get((x, y))
         if t and t.object_id:
             t.object_id, t.tile_type = "", TILE_EMPTY
+            self.order.pop((x, y), None)
             return True
         return False
 
     def objects(self):
-        return [(x, y, t.object_id) for (x, y), t in self.tiles.items() if t.object_id]
+        """Every object as (x, y, id), back to front: the order they were made in."""
+        objs = [(x, y, t.object_id) for (x, y), t in self.tiles.items() if t.object_id]
+        return sorted(objs, key=lambda o: self.order.get((o[0], o[1]), 0))
 
 
 class DeskMind:
@@ -118,7 +146,7 @@ class DeskMind:
         if self.done:               # it died: a new life, same desk
             objs = self.world.objects()
             self.reset()
-            for x, y, i in objs:
+            for x, y, i in objs:         # objects() is back to front, so the stack order survives
                 self.world.put(x, y, i)
         env = self.env
         mask = env.agent.get_action_mask(env.world, env.day_night)

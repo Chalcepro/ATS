@@ -11,7 +11,7 @@ PALETTE = {
     "k": (12, 12, 20), "b": (40, 70, 170), "B": (70, 110, 220), "w": (240, 240, 240),
     "r": (210, 30, 40), "R": (255, 90, 90), "g": (60, 160, 70), "G": (30, 110, 45),
     "n": (130, 80, 40), "N": (90, 55, 25), "s": (140, 140, 150), "S": (95, 95, 105),
-    "y": (240, 200, 60), "c": (40, 40, 45), "p": (255, 200, 170), "l": (110, 200, 255),
+    "y": (240, 200, 60), "o": (180, 70, 15), "O": (242, 107, 29), "c": (40, 40, 45), "p": (255, 200, 170), "l": (110, 200, 255),
 }
 
 # mini-Rewrite: dark blue spikes, red eyes, the wide grin
@@ -107,14 +107,21 @@ nNnNnNnNn.
 ..ssSss...
 """,                                   # stone
     "0021": """
-...GGGG...
-..GgGGgG..
-.GGgGGgGG.
-.GgGGGGgG.
-..GGgGGG..
-....nN....
-....nN....
-....nN....
+....GGGG....
+..GGgGGgGG..
+.GgGGGGGGgG.
+GGGgGGgGGGGG
+GgGGGGGGgGgG
+GGGgGgGGGGGG
+.GgGGGGGgGG.
+GGGGGgGGGGgG
+.GgGGGGGgGG.
+..GGGgGGGG..
+....GnNG....
+.....nN.....
+.....nN.....
+.....nN.....
+....nnNN....
 """,                                   # oak tree
     "0024": """
 ..........
@@ -138,6 +145,22 @@ y....y
 ...y..
 ......
 ...y..
+"""
+
+# the player Chalce drives: orange hood, the portfolio's accent colour
+PLAYER = """
+...oooo...
+..oOOOOo..
+.oOppppOo.
+.oOpkpkOo.
+.oOppppOo.
+..oOOOOo..
+.oOOOOOOo.
+oOOOlOOOOo
+.pOOlOOOp.
+..oOOOOo..
+..kk..kk..
+..kk..kk..
 """
 
 THUMB_UP = """
@@ -172,6 +195,8 @@ class Sheet:
         self.rewrite_left = {k: v[:, ::-1] for k, v in self.rewrite.items()}
         self.items = {k: bake(v) for k, v in ITEMS.items()}
         self.unknown = bake(UNKNOWN)
+        self.player = bake(PLAYER)
+        self.player_left = self.player[:, ::-1]
         self.thumb_up = bake(THUMB_UP)
         self.thumb_down = self.thumb_up[::-1]
 

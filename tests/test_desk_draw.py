@@ -1,4 +1,5 @@
-"""Draws the playground off screen (no window) and saves a picture to look at."""
+"""Draws the playground off screen (no window): the walk-behind trick, stacking,
+solid bases, dragging. Saves a picture to look at in %TEMP%/desk_draw.png."""
 import os, sys, time
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(HERE, "desk"))
@@ -12,15 +13,26 @@ class FakeWin:
 p = playground.Playground.__new__(playground.Playground)
 p.left = p.top = 0; p.W, p.H = 640, 320; p.cols, p.rows = 20, 10
 p.mind = playground.DeskMind(p.cols, p.rows); p.sheet = playground.Sheet(); p.win = FakeWin()
-p.canvas = np.zeros((p.H, p.W, 4), np.uint8); p.paused = False; p.speed = 1
-p.prev = p.now = (p.mind.agent.x, p.mind.agent.y); p.facing_left = False; p.eat_until = 0; p.tick_t = time.time()
-for i, item in enumerate(playground.SPAWNABLE.values()):
-    p.mind.world.put(2 + i * 2, 3, item)
+p.setup()
+w, a = p.mind.world, p.mind.agent
+# a tree one row below the brain: its crown must cover the brain's head
+a.x, a.y = 5, 5; p.bot.jump(5, 5)
+w.put(5, 6, "0021")
+assert not w.in_bounds_passable(5, 6), "a tree's base should block"
+assert w.in_bounds_passable(5, 4), "the tile above the tree is free"
+# stacking: the apple made after the bush is drawn over it
+w.put(9, 5, "0023"); w.put(10, 5, "0001")
+assert [o[2] for o in w.objects()][-2:] == ["0023", "0001"]
+# dragging keeps the stack order
+assert w.move((10, 5), (12, 5)) and w.objects()[-1] == (12, 5, "0001")
+# the player can't share the brain's tile, and the brain can't walk into the player
+p.drop(("player",), (3, 5)); assert (3, 5) in w.blocked and not w.in_bounds_passable(3, 5)
 t0 = time.perf_counter()
 for _ in range(20):
-    p.brain_tick(); p.draw(time.time())
-print("tick+draw ms", round((time.perf_counter() - t0) / 20 * 1000, 1))
+    p.draw(time.time())
+print("draw ms", round((time.perf_counter() - t0) / 20 * 1000, 1))
 img = p.win.last; bg = np.zeros_like(img); bg[..., :3] = 70; bg[..., 3] = 255
 out = np.where(img[..., 3:4] > 0, img, bg)
-Image.fromarray(out[..., :3]).resize((1280, 640), Image.NEAREST).save(sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.environ.get("TEMP", "."), "desk_draw.png"))
+path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.environ.get("TEMP", "."), "desk_draw.png")
+Image.fromarray(out[..., :3]).resize((1280, 640), Image.NEAREST).save(path)
 print("ok")

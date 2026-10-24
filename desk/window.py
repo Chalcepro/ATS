@@ -1,6 +1,6 @@
 """A see-through, always-on-top window that shows premultiplied RGBA pixels.
-Copied from RewriteDesk/window.py; here the whole window is click-through
-(WS_EX_TRANSPARENT) so the desktop under the playground still works.
+Copied from RewriteDesk/window.py. Only drawn pixels catch the mouse (so items
+can be dragged); everywhere else clicks fall through to the desktop.
 
 Win32 layered window (UpdateLayeredWindow, per-pixel alpha): pixels with alpha 0
 let clicks fall through to whatever is underneath, so only Rewrite himself is
@@ -115,7 +115,7 @@ class OverlayWindow:
         wc.lpszClassName = "ATSPlayground"
         user32.RegisterClassExW(ctypes.byref(wc))
         self.hwnd = user32.CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             wc.lpszClassName, title, WS_POPUP, 0, 0, width, height, None, None, hinst, None)
         self.screen_dc = user32.GetDC(None)
         self.mem_dc = gdi32.CreateCompatibleDC(self.screen_dc)
