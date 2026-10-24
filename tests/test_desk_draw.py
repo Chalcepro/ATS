@@ -52,3 +52,21 @@ dx, dy = moved[bot_in]; p.place_bot(*w.free_near(a.x + dx, a.y + dy))
 assert (a.x, a.y) == (12, 4) and p.rooms.room_of(12, 4) == 1, (a.x, a.y)
 assert w.in_bounds_passable(10, 1), "the old wall is gone"
 print("rooms ok")
+
+# yes / no: words mean yes/no/unknown, questions get a thumbs answer, everything is logged with recent steps
+from voice import meaning
+import json, tempfile, voice as V
+V.LOG_DIR = tempfile.mkdtemp()      # never into the real feedback log sleep learns from
+assert meaning("Yes!") == 1 and meaning("no, stop") == -1 and meaning("hello") == 0 and meaning("nah") == -1
+for _ in range(12):
+    p.brain_tick(time.time())
+p.say("Are you hungry?"); assert p.thumb[1] in (1, -1)
+p.say("yes"); assert p.heard[1] == 1
+last = [json.loads(l) for l in open(os.path.join(V.LOG_DIR, time.strftime("%Y-%m-%d") + ".jsonl"), encoding="utf-8")][-2:]
+assert last[0]["kind"] == "question" and len(last[0]["hidden"]) == p.mind.policy.hidden_size
+assert last[1]["meaning"] == 1 and len(last[1]["recent"]) == 10 and "grades_answer" in last[1]
+p.draw(time.time())
+# deleting: right-click and F both go through destroy(): the item is gone and a puff shows
+w.put(15, 8, "0001"); p.destroy(15, 8); assert not w.tiles[(15, 8)].object_id and p.puffs
+p.draw(time.time())
+print("voice ok")

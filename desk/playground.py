@@ -6,7 +6,14 @@ cursor, remove them, call it back when it has wandered off screen, pause.
   drag        any item, the brain or the player, with the mouse
   arrows      move the player (only while the desktop is focused)
   E           player picks up the thing it stands on or faces / puts it down
+  F           player breaks the thing it stands on or faces (it's gone)
+  right-click an item to delete it
   Ctrl+M      mute / unmute the ear (the microphone); starts muted
+
+Yes / no (desk/voice.py): the menu has yes and no buttons, a box to type a
+word, and a box to ask it a question; it answers thumbs up or down from its
+voice head. Every word is logged for sleep to learn from; nothing is learned
+while it's awake.
 
 Open windows are rooms: their top and bottom edges are walls, their sides are
 doorways. Drop the brain on a window to put it inside; move the window and it
@@ -32,13 +39,15 @@ from window import OverlayWindow, user32
 from sprites import Sheet, paste, bar, SCALE
 from desk_world import DeskMind, SPAWNABLE, TILE_PX
 from window_rooms import Rooms
+from voice import Voice
 
 LOG_DIR = os.path.join(os.environ.get("APPDATA", HERE), "ATSPlayground")
 FPS = 15
 BRAIN_HZ = 5                        # brain ticks a second at 1x speed
 PLAYER_HZ = 8                       # player steps a second while an arrow is held
 ROOMS_EVERY = 0.5                   # seconds between re-reading the open windows
-VK_SHIFT, VK_CTRL, VK_A, VK_E, VK_M = 0x10, 0x11, 0x41, 0x45, 0x4D
+VK_SHIFT, VK_CTRL, VK_A, VK_E, VK_F, VK_M = 0x10, 0x11, 0x41, 0x45, 0x46, 0x4D
+THUMB_S = 3.0                       # how long its thumbs-up / down stays up
 ARROWS = {0x25: (-1, 0), 0x26: (0, -1), 0x27: (1, 0), 0x28: (0, 1)}
 DESKTOP_CLASSES = {"Progman", "WorkerW"}
 
@@ -60,6 +69,25 @@ def focus_desktop():
     h = user32.FindWindowW("Progman", None)
     if h:
         user32.SetForegroundWindow(h)
+
+
+def type_box(prompt, x, y):
+    """A small box at the cursor to type into. Enter sends, Esc cancels. Returns the text or None."""
+    import tkinter as tk
+    root = tk.Tk()
+    root.overrideredirect(True)
+    root.attributes("-topmost", True)
+    root.configure(bg="#121211")
+    root.geometry(f"+{max(0, x - 140)}+{max(0, y - 70)}")
+    tk.Label(root, text=prompt, fg="#efece6", bg="#121211", font=("Segoe UI", 10)).pack(padx=10, pady=(8, 2), anchor="w")
+    e = tk.Entry(root, width=34, font=("Segoe UI", 12), bg="#1b1b19", fg="#efece6", insertbackground="#f26b1d", relief="flat")
+    e.pack(padx=10, pady=(0, 10))
+    out = []
+    e.bind("<Return>", lambda _: (out.append(e.get().strip()), root.destroy()))
+    e.bind("<Escape>", lambda _: root.destroy())
+    root.after(50, lambda: (root.focus_force(), e.focus_set()))
+    root.mainloop()
+    return out[0] if out and out[0] else None
 
 
 def key_down(vk):
@@ -115,6 +143,11 @@ class Playground:
         self.keys_was = set()
         self.drag = None                        # ("item", tile) | ("bot",) | ("player",), plus the cursor
         self.rooms_t = 0.0
+        self.voice = Voice(self.mind.policy.hidden_size)
+        self.thumb = (0.0, 0)                   # (until, +1 up / -1 down): its answer
+        self.heard = (0.0, 0)                   # (until, +1/-1/0): a flash that your word landed
+        self.last_word = ""
+        self.puffs = []                         # (until, x, y) little clouds where something broke
         self.dirty = True
 
     # ── tiles <-> pixels ──
@@ -134,6 +167,10 @@ class Playground:
         elif name == "move" and self.drag:
             self.drag = (self.drag[0], pos)
             self.dirty = True
+        elif name == "right":
+            hit = self.hit(*pos)
+            if hit and hit[0] == "item":
+                self.destroy(*hit[1])
         elif name == "release" and self.drag:
             self.drop(self.drag[0], self.tile_at(*pos))
             self.drag = None
@@ -153,6 +190,11 @@ class Playground:
             if px <= x < px + img.shape[1] and py <= y < py + img.shape[0]:
                 return ("item", (ox, oy))
         return None
+
+    def destroy(self, x, y):
+        if self.mind.world.remove(x, y):
+            self.puffs.append((time.time() + 0.4, x, y))
+            self.dirty = True
 
     def drop(self, what, tile):
         w, a = self.mind.world, self.mind.agent
@@ -213,7 +255,7 @@ class Playground:
         if not desktop_focused():
             self.keys_was = set()
             return
-        down = {vk for vk in (VK_A, VK_E, VK_M, *ARROWS) if key_down(vk)}
+        down = {vk for vk in (VK_A, VK_E, VK_F, VK_M, *ARROWS) if key_down(vk)}
         pressed, self.keys_was = down - self.keys_was, down
         if VK_A in pressed and key_down(VK_SHIFT):
             self.open_menu()
@@ -224,6 +266,12 @@ class Playground:
             return
         if VK_E in pressed:
             self.player_use()
+        if VK_F in pressed:
+            here = self.player.now
+            for spot in (here, (here[0] + self.face[0], here[1] + self.face[1])):
+                if self.mind.world.tiles.get(spot) and self.mind.world.tiles[spot].object_id:
+                    self.destroy(*spot)
+                    break
         held = [ARROWS[vk] for vk in ARROWS if vk in down]
         if held and (t - self.step_t >= 1.0 / PLAYER_HZ or any(vk in pressed for vk in ARROWS)):
             self.step_t = t
@@ -255,6 +303,17 @@ class Playground:
                     break
         self.dirty = True
 
+    # ── yes / no ──
+    def say(self, text):
+        """Chalce said something: a question gets a thumbs answer, anything else is a word."""
+        t = time.time()
+        self.last_word = text
+        if text.endswith("?"):
+            self.thumb = (t + THUMB_S, self.voice.ask(self.mind.hidden, text))
+        else:
+            self.heard = (t + 1.0, self.voice.hear_word(text, list(self.mind.recent)))
+        self.dirty = True
+
     def open_menu(self):
         m, a = self.mind, self.mind.agent
         cx, cy = window.cursor_pos()
@@ -263,7 +322,7 @@ class Playground:
         has_thing = bool(m.world.tiles.get((tx, ty)) and m.world.tiles[(tx, ty)].object_id)
         spawn = [(100 + i, label, False) for i, label in enumerate(SPAWNABLE)]
         items = [
-            (1, f"Health {a.health:.0f}  ·  Hunger {a.hunger:.0f}  ·  doing: {m.last_action}", False, False),
+            (1, f"Health {a.health:.0f}  ·  Hunger {a.hunger:.0f}  ·  ate {m.ate}×  ·  doing: {m.last_action}", False, False),
             None,
             ("Spawn here", spawn),
             (2, "Scatter 5 apples", False),
@@ -279,7 +338,11 @@ class Playground:
             (21, "Ear: " + (self.ear.error or "muted") if self.ear.muted else
              f"Ear: loudness {self.ear.loudness():.3f}  ·  pitch {self.ear.pitch_hz():.0f} Hz", False, False),
             None,
-            (9, "Type a word to it (yes / no)  — next step", False, False),
+            (30, "👍  Yes  (good, keep doing that)", False),
+            (31, "👎  No  (stop that)", False),
+            (32, "Type a word to it…", False),
+            (33, "Ask it a yes/no question…", False),
+            (34, "Last word: " + (f'"{self.last_word}"' if self.last_word else "none yet"), False, False),
             None,
             (99, "Quit playground", False),
         ]
@@ -311,6 +374,15 @@ class Playground:
             m.world.blocked = {self.player.now}
         elif pick == 20:
             self.ear.set_muted(not self.ear.muted)
+        elif pick == 30:
+            self.say("yes")
+        elif pick == 31:
+            self.say("no")
+        elif pick in (32, 33):
+            text = type_box("Say something to it (yes / no / anything):" if pick == 32 else
+                            "Ask it a yes/no question:", cx, cy)
+            if text:
+                self.say(text + ("?" if pick == 33 and not text.endswith("?") else ""))
         if pick == 99:
             self.ear.close()
             self.win.close()
@@ -353,6 +425,7 @@ class Playground:
                 a = self.mind.agent
                 bar(c, px, py - 12, img.shape[1], a.health / 100, (220, 50, 50))
                 bar(c, px, py - 7, img.shape[1], a.hunger / 100, (240, 200, 60))
+                self.draw_bubbles(c, px + img.shape[1] // 2, py - 14, t)
             elif self.carry:
                 held = s.item(self.carry)
                 paste(c, held, px + (img.shape[1] - held.shape[1]) // 2, py - held.shape[0])
@@ -371,6 +444,13 @@ class Playground:
             mx, my = self.drag[1]
             paste(c, img, mx - img.shape[1] // 2, my - img.shape[0] // 2)
 
+        self.puffs = [p for p in self.puffs if p[0] > t]
+        for until, x, y in self.puffs:       # a dotted grey cloud that grows as it fades
+            r = int(6 + (0.4 - (until - t)) * 30)
+            yy, xx = np.ogrid[-r:r + 1, -r:r + 1]
+            cloud = np.zeros((2 * r + 1, 2 * r + 1, 4), np.uint8)
+            cloud[(xx * xx + yy * yy <= r * r) & ((xx + yy) % 3 == 0)] = (200, 200, 200, 220)
+            paste(c, cloud, x * TILE_PX + TILE_PX // 2 - r, y * TILE_PX + TILE_PX // 2 - r)
         a = self.mind.agent
         if not 0 <= a.x < self.cols:         # off screen: a marker on the edge it left by
             ex = 0 if a.x < 0 else self.W - 10
@@ -379,7 +459,24 @@ class Playground:
         if self.paused:
             c[8:40, 8:16] = c[8:40, 24:32] = (255, 255, 255, 230)
         self.win.show_pixels(c[::-1], self.left, self.top)
-        return moving or bool(self.drag)
+        return moving or bool(self.drag) or bool(self.puffs) or t < max(self.thumb[0], self.heard[0])
+
+    def draw_bubbles(self, c, cx, top, t):
+        """Above its head: its thumbs answer, a flash when your word lands, an apple when it eats."""
+        s = self.sheet
+        if t < self.thumb[0]:
+            img = s.thumb_up if self.thumb[1] > 0 else s.thumb_down
+            paste(c, img, cx - img.shape[1] // 2, top - img.shape[0])
+        elif t < self.heard[0]:
+            col = {1: (80, 220, 100), -1: (230, 60, 60), 0: (160, 160, 160)}[self.heard[1]]
+            y = top - 14
+            if y >= 4 and cx >= 6:
+                c[y:y + 4, cx - 6:cx + 6] = (*col, 255)              # a minus for no...
+                if self.heard[1] > 0:
+                    c[y - 4:y + 8, cx - 2:cx + 2] = (*col, 255)      # ...a plus for yes
+        elif t < self.eat_until:
+            img = s.item("0001")
+            paste(c, img, cx - img.shape[1] // 2, top - img.shape[0] - int((self.eat_until - t) * 10))
 
     def draw_ear(self, c, x, y):
         """Beside its head: grey with a red slash when muted, else a live loudness meter."""
