@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 from ear import Ear
 import window
 from window import OverlayWindow, user32
-from sprites import Sheet, paste, bar, SCALE
+from sprites import Sheet, paste, bar, art_stamp, SCALE
 from desk_world import DeskMind, SPAWNABLE, TILE_PX
 from window_rooms import Rooms
 from voice import Voice
@@ -505,6 +505,9 @@ class Playground:
             if t - self.rooms_t >= ROOMS_EVERY:
                 self.rooms_t = t
                 self.update_rooms()
+                if art_stamp() != self.sheet.stamp:     # a sprite was saved in the editor
+                    self.sheet = Sheet()
+                    self.dirty = True
             if not self.paused and t - self.tick_t >= 1.0 / (BRAIN_HZ * self.speed):
                 self.tick_t = t
                 self.brain_tick(t)

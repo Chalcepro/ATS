@@ -189,16 +189,67 @@ def bake(art, scale=SCALE):
     return img.repeat(scale, 0).repeat(scale, 1)
 
 
+import os
+
+ART_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "art")
+ITEM_NAMES = {"0001": "apple", "0023": "berry_bush", "0008": "stick", "0010": "wood",
+              "0012": "stone", "0021": "oak_tree", "0024": "fallen_log", "0009": "coal"}
+
+# Every sprite the playground draws: name -> (built-in art, what it's for).
+# A file art/<name>.png (drawn 1 pixel per art pixel) replaces the built-in one.
+# The built-in art's size is the size to draw at, but any size up to 16x20 works.
+CATALOGUE = {
+    "rewrite_idle": (REWRITE["idle"], "the brain standing still (it bobs)"),
+    "rewrite_walk": (REWRITE["walk"], "walking, swapped with idle every other frame"),
+    "rewrite_eat": (REWRITE["eat"], "eating (0.6 s)"),
+    "player": (PLAYER, "you, the player"),
+    "thumb_up": (THUMB_UP, "its YES answer, above its head"),
+    "thumb_down": (None, "its NO answer (if you don't draw it: thumb_up upside down)"),
+    **{"item_" + n: (ITEMS[i], "item " + n.replace("_", " ")) for i, n in ITEM_NAMES.items()},
+}
+MAX_W, MAX_H = 16, 20
+
+
+def from_png(path, scale=SCALE):
+    """art/<name>.png -> the same premultiplied RGBA bake() makes. Half-see-through counts as see-through."""
+    from PIL import Image
+    a = np.array(Image.open(path).convert("RGBA"))
+    a[a[..., 3] < 128] = 0
+    a[a[..., 3] >= 128, 3] = 255
+    return a.repeat(scale, 0).repeat(scale, 1)
+
+
+def art_stamp():
+    """Changes whenever a file in art/ is saved, so the playground can reload."""
+    try:
+        return tuple(sorted((f, os.path.getmtime(os.path.join(ART_DIR, f))) for f in os.listdir(ART_DIR)))
+    except OSError:
+        return ()
+
+
+def load(name):
+    path = os.path.join(ART_DIR, name + ".png")
+    if os.path.exists(path):
+        try:
+            return from_png(path)
+        except Exception:
+            pass                # half-written or broken file: keep the built-in art
+    art = CATALOGUE[name][0]
+    return bake(art) if art else None
+
+
 class Sheet:
     def __init__(self):
-        self.rewrite = {k: bake(v) for k, v in REWRITE.items()}
+        self.stamp = art_stamp()
+        self.rewrite = {k: load("rewrite_" + k) for k in ("idle", "walk", "eat")}
         self.rewrite_left = {k: v[:, ::-1] for k, v in self.rewrite.items()}
-        self.items = {k: bake(v) for k, v in ITEMS.items()}
+        self.items = {i: load("item_" + n) for i, n in ITEM_NAMES.items()}
         self.unknown = bake(UNKNOWN)
-        self.player = bake(PLAYER)
+        self.player = load("player")
         self.player_left = self.player[:, ::-1]
-        self.thumb_up = bake(THUMB_UP)
-        self.thumb_down = self.thumb_up[::-1]
+        self.thumb_up = load("thumb_up")
+        down = load("thumb_down")
+        self.thumb_down = down if down is not None else self.thumb_up[::-1]
 
     def item(self, item_id):
         return self.items.get(item_id, self.unknown)

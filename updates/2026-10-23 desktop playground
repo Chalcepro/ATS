@@ -19,3 +19,4 @@ The trained brain on Chalce's desktop: a playground he can test it in by hand.
 - The ear (H1): ear.py on senses prosody (34 numbers), live mic, starts muted, Ctrl+M on the desktop toggles; a meter beside its head. Not a brain input yet (H2).
 - Yes/no both ways (desk/voice.py): menu yes/no buttons, a type box, ask a question; its voice head (checkpoints/desk_voice.pt, untrained) answers thumbs up/down. Words logged to data/desk_feedback/ with its last 10 steps, for sleep.
 - Delete things: right-click an item, or F with the player; a puff where it broke. Apple pop + "ate N" when the brain eats.
+- Sprite editor (desk/sprite_editor.py, Sprite Editor.bat): every sprite with its exact size; saves desk/art/<name>.png, the playground reloads art live.
