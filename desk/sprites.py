@@ -278,3 +278,34 @@ def bar(canvas, x, y, w, frac, col):
     canvas[y:y + 4, x0:x1] = (20, 20, 20, 200)
     fx = min(x0 + int(w * max(0.0, min(1.0, frac))), x1)
     canvas[y + 1:y + 3, x0:fx] = (*col, 255)
+
+
+# A 3x5 pixel font for the narrator's words above its head. Only the letters
+# the words use (narrator.WORDS); anything else draws as a gap.
+FONT = {
+    "A": "111101111101101", "D": "110101101101110", "E": "111100110100111", "F": "111100110100100",
+    "G": "111100101101111", "H": "101101111101101", "I": "111010010010111", "L": "100100100100111",
+    "N": "110101101101101", "O": "111101101101111", "P": "111101111100100", "R": "110101110101101",
+    "S": "111100111001111", "T": "111010010010010", "U": "101101101101111", "W": "101101101111101",
+    "Y": "101101010010010", "C": "111100100100111",
+}
+
+
+def text(canvas, x, y, s, col, scale=2):
+    """Draw s with its top-left at x, y; returns the width drawn, in pixels."""
+    H, W = canvas.shape[:2]
+    cx = x
+    for ch in s.upper():
+        g = FONT.get(ch)
+        if g:
+            for i, bit in enumerate(g):
+                if bit == "1":
+                    px, py = cx + (i % 3) * scale, y + (i // 3) * scale
+                    if 0 <= px < W - scale and 0 <= py < H - scale:
+                        canvas[py:py + scale, px:px + scale] = (*col, 255)
+        cx += 4 * scale
+    return cx - x
+
+
+def text_width(s, scale=2):
+    return len(s) * 4 * scale

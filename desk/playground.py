@@ -36,10 +36,11 @@ sys.path.insert(0, os.path.dirname(HERE))
 from ear import Ear
 import window
 from window import OverlayWindow, user32
-from sprites import Sheet, paste, bar, art_stamp, SCALE
+from sprites import Sheet, paste, bar, art_stamp, text, text_width, SCALE
 from desk_world import DeskMind, SPAWNABLE, TILE_PX
 from window_rooms import Rooms
 from voice import Voice
+from describe import DescribeHead
 
 LOG_DIR = os.path.join(os.environ.get("APPDATA", HERE), "ATSPlayground")
 FPS = 15
@@ -148,6 +149,8 @@ class Playground:
         self.heard = (0.0, 0)                   # (until, +1/-1/0): a flash that your word landed
         self.last_word = ""
         self.puffs = []                         # (until, x, y) little clouds where something broke
+        self.show_words = True                  # the narrator's words above its head
+        self.describe = DescribeHead.load(self.mind.policy.hidden_size)
         self.dirty = True
 
     # ── tiles <-> pixels ──
@@ -338,6 +341,10 @@ class Playground:
             ("Speed", [(10 + s, f"{s}x", self.speed == s) for s in (1, 2, 4)]),
             (8, "New life (reset)", False),
             (20, ("Unmute the ear" if self.ear.muted else "Mute the ear") + "   Ctrl+M", False),
+            (40, "Show the words it's told", self.show_words),
+            (41, "Told: " + (" ".join(getattr(a, "last_words", [])) or "-"), False, False),
+            (42, "It would say: " + (" ".join(self.describe.say(m.hidden)) or "-")
+             if self.describe.trained else "It would say: (run tools/train_describe.py)", False, False),
             (21, "Ear: " + (self.ear.error or "muted") if self.ear.muted else
              f"Ear: loudness {self.ear.loudness():.3f}  ·  pitch {self.ear.pitch_hz():.0f} Hz", False, False),
             None,
@@ -377,6 +384,8 @@ class Playground:
             m.world.blocked = {self.player.now}
         elif pick == 20:
             self.ear.set_muted(not self.ear.muted)
+        elif pick == 40:
+            self.show_words = not self.show_words
         elif pick == 30:
             self.say("yes")
         elif pick == 31:
@@ -407,7 +416,7 @@ class Playground:
         for o in objs:                       # back to front: the order they were made in
             item_at(*o)
 
-        chars, moving = [], False
+        chars, moving, words_at = [], False, None
         for who, g in (("bot", self.bot), ("player", self.player)):
             if dragged == (who,):
                 continue
@@ -429,6 +438,7 @@ class Playground:
                 bar(c, px, py - 12, img.shape[1], a.health / 100, (220, 50, 50))
                 # hunger is not shown (Chalce, 10-24): it's in the menu line if you need it
                 self.draw_bubbles(c, px + img.shape[1] // 2, py - 9, t)
+                words_at = (px + img.shape[1] // 2, py - 26)     # drawn last, over everything
             elif self.carry:
                 held = s.item(self.carry)
                 paste(c, held, px + (img.shape[1] - held.shape[1]) // 2, py - held.shape[0])
@@ -440,6 +450,9 @@ class Playground:
                     ox, oy = self.sprite_xy(oi, o[0], o[1])
                     if ox < x1 and ox + oi.shape[1] > x0 and oy < py + img.shape[0] and oy + oi.shape[0] > y0:
                         paste(c, oi, ox, oy)
+
+        if self.show_words and words_at:
+            self.draw_words(c, *words_at)
 
         if dragged:                          # what's being dragged rides on the cursor, on top
             img = {"bot": s.rewrite["idle"], "player": s.player}.get(dragged[0]) \
@@ -480,6 +493,19 @@ class Playground:
         elif t < self.eat_until:
             img = s.item("0001")
             paste(c, img, cx - img.shape[1] // 2, top - img.shape[0] - int((self.eat_until - t) * 10))
+
+    def draw_words(self, c, cx, y):
+        """Above its head, small: the narrator's words, danger in red, food in green."""
+        words = getattr(self.mind.agent, "last_words", [])
+        if not words:
+            return
+        line = " ".join(words)
+        x = cx - text_width(line) // 2
+        c[max(0, y - 2):y + 12, max(0, x - 3):min(self.W, x + text_width(line) + 1)] = (18, 18, 17, 170)
+        for w in words:
+            col = {"DANGER": (240, 80, 70), "GROWL": (240, 80, 70), "HURT": (240, 80, 70),
+                   "FOOD": (110, 220, 110), "HUNGRY": (240, 200, 60)}.get(w, (230, 230, 230))
+            x += text(c, x, y, w, col) + 8
 
     def draw_ear(self, c, x, y):
         """Beside its head: grey with a red slash when muted, else a live loudness meter."""

@@ -129,7 +129,7 @@ def test_a_lever_is_the_way_out_and_a_hidden_one_has_a_route():
         room = loop.lever_room(rng)
     env.loop_goals = 0
     into(env, room)
-    route = env._state()[config_rl.IDX_MEM_ROUTE_START:config_rl.IDX_MASK_START]
+    route = env._state()[config_rl.IDX_MEM_ROUTE_START:config_rl.IDX_MEM_ROUTE_START + config_rl.MEM_CELLS]
     assert route.count(1.0) > 0, "a hidden lever gets the route"
     lever = next(p for p, i in room.objects.items() if i == loop.LEVER)
     env.agent.x, env.agent.y = next(n for n in loop._around(*lever)
@@ -303,7 +303,7 @@ def test_cause_picks_the_matching_room_about_half_the_time():
 def test_world_route_channel_is_empty():
     env = fresh()
     s = env._state()
-    assert not any(s[config_rl.IDX_MEM_ROUTE_START:config_rl.IDX_MASK_START])
+    assert not any(s[config_rl.IDX_MEM_ROUTE_START:config_rl.IDX_MEM_ROUTE_START + config_rl.MEM_CELLS])
     assert s[config_rl.IDX_LOOP_SIGNAL] == 0.0
 
 

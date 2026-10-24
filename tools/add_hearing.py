@@ -3,6 +3,7 @@
     py -3.12 tools/add_hearing.py --dry-run     what it would do
     py -3.12 tools/add_hearing.py               do it (backs brain.pt up first)
     py -3.12 tools/add_hearing.py --remove      take the ears out again (HEARING = False)
+    py -3.12 tools/add_hearing.py --sense words the same for the narrator's word inputs
 
 The hearing inputs go in at config_rl.IDX_HEAR_START, before the action mask,
 with zero weights (RLPolicy.expand_state insert_at): fed silence, the brain
@@ -41,7 +42,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--remove", action="store_true")
+    ap.add_argument("--sense", choices=("hearing", "words"), default="hearing")
     args = ap.parse_args()
+    global AT, N
+    if args.sense == "words":
+        AT, N = config_rl.IDX_WORD_START, config_rl.WORD_N
+    else:
+        AT, N = config_rl.IDX_HEAR_START, config_rl.HEAR_DIM
 
     blob = torch.load(CKPT, map_location="cpu", weights_only=False)
     shape = dict(blob["shape"])
@@ -77,7 +84,7 @@ def main():
                 if k in st and st[k].dim() == 2 and st[k].shape[1] == old:
                     st[k] = widen(st[k], add)
 
-    backup = CKPT.with_name("brain_pre_%s_%s.pt" % ("unhearing" if args.remove else "hearing",
+    backup = CKPT.with_name("brain_pre_%s%s_%s.pt" % ("un" if args.remove else "", args.sense,
                                                     time.strftime("%Y%m%d_%H%M%S")))
     shutil.copy2(CKPT, backup)
     blob["policy"] = policy.state_dict()
@@ -87,7 +94,8 @@ def main():
     torch.save(blob, tmp)
     tmp.replace(CKPT)
     print(f"done. backup: {backup.name}\n  if it goes wrong: copy it back over brain.pt"
-          + ("" if args.remove else " and set HEARING = False in config_rl.py"))
+          + ("" if args.remove else " and set %s = False in config_rl.py"
+             % ("WORDS_ON" if args.sense == "words" else "HEARING")))
 
 
 if __name__ == "__main__":

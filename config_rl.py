@@ -161,7 +161,14 @@ HEAR_DIM    = 36
 HEAR_RADIUS = 9                               # tiles; sight is the 7x7 patch
 IDX_HEAR_START = IDX_MEM_ROUTE_START + MEM_CELLS
 
-IDX_MASK_START  = IDX_HEAR_START + (HEAR_DIM if HEARING else 0)
+# Words (Chalce, 2026-10-24): narrator.py says a few words about the situation
+# every tick, worked out only from what the brain already senses; WORD_N on/off
+# inputs (which words are being said), after the ears and before the mask.
+WORDS_ON = True
+WORD_N   = 13
+IDX_WORD_START = IDX_HEAR_START + (HEAR_DIM if HEARING else 0)
+
+IDX_MASK_START  = IDX_WORD_START + (WORD_N if WORDS_ON else 0)
 
 # The hand rungs (satchel, satchel7: pick the goal up, arriving is not enough)
 # straight after switches7 instead of deep in the combat tier. Food first.

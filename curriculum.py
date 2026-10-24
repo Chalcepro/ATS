@@ -1749,7 +1749,13 @@ class CurriculumEnv:
         # Hearing (H2): silent unless the rung makes a sound (the listening rung)
         heard = getattr(self, "heard", None)
         if config_rl.HEARING and heard is not None:
-            s[config_rl.IDX_HEAR_START:config_rl.IDX_MASK_START] = [float(v) for v in heard]
+            s[config_rl.IDX_HEAR_START:config_rl.IDX_HEAR_START + config_rl.HEAR_DIM] = [float(v) for v in heard]
+
+        # Words (narrator.py), read off this very state: the same rules as the island
+        if config_rl.WORDS_ON:
+            import narrator
+            self.last_words = narrator.words_from_state(s)
+            s[config_rl.IDX_WORD_START:config_rl.IDX_MASK_START] = narrator.as_inputs(self.last_words)
 
         s[config_rl.IDX_MASK_START:] = [float(v) for v in self.action_mask()]
         return s

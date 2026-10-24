@@ -1082,6 +1082,14 @@ class Agent:
                 heard = sounds.hearing(world, self.x, self.y)
             state.extend(float(v) for v in heard)
 
+        # Words (narrator.py): read off the state built so far, so they can only
+        # say what its senses already carry.
+        if config_rl.WORDS_ON:
+            import narrator
+            assert len(state) == config_rl.IDX_WORD_START
+            self.last_words = narrator.words_from_state(state)
+            state.extend(narrator.as_inputs(self.last_words))
+
         assert len(state) == config_rl.IDX_MASK_START, (
             'state layout drift: mask should start at %d, appends reached %d'
             % (config_rl.IDX_MASK_START, len(state)))

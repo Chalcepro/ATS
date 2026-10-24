@@ -9,7 +9,8 @@ st = next(s for s in default_ladder() if s.name == "listening")
 assert st.listen
 e = CurriculumEnv(st, seed=5)
 e.reset()
-H, M, D = config_rl.IDX_HEAR_START, config_rl.IDX_MASK_START, config_rl.IDX_DIR_START
+H, D = config_rl.IDX_HEAR_START, config_rl.IDX_DIR_START
+M = H + config_rl.HEAR_DIM          # end of the hearing block (the words come after it)
 e.ax, e.ay = 2, 6
 e.hostiles = [(8, 6)]                       # 6 to the right: out of the 7x7 view, in earshot
 e.critters = []

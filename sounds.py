@@ -13,7 +13,7 @@ creatures themselves are not changed):
 Only the nearest, loudest sound in a tick is heard. The waveforms are made
 here with plain numpy (no files, no model), run once through the ear and
 cached, so hearing costs nothing per tick."""
-import random
+import random, zlib
 
 import numpy as np
 
@@ -37,10 +37,10 @@ def _wave(kind, rng):
     """About half a second of one sound at full loudness."""
     n = RATE // 2
     t = np.arange(n) / RATE
-    if kind == "growl":                  # low, rough, pulsing: 70-110 Hz with noise
+    if kind == "growl":                  # low, rough, pulsing: 70-110 Hz, strong harmonics (35/36 takes read as low-pitched)
         f = rng.uniform(70, 110) * (1 + 0.08 * np.sin(2 * np.pi * rng.uniform(5, 9) * t))
         ph = 2 * np.pi * np.cumsum(f) / RATE
-        x = sum(np.sin(k * ph) / k for k in range(1, 8)) + 0.25 * rng.standard_normal(n)
+        x = sum(np.sin(k * ph) / np.sqrt(k) for k in range(1, 8)) + 0.1 * rng.standard_normal(n)
         x *= 0.6 + 0.4 * np.sin(2 * np.pi * rng.uniform(10, 16) * t).clip(0)
     elif kind == "splash":               # a broadband burst that dies away, no pitch
         x = rng.standard_normal(n) * np.exp(-t * rng.uniform(5, 9))
@@ -62,7 +62,7 @@ def heard(kind, dist):
     key = (kind, d, _rng.randrange(VARIANTS))
     v = _cache.get(key)
     if v is None:
-        rng = np.random.default_rng(hash(key) & 0xFFFFFFFF)
+        rng = np.random.default_rng(zlib.crc32(repr(key).encode()))   # the same take every run (hash() isn't)
         loud = 0.5 / (1.0 + 0.6 * d)                     # quieter with distance
         v = _cache[key] = hear(_wave(kind, rng) * loud)
     return v

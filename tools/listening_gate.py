@@ -41,7 +41,12 @@ def play(policy, stage, seeds, ears=True):
             out_of_view_growl = hx and not env.in_view(*hx) and getattr(env, "last_sound", None) == "growl"
             if not ears:
                 state = list(state)
-                state[config_rl.IDX_HEAR_START:config_rl.IDX_MASK_START] = [0.0] * config_rl.HEAR_DIM
+                h0, h1 = config_rl.IDX_HEAR_START, config_rl.IDX_HEAR_START + config_rl.HEAR_DIM
+                state[h0:h1] = [0.0] * config_rl.HEAR_DIM
+                if config_rl.WORDS_ON:      # and the narrator can't say GROWL about a sound it didn't hear
+                    import narrator
+                    state[config_rl.IDX_WORD_START:config_rl.IDX_MASK_START] = narrator.as_inputs(
+                        narrator.words_from_state(state))
             d0 = abs(hx[0] - env.ax) + abs(hx[1] - env.ay) if hx else 0
             action = sl.choose_action(state, env.action_mask())
             hits0 = env.hits_taken
