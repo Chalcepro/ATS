@@ -36,6 +36,12 @@ SOLID = {"0021", "0024", "0012"}
 # the island, and an empty stomach costs health this many times faster too.
 # The island keeps its own rules; this is the playground's.
 HUNGER_SPEED = 3
+# Food grows where food grows (Chalce, 10-24: "we know an apple grows on a
+# particular tree"). Learnable, not a superpower: go to the tree when hungry.
+TREE, BUSH, APPLE = "0021", "0023", "0001"
+TREE_DROP_EVERY = 300           # brain ticks (1 min at 1x): each oak tree may drop an apple beside it
+TREE_MAX_APPLES = 2             # ...until this many lie around it
+BUSH_REGROW = 600               # ticks (2 min) after it eats a bush, the bush grows back where it stood
 
 
 class DeskWorld(World):
@@ -51,6 +57,9 @@ class DeskWorld(World):
         self.order = {}             # (x, y) -> when it was made; first made is drawn at the back
         self.blocked = set()        # tiles nobody may step on (where the player stands)
         self.walls = set()          # window edges (window_rooms.py)
+        self.bushes = {}            # bush spots Chalce made -> tick it was eaten (None while standing)
+        self._ticks = 0
+        self._rng = __import__("random").Random(7)
         self._made = 0
 
     def on_land(self, x, y):
@@ -79,6 +88,39 @@ class DeskWorld(World):
             if not t.object_id and t.tile_type == TILE_EMPTY:
                 t.tile_type = TILE_WALL
         self.walls = walls
+
+    def pickup_at(self, x, y):
+        """The brain takes something. A bush it eats grows back later."""
+        t = self.tiles.get((x, y))
+        was = t.object_id if t else ""
+        got = super().pickup_at(x, y)
+        if got:
+            self.order.pop((x, y), None)
+            if was == BUSH and (x, y) in self.bushes:
+                self.bushes[(x, y)] = self._ticks
+        return got
+
+    def grow(self):
+        """One brain tick of growing: trees drop apples, eaten bushes come back."""
+        self._ticks += 1
+        if self._ticks % TREE_DROP_EVERY == 0:
+            for (x, y), t in list(self.tiles.items()):
+                if t.object_id != TREE:
+                    continue
+                around = [(x + dx, y + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if dx or dy]
+                if sum(1 for p in around if self.tiles.get(p) and self.tiles[p].object_id == APPLE) >= TREE_MAX_APPLES:
+                    continue
+                free = [p for p in around if self.on_land(*p) and not self._tile(*p).object_id
+                        and self._tile(*p).tile_type == TILE_EMPTY and p not in self.blocked]
+                if free:
+                    self.put(*self._rng.choice(free), APPLE)
+        for spot, eaten in list(self.bushes.items()):
+            if eaten is not None and self._ticks - eaten >= BUSH_REGROW:
+                t = self._tile(*spot)
+                if not t.object_id and t.tile_type == TILE_EMPTY and spot not in self.blocked:
+                    self.put(*spot, BUSH)       # put() marks it standing again
+                else:
+                    self.bushes[spot] = self._ticks - BUSH_REGROW + 30   # something's there: try again soon
 
     def free_near(self, x, y):
         """The nearest tile to (x, y) that can be stood on, searching outward."""
@@ -112,6 +154,8 @@ class DeskWorld(World):
             return False
         t = self._tile(x, y)
         t.object_id, t.tile_type = item_id, TILE_OBJECT
+        if item_id == BUSH:
+            self.bushes[(x, y)] = None
         self._made += 1
         self.order[(x, y)] = self._made
         return True
@@ -132,6 +176,7 @@ class DeskWorld(World):
         if t and t.object_id:
             t.object_id, t.tile_type = "", TILE_EMPTY
             self.order.pop((x, y), None)
+            self.bushes.pop((x, y), None)       # removed by Chalce: it doesn't grow back
             return True
         return False
 
@@ -221,10 +266,17 @@ class DeskMind:
 
     def step(self):
         if self.done:               # it died: a new life, same desk
-            objs = self.world.objects()
+            old = self.world
+            objs = old.objects()
             self.reset()
+            new = self.world
             for x, y, i in objs:         # objects() is back to front, so the stack order survives
-                self.world.put(x, y, i)
+                new.put(x, y, i)
+            # what isn't an object right now carries over too: bushes still regrowing, the clock,
+            # where the player stands, the window walls
+            new.bushes.update({p: e for p, e in old.bushes.items() if e is not None})
+            new._ticks, new.blocked = old._ticks, set(old.blocked)
+            new.set_walls(set(old.walls))
         env = self.env
         mask = env.agent.get_action_mask(env.world, env.day_night)
         before, hunger0 = self.state, env.agent.hunger
@@ -233,6 +285,7 @@ class DeskMind:
         self.recent.append({"state": [round(v, 4) for v in before], "action": int(action)})
         self.ate += env.agent.hunger > hunger0 + 0.5
         self._starve_faster(env.agent)
+        self.world.grow()
         from agent import ACTION_NAMES
         self.last_action = ACTION_NAMES.get(action, str(action))
         return info

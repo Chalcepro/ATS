@@ -38,6 +38,12 @@ Keep training. Nothing to change by hand.
   rising for several days of training, that is the signal to look at the
   death log (`replay.py`), not to change numbers.
 
+**2026-10-24, where food grows:** Chalce: "humans can't smell an apple far away, but we know apples
+grow on a particular tree." On the desktop, oak trees drop apples beside them and eaten bushes grow
+back, so "go to the tree when hungry" is learnable from memory. Smell stays on the list as a later
+sense; hearing and sight come first. Order after the ladder: feeling + surprise, then S1 eyes on the
+screen + S2 prediction (surprise drives attention), then sleep-learning from the desktop.
+
 **2026-10-24, food first:** on the desktop the brain stood next to an apple 98 times
 with pick-up allowed and pressed it 0 times - every rung it had passed is won by
 arriving. The satchel rungs (pick the goal up) moved from the combat tier to straight
