@@ -151,7 +151,17 @@ IDX_MEM_KNOWN_START = IDX_PATCH_START + PATCH_TILES
 IDX_MEM_VISIT_START = IDX_MEM_KNOWN_START + MEM_CELLS
 IDX_MEM_ROUTE_START = IDX_MEM_VISIT_START + MEM_CELLS
 
-IDX_MASK_START  = IDX_MEM_ROUTE_START + MEM_CELLS
+# Hearing (roadmap H2, 2026-10-24): 34 ear numbers (ear.py, the same maths as
+# Chalce's microphone) + 2 for where the sound came from. Inserted BEFORE the
+# mask, since the mask has to stay the tail (RLPolicy.expand_state insert_at).
+# HEARING = False takes the slots out again; the brain then needs the columns
+# removed too (tools/add_hearing.py --remove).
+HEARING     = True
+HEAR_DIM    = 36
+HEAR_RADIUS = 9                               # tiles; sight is the 7x7 patch
+IDX_HEAR_START = IDX_MEM_ROUTE_START + MEM_CELLS
+
+IDX_MASK_START  = IDX_HEAR_START + (HEAR_DIM if HEARING else 0)
 # NOTE: this is derived from ACTION_SIZE, because the action mask is carried as
 # the TAIL of the state vector. Adding an action therefore changes the STATE
 # size too, and a saved brain will be refused for an input-width mismatch even

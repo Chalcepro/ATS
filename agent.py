@@ -1072,6 +1072,16 @@ class Agent:
         state.extend(1.0 if (self.x + dx, self.y + dy) in route else 0.0
                      for dy in range(-mr, mr + 1) for dx in range(-mr, mr + 1))
 
+        # Hearing (H2): the loudest thing in earshot. A world can hand in its
+        # own ears instead (the desktop playground passes the live microphone).
+        if config_rl.HEARING:
+            assert len(state) == config_rl.IDX_HEAR_START
+            heard = getattr(world, "hearing_override", None)
+            if heard is None:
+                import sounds
+                heard = sounds.hearing(world, self.x, self.y)
+            state.extend(float(v) for v in heard)
+
         assert len(state) == config_rl.IDX_MASK_START, (
             'state layout drift: mask should start at %d, appends reached %d'
             % (config_rl.IDX_MASK_START, len(state)))

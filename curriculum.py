@@ -72,8 +72,11 @@ class Stage:
                  grow_goals=True, clock_growth=1.5,
                  swords=0, hostile_hp=1, hostile_damage=0, chase=0,
                  aggro=0, grow_hostiles=False, guards=False,
-                 weapon_first=False, pick_goals=False, switch=False):
+                 weapon_first=False, pick_goals=False, switch=False, listen=False):
         self.name = name
+        # Hearing (H2): the hostile is only known while it is in view; out of
+        # view, its growl is the only clue. Harmless critters chirp as decoys.
+        self.listen = bool(listen)
         self.grid = grid
         self.walls = walls
         self.hazards = hazards
@@ -319,7 +322,7 @@ class Stage:
                     hostile_damage=self.hostile_damage, chase=self.chase,
                     aggro=self.aggro, grow_hostiles=self.grow_hostiles,
                     guards=self.guards, weapon_first=self.weapon_first,
-                    pick_goals=self.pick_goals, switch=self.switch)
+                    pick_goals=self.pick_goals, switch=self.switch, listen=self.listen)
         return nxt
 
     def __repr__(self):
@@ -533,6 +536,18 @@ def default_ladder(max_grid=12, with_trail=False, senior_grid=15,
     L.append(Stage("switches7", 7, walls=True, hazards=0, goals=1, respawn=False,
                    damage=False, switch=True, max_steps=200, target=1,
                    pass_rate=0.75, window=50))
+
+    # New thing: ears (H2, 2026-10-24). An open 13x13 room, far bigger than its sight,
+    #    one hostile that chases (one step every 2 ticks: it can be outrun) and
+    #    bites, a goal to keep collecting. The usual sixth sense - the nearest
+    #    hostile's distance and bearing from anywhere - is off here: the hostile
+    #    is known only inside the 7x7 view. Out of view, its growl and where the
+    #    growl came from are all there is, and two harmless critters chirp so
+    #    that "a sound" alone never means "run".
+    if getattr(config_rl, "HEARING", False):
+        L.append(Stage("listening", 13, walls=False, hazards=0, hostiles=1, goals=1,
+                       respawn=True, damage=True, hostile_damage=10, chase=2,
+                       max_steps=250, target=3, pass_rate=0.70, window=60, listen=True))
 
     # 5. New thing: now it can kill you.
     L.append(Stage("hazards", 7, walls=True, hazards=3, goals=1, respawn=True,
@@ -1180,6 +1195,8 @@ class CurriculumEnv:
         defensible place to stand.
         """
         s = self.stage
+        if s.listen:
+            self._step_critters()
         if not s.chase or not self.hostiles:
             return
         if self.steps % s.tempo:
@@ -1219,6 +1236,40 @@ class CurriculumEnv:
                 taken.add((nx, ny))
                 self.hostiles[i] = (nx, ny)
                 break
+
+    def _step_critters(self):
+        """Harmless critters (listening rung) potter about: a random step now and then."""
+        for i, (cx, cy) in enumerate(self.critters):
+            if self.rng.random() < 0.3:
+                dx, dy = self.rng.choice(list(MOVES.values()))
+                if self._tile(cx + dx, cy + dy) == T_FLOOR and (cx + dx, cy + dy) != (self.ax, self.ay):
+                    self.critters[i] = (cx + dx, cy + dy)
+
+    def in_view(self, x, y):
+        r = config_rl.PATCH_RADIUS
+        return abs(x - self.ax) <= r and abs(y - self.ay) <= r
+
+    def _listen(self):
+        """What it hears this tick: the nearest growling hostile or chirping critter."""
+        import sounds
+        best = None
+        for (hx, hy) in self.hostiles:
+            d = abs(hx - self.ax) + abs(hy - self.ay)
+            if 0 < d <= sounds.HEAR_RADIUS and (best is None or d < best[0]):
+                best = (d, "growl", hx - self.ax, hy - self.ay)
+        for (cx, cy) in self.critters:
+            d = abs(cx - self.ax) + abs(cy - self.ay)
+            if 0 < d <= sounds.HEAR_RADIUS and self.rng.random() < sounds.CHIRP_CHANCE * 3 \
+                    and (best is None or d < best[0]):
+                best = (d, "chirp", cx - self.ax, cy - self.ay)
+        out = [0.0] * config_rl.HEAR_DIM
+        if best:
+            d, kind, dx, dy = best
+            out[:-2] = [float(v) for v in sounds.heard(kind, d)]
+            n = max(abs(dx), abs(dy))
+            out[-2:] = [dx / n, dy / n]
+        self.last_sound = best[1] if best else None
+        return out
 
     # -- episode -----------------------------------------------------------
 
@@ -1343,6 +1394,8 @@ class CurriculumEnv:
         self.kills = 0
         self.hits_taken = 0
         self.met = False          # did a hostile ever come within sight?
+        self.critters = self._place(taken, 2) if s.listen else []
+        self.heard = None
 
         self.health = 100
         self.steps = 0
@@ -1584,6 +1637,10 @@ class CurriculumEnv:
         s[13] = float(self._view(self.ax, self.ay + 1))
 
         host, hd = self._nearest(self.hostiles)
+        if self.stage.listen:
+            if host and not self.in_view(*host):
+                host, hd = None, 999          # out of view: no sixth sense, only the growl
+            self.heard = self._listen()
         s[14] = min(1.0, hd / span)
         s[config_rl.IDX_ENT_TYPE] = 1.0 if host else 0.0
 
@@ -1677,6 +1734,11 @@ class CurriculumEnv:
                 s[v0 + i] = self.visit.get(c, 0.0)
                 s[r0 + i] = 1.0 if c in route else 0.0
                 i += 1
+
+        # Hearing (H2): silent unless the rung makes a sound (the listening rung)
+        heard = getattr(self, "heard", None)
+        if config_rl.HEARING and heard is not None:
+            s[config_rl.IDX_HEAR_START:config_rl.IDX_MASK_START] = [float(v) for v in heard]
 
         s[config_rl.IDX_MASK_START:] = [float(v) for v in self.action_mask()]
         return s

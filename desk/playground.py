@@ -243,6 +243,9 @@ class Playground:
     def brain_tick(self, t):
         m = self.mind
         hunger0 = m.agent.hunger
+        # its ears are your microphone (H2): the same 34 numbers the island's
+        # sounds make, no direction (one mic); silence while muted
+        m.world.hearing_override = np.concatenate([self.ear.vec, [0.0, 0.0]])
         m.step()
         a = m.agent
         self.bot.go(a.x, a.y, t)

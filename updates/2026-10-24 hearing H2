@@ -1,0 +1,24 @@
+# ATS Update — 2026-10-24
+## Summary
+H2: the brain has ears. Island sounds, 36 hearing inputs before the mask, brain migrated, a listening rung and its gate.
+
+## Changes
+### Sounds — sounds.py (new)
+- growl / splash / chirp synthesized with numpy, run once through ear.hear() (senses' prosody), cached per kind/distance/variant.
+- Read from what creatures already do (angry, chasing, telegraphing, near their space; sharks; harmless animals 8%/tick). Nearest wins; quieter with distance; +2 direction numbers.
+### State — config_rl.py, agent.py, curriculum.py
+- HEARING flag, HEAR_DIM 36, HEAR_RADIUS 9, IDX_HEAR_START = old mask start; STATE_SIZE 502 -> 538.
+- agent.build_state appends hearing (world.hearing_override lets the playground pass the mic).
+- curriculum._state is silent except on listen rungs.
+### Brain — tools/add_hearing.py (new)
+- expand_state(insert_at) + Adam moments widened; backup brain_pre_hearing_20261024_021153.pt. Silent ears = identical answers (tests/test_add_hearing.py).
+### Listening rung — curriculum.py
+- Stage(listen=True): 13x13 open, 1 chasing hostile (every 2 ticks, 10 dmg), goal respawns, 2 chirping critters; hostile known only in the 7x7 view.
+- Gate: tools/listening_gate.py; untrained baseline 47.2% / 47.2%, 300 / 300 bites.
+### Playground — desk/playground.py
+- The mic's 34 numbers go into the brain's hearing inputs.
+
+## Verified
+- [x] State vector length == 538
+- [x] tests: add_hearing, sounds, listening, insert_sense, desk_*, ear
+- [ ] Training loop on the listening rung (waiting on Chalce's go)
