@@ -1,5 +1,5 @@
 """The desktop as an island: Chalce's screen cut into tiles, every tile land,
-water past a hidden strip on each side. The brain gets the inputs it was
+walled in at the screen's edges. The brain gets the inputs it was
 trained on, so what it learned on the island (find food, eat, explore) shows up
 on the desktop with nothing retrained.
 
@@ -21,7 +21,10 @@ from mind.solution_loop import SolutionLoop
 from world import World, Tile, TILE_EMPTY, TILE_OCEAN, TILE_OBJECT, TILE_WALL
 
 TILE_PX = 32        # one island tile is this many screen pixels
-HIDDEN = 3          # tiles of walkable land past each side edge (off screen)
+# The screen's edges are walls. They used to be water past a hidden strip, and
+# the brain did what it does on the island: hung about by the sea - 60% of its
+# time on the off-screen strip by the right edge (measured 2026-10-24). Walls it
+# knows from its corridor rungs, and they keep it on screen.
 
 # what the Shift+A menu can spawn: label -> item id from the island's registry
 SPAWNABLE = {"Apple": "0001", "Berry bush": "0023", "Stick": "0008", "Wood": "0010",
@@ -47,12 +50,17 @@ class DeskWorld(World):
         self._made = 0
 
     def on_land(self, x, y):
-        return -HIDDEN <= x < self.cols + HIDDEN and 0 <= y < self.rows
+        return 0 <= x < self.cols and 0 <= y < self.rows
 
     def _tile(self, x, y):
         t = self.tiles.get((x, y))
         if t is None:
-            t = Tile(tile_type=TILE_EMPTY, island_id=0) if self.on_land(x, y) else Tile(tile_type=TILE_OCEAN)
+            if self.on_land(x, y):
+                t = Tile(tile_type=TILE_EMPTY, island_id=0)
+            elif -1 <= x <= self.cols and -1 <= y <= self.rows:
+                t = Tile(tile_type=TILE_WALL, island_id=0)      # the frame around the screen
+            else:
+                t = Tile(tile_type=TILE_OCEAN)
             self.tiles[(x, y)] = t
         return t
 

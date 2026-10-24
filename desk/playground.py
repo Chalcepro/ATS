@@ -427,8 +427,8 @@ class Playground:
                 self.draw_ear(c, px + img.shape[1] + 4, py)
                 a = self.mind.agent
                 bar(c, px, py - 12, img.shape[1], a.health / 100, (220, 50, 50))
-                bar(c, px, py - 7, img.shape[1], a.hunger / 100, (240, 200, 60))
-                self.draw_bubbles(c, px + img.shape[1] // 2, py - 14, t)
+                # hunger is not shown (Chalce, 10-24): it's in the menu line if you need it
+                self.draw_bubbles(c, px + img.shape[1] // 2, py - 9, t)
             elif self.carry:
                 held = s.item(self.carry)
                 paste(c, held, px + (img.shape[1] - held.shape[1]) // 2, py - held.shape[0])

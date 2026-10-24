@@ -22,3 +22,4 @@ H2: the brain has ears. Island sounds, 36 hearing inputs before the mask, brain 
 - [x] State vector length == 538
 - [x] tests: add_hearing, sounds, listening, insert_sense, desk_*, ear
 - [ ] Training loop on the listening rung (waiting on Chalce's go)
+- 10-24: desk edges are walls (was water past a hidden strip; it spent 60% of its time by the right-edge water). It still drifts right: the brain picks right ~3x as often as left (learned lean). Hunger bar hidden. Finding: next to food 98 times, picked up 0 - picking up is taught on foraging, 2 rungs ahead.
