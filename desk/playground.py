@@ -37,7 +37,7 @@ from ear import Ear
 import window
 from window import OverlayWindow, user32
 from sprites import Sheet, paste, bar, art_stamp, text, text_width, SCALE
-from desk_world import DeskMind, SPAWNABLE, TILE_PX
+from desk_world import DeskMind, SPAWNABLE, TILE_PX, brain_stamp
 from window_rooms import Rooms
 from voice import Voice
 from describe import DescribeHead
@@ -45,6 +45,7 @@ from describe import DescribeHead
 LOG_DIR = os.path.join(os.environ.get("APPDATA", HERE), "ATSPlayground")
 FPS = 15
 BRAIN_HZ = 5                        # brain ticks a second at 1x speed
+BRAIN_CHECK_S = 30                  # how often to look for a newer brain.pt from training
 PLAYER_HZ = 8                       # player steps a second while an arrow is held
 ROOMS_EVERY = 0.5                   # seconds between re-reading the open windows
 VK_SHIFT, VK_CTRL, VK_A, VK_E, VK_F, VK_M = 0x10, 0x11, 0x41, 0x45, 0x46, 0x4D
@@ -144,6 +145,7 @@ class Playground:
         self.keys_was = set()
         self.drag = None                        # ("item", tile) | ("bot",) | ("player",), plus the cursor
         self.rooms_t = 0.0
+        self.brain_t = time.time()
         self.voice = Voice(self.mind.policy.hidden_size)
         self.thumb = (0.0, 0)                   # (until, +1 up / -1 down): its answer
         self.heard = (0.0, 0)                   # (until, +1/-1/0): a flash that your word landed
@@ -220,6 +222,21 @@ class Playground:
         if (x, y) != (a.x, a.y):
             self.player.jump(x, y)
             self.mind.world.blocked = {(x, y)}
+
+    def reload_brain_if_newer(self):
+        """Training saved a better brain: swap it in, keep the desk as it is."""
+        stamp = brain_stamp()
+        if stamp is None or stamp == self.mind.brain_stamp:
+            return
+        try:
+            self.mind.load_brain()
+        except Exception:
+            return                          # caught it mid-save; try again next check
+        h = self.mind.policy.hidden_size
+        if self.voice.head.out.in_features != h:      # it grew: the side heads start over
+            self.voice = Voice(h)
+            self.describe = DescribeHead.load(h)
+        self.brain_loaded = time.time()
 
     # ── windows as rooms ──
     def update_rooms(self):
@@ -329,6 +346,8 @@ class Playground:
         spawn = [(100 + i, label, False) for i, label in enumerate(SPAWNABLE)]
         items = [
             (1, f"Health {a.health:.0f}  ·  Hunger {a.hunger:.0f}  ·  ate {m.ate}×  ·  doing: {m.last_action}", False, False),
+            (43, "Brain: " + time.strftime("%H:%M", time.localtime(m.brain_stamp or 0))
+             + " (reloads itself when training saves)", False, False),
             None,
             ("Spawn here", spawn),
             (2, "Scatter 5 apples", False),
@@ -534,6 +553,9 @@ class Playground:
             if t - self.rooms_t >= ROOMS_EVERY:
                 self.rooms_t = t
                 self.update_rooms()
+                if t - self.brain_t >= BRAIN_CHECK_S:
+                    self.brain_t = t
+                    self.reload_brain_if_newer()
                 if art_stamp() != self.sheet.stamp:     # a sprite was saved in the editor
                     self.sheet = Sheet()
                     self.dirty = True

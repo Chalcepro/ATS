@@ -9,6 +9,9 @@ creatures themselves are not changed):
   splash  a shark in the water nearby
   chirp   a harmless animal, now and then - so "a sound" alone never means
           "run"; the brain has to learn which sounds do
+  music   (listening rung, half the rooms) a quiet tune under everything,
+          from nowhere in particular - real life is full of sound that doesn't
+          matter, and a growl has to be picked out of it (Chalce, 10-24)
 
 Only the nearest, loudest sound in a tick is heard. The waveforms are made
 here with plain numpy (no files, no model), run once through the ear and
@@ -45,6 +48,15 @@ def _wave(kind, rng):
     elif kind == "splash":               # a broadband burst that dies away, no pitch
         x = rng.standard_normal(n) * np.exp(-t * rng.uniform(5, 9))
         x = np.convolve(x, np.ones(3) / 3, "same")
+    elif kind == "music":                # a quiet tune: chords stepping on a beat, mid-high (no growl-low bass)
+        x = np.zeros(n)
+        beat = int(RATE * rng.uniform(0.11, 0.15))
+        roots = rng.choice([220.0, 247.0, 262.0, 294.0, 330.0], size=n // beat + 1)
+        for i, f0 in enumerate(roots):
+            a, b = i * beat, min(n, (i + 1) * beat)
+            tt = t[a:b] - t[a]
+            env = np.exp(-tt * 6)
+            x[a:b] = env * sum(np.sin(2 * np.pi * f0 * r * tt) for r in (1.0, 1.25, 1.5))
     elif kind == "chirp":                # short, high, rising notes
         x = np.zeros(n)
         for start in (0.0, 0.18):
@@ -56,15 +68,23 @@ def _wave(kind, rng):
     return (x / (np.abs(x).max() + 1e-9)).astype(np.float32)
 
 
-def heard(kind, dist):
-    """The 34 ear numbers for one sound at a distance in tiles (cached)."""
+MUSIC_LOUD = 0.06                                         # about as loud as a growl 6-7 tiles off
+
+
+def heard(kind, dist, music=False):
+    """The 34 ear numbers for one sound at a distance in tiles (cached), optionally
+    over the quiet tune. kind=None with music=True is the tune on its own."""
     d = min(int(dist), HEAR_RADIUS)
-    key = (kind, d, _rng.randrange(VARIANTS))
+    key = (kind, d, _rng.randrange(VARIANTS), bool(music))
     v = _cache.get(key)
     if v is None:
         rng = np.random.default_rng(zlib.crc32(repr(key).encode()))   # the same take every run (hash() isn't)
-        loud = 0.5 / (1.0 + 0.6 * d)                     # quieter with distance
-        v = _cache[key] = hear(_wave(kind, rng) * loud)
+        x = np.zeros(RATE // 2, np.float32)
+        if kind:
+            x = x + _wave(kind, rng) * (0.5 / (1.0 + 0.6 * d))       # quieter with distance
+        if music:
+            x = x + _wave("music", rng) * MUSIC_LOUD
+        v = _cache[key] = hear(x)
     return v
 
 

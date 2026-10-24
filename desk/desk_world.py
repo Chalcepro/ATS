@@ -141,22 +141,38 @@ class DeskWorld(World):
         return sorted(objs, key=lambda o: self.order.get((o[0], o[1]), 0))
 
 
+def brain_stamp(path=None):
+    """When brain.pt was last written (training replaces it whole, never half-written)."""
+    p = path or brain.DEFAULT_PATH
+    try:
+        return os.path.getmtime(p)
+    except OSError:
+        return None
+
+
 class DeskMind:
     """The trained brain living in a DeskWorld. step() is one brain tick."""
 
     def __init__(self, cols, rows, path=None):
-        shape = brain.saved_shape()
-        self.policy = RLPolicy(hidden_size=int(shape.get("hidden_size", config_rl.MIND_HIDDEN_SIZE)))
-        brain.load(self.policy, None, path=path)
-        self.policy.eval()
+        self.path = path
+        self.load_brain()
         torch.set_grad_enabled(False)
-        self.sl = SolutionLoop(policy=self.policy)
         self.env = ATSEnvironment(max_ticks=10 ** 9, vary_world=False, use_loop=False)
         self.cols, self.rows = cols, rows
         self.recent = deque(maxlen=10)      # its last 10 steps (2 s at 1x), for yes/no feedback
         self.ate = 0
         self._drain = 0.0               # extra hunger owed, in points
         self.reset()
+
+    def load_brain(self):
+        """(Re)open brain.pt. The playground calls this when training saves a new one."""
+        shape = brain.saved_shape(self.path)
+        policy = RLPolicy(hidden_size=int(shape.get("hidden_size", config_rl.MIND_HIDDEN_SIZE)))
+        brain.load(policy, None, path=self.path)
+        policy.eval()
+        self.policy = policy
+        self.sl = SolutionLoop(policy=policy)
+        self.brain_stamp = brain_stamp(self.path)
 
     def reset(self):
         self.env.reset()

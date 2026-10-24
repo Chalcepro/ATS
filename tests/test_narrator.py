@@ -7,7 +7,7 @@ from curriculum import CurriculumEnv, default_ladder
 L = default_ladder()
 # listening rung: hostile out of view and growling -> DANGER GROWL, its direction, FAR
 e = CurriculumEnv(next(s for s in L if s.name == "listening"), seed=5); e.reset()
-e.ax, e.ay, e.hostiles, e.critters = 2, 6, [(8, 6)], []
+e.ax, e.ay, e.hostiles, e.critters, e.music = 2, 6, [(8, 6)], [], False
 # each growl is one of a few takes and the odd one reads without a pitch, so judge over 20 ticks
 heard = 0
 for _ in range(20):

@@ -1274,12 +1274,15 @@ class CurriculumEnv:
                     and (best is None or d < best[0]):
                 best = (d, "chirp", cx - self.ax, cy - self.ay)
         out = [0.0] * config_rl.HEAR_DIM
+        music = getattr(self, "music", False)
         if best:
             d, kind, dx, dy = best
-            out[:-2] = [float(v) for v in sounds.heard(kind, d)]
+            out[:-2] = [float(v) for v in sounds.heard(kind, d, music)]
             n = max(abs(dx), abs(dy))
             out[-2:] = [dx / n, dy / n]
-        self.last_sound = best[1] if best else None
+        elif music:                             # just the tune, from nowhere in particular
+            out[:-2] = [float(v) for v in sounds.heard(None, 0, True)]
+        self.last_sound = best[1] if best else ("music" if music else None)
         return out
 
     # -- episode -----------------------------------------------------------
@@ -1406,6 +1409,8 @@ class CurriculumEnv:
         self.hits_taken = 0
         self.met = False          # did a hostile ever come within sight?
         self.critters = self._place(taken, 2) if s.listen else []
+        # half the listening rooms have a quiet tune playing under everything
+        self.music = bool(s.listen) and self.rng.random() < 0.5
         self.heard = None
 
         self.health = 100
