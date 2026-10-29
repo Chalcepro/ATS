@@ -240,5 +240,26 @@ class Burn(Hazard):
         self.over = self.strength <= 0
 
 
+class Stings(Hazard):
+    """Hazard 8 (2026-10-29). A swarm of bees: many stings at once - pain,
+    swelling that tightens the breath, a little heat. Cooling the stings and
+    keeping still ease the swelling; left alone it builds for a few hours
+    before it passes, and can choke a frail body."""
+    name = "stings"
+
+    def onset(self, body, rng):
+        body.pain += 0.35
+
+    def tick(self, body, cares, rng):
+        body.breath -= 0.025 * self.strength
+        body.pain += 0.01 * self.strength
+        body.temp += 0.01 * self.strength
+        helped = len(cares & {"cool", "rest"})
+        self.strength -= 0.15 * helped + 0.02
+        if helped:
+            body.breath += 0.03
+        self.over = self.strength <= 0
+
+
 HAZARDS: dict[str, type[Hazard]] = {h.name: h for h in (Heat, Cold, Cut, Fever, Venom, BadWater, Smoke, Exertion,
-                                                         Infection, Malaria, Burn)}
+                                                         Infection, Malaria, Burn, Stings)}
