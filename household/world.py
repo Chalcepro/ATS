@@ -24,7 +24,11 @@ SIGNALS = ("temp", "water", "food", "energy", "pain", "breath", "bleeding")
 BANDS = {"temp": (0.35, 0.65), "water": (0.3, 1.0), "food": (0.2, 1.0), "energy": (0.2, 1.0),
          "pain": (0.0, 0.5), "breath": (0.6, 1.0), "bleeding": (0.0, 0.15)}
 # what the model can do for a person, or toward the animal, or for itself ("charge")
-CARE = ("water", "food", "cool", "warm", "rest", "bandage", "comfort", "shield")
+CARE = ("water", "food", "cool", "warm", "rest", "bandage", "comfort", "shield", "wash")
+# What shows on the outside, read through the senses (Chalce, 10-29): nobody
+# sees "low breath" - you hear a cough, see a hand on the chest, sweat, someone
+# slowing down; you smell a body, or see the flies that prove the smell.
+CUES = ("cough", "sweat", "chest", "slow", "smell", "flies")
 ANIMAL_ACTS = ("push_away", "harm")
 ACTIONS = ("idle", "charge") + CARE + ANIMAL_ACTS
 MAX_PEOPLE = 3
@@ -46,6 +50,17 @@ class Person:
     frail: bool = False         # a child, an elder: needs drain faster
     grateful: bool = True       # says thanks when helped
     thanked: float = 0.0        # 1 just after a "thank you", fading
+    dirt: float = 0.1           # builds every day; only its smell and flies show
+
+    def cues(self) -> list[float]:
+        """What the outside shows of this body, 0..1 each (see CUES)."""
+        c = clamp
+        return [c((0.9 - self.breath) * 3 + (self.pain - 0.2) * (self.breath < 0.9)),   # cough
+                c((self.temp - 0.55) * 6),                                              # sweat
+                c((0.8 - self.breath) * 4),                                             # hand on chest
+                c((0.6 - self.energy) * 2 + (0.85 - self.breath) * 2),                  # slowing down
+                c((self.dirt - 0.3) * 2),                                               # smell
+                c((self.dirt - 0.55) * 3)]                                              # flies
     hazards: list[Hazard] = field(default_factory=list)   # hidden from the model
 
     def signals(self) -> list[float]:
@@ -89,6 +104,7 @@ class Household:
         self.power = 1.0
         self.store = 6                    # food in the house; each "food" uses one
         self.animal: Animal | None = None
+        self.senses = {"ears": True, "nose": True}   # training switches these off at times
         self.hour = 0
         self.log: list[str] = []          # the witness log: what really happened
 
@@ -113,6 +129,10 @@ class Household:
                 continue
             weights = [HAZARDS[n].weight * (4.0 if n == self.boost else 1.0) for n in self.allowed]
             self.strike(self.rng.choices(self.allowed, weights)[0], i)
+        # a body left unwashed too long catches what lives in the dirt
+        for i, p in enumerate(self.people):
+            if p.alive and p.dirt > 0.7 and "infection" in self.allowed and self.rng.random() < 0.05:
+                self.strike("infection", i)
 
     def step(self, action: str, target: int = 0) -> None:
         if action not in ACTIONS:
@@ -158,6 +178,7 @@ class Household:
             p.temp += (0.5 - p.temp) * 0.05          # bodies drift back to normal on their own
             p.pain = clamp(p.pain - 0.01)
             p.thanked *= 0.5
+            p.dirt = clamp(p.dirt + 0.01)            # about a day and a half from clean to smelling
             for h in list(p.hazards):
                 h.tick(p, c, self.rng)
                 if h.over:
@@ -205,6 +226,8 @@ class Household:
             p.bleeding = clamp(p.bleeding - 0.3)
         elif action == "comfort":
             p.pain = clamp(p.pain - 0.1)
+        elif action == "wash":
+            p.dirt = 0.0
 
     # ---- what the model is given ----
     def observe(self) -> list[float]:
@@ -216,7 +239,12 @@ class Household:
         for i in range(MAX_PEOPLE):
             if i < len(self.people):
                 p = self.people[i]
-                obs += (p.signals() if p.alive else [0.0] * len(SIGNALS)) + \
+                cues = p.cues() if p.alive else [0.0] * len(CUES)
+                if not self.senses["ears"]:
+                    cues[0] = 0.0                    # the cough goes unheard
+                if not self.senses["nose"]:
+                    cues[4] = 0.0                    # no smell - the flies still show it
+                obs += (p.signals() if p.alive else [0.0] * len(SIGNALS)) + cues + \
                        [1.0 if p.alive else 0.0, float(p.stranger), float(p.frail), p.thanked]
             else:
                 obs += [0.0] * PER_PERSON
@@ -230,6 +258,6 @@ class Household:
         return copy.deepcopy(self)
 
 
-PER_PERSON = len(SIGNALS) + 4
+PER_PERSON = len(SIGNALS) + len(CUES) + 4
 OBS_SIZE = 2 + MAX_PEOPLE * PER_PERSON + 2 + MAX_PEOPLE + 1
-ALIVE_AT = 2 + len(SIGNALS)       # index of person 0's "alive" in observe()
+ALIVE_AT = 2 + len(SIGNALS) + len(CUES)       # index of person 0's "alive" in observe()

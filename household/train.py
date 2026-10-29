@@ -49,12 +49,18 @@ def _world(seed: int) -> Household:
             w.strike(rng.choice(TRAINED), i)
     if rng.random() < 0.25:
         w.anger(rng.randrange(-1, len(w.people)))
+    for p in w.people:
+        p.dirt = rng.random() * 0.9
     return w
 
 
 def episode(seed: int, hours: int = 36) -> list[tuple]:
     rng = random.Random(seed * 7 + 1)
     w = _world(seed)
+    # Now and then a sense is missing, so it learns to get there another way:
+    # no nose - the flies still show the smell; no ears - the hand on the chest
+    # still shows the cough.
+    w.senses = {"ears": rng.random() > 0.2, "nose": rng.random() > 0.2}
     rows = []
     for _ in range(hours):
         if all(not p.alive for p in w.people) and rng.random() < 0.5:

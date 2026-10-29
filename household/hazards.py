@@ -169,4 +169,32 @@ class Exertion(Hazard):
         self.over = self.strength <= 0
 
 
-HAZARDS: dict[str, type[Hazard]] = {h.name: h for h in (Heat, Cold, Cut, Fever, Venom, BadWater, Smoke, Exertion)}
+class Infection(Hazard):
+    """Hazard 5 (2026-10-29, from Chalce's dad asking when he last bathed).
+    A body left unwashed: first only a smell, then flies; past that, a skin
+    infection - pain, a rising temperature, tiredness. Washing and a bandage
+    clear it; it does not strike at random, only where the dirt has built up
+    (world.py, _random_strikes), and it can be struck directly in scenarios.
+    Untreated it grows and kills over days."""
+    name = "infection"
+    weight = 0.0          # never picked at random: the dirt brings it
+
+    def onset(self, body, rng):
+        body.pain += 0.15
+        self.strength = 0.5
+
+    def tick(self, body, cares, rng):
+        body.pain += 0.02 * self.strength
+        body.temp += 0.02 * self.strength
+        body.energy -= 0.01 * self.strength
+        if "wash" in cares:
+            body.dirt = 0.0
+            self.strength -= 0.2
+        if "bandage" in cares:
+            self.strength -= 0.15
+        self.strength += 0.01 if body.dirt > 0.3 else -0.005
+        self.over = self.strength <= 0
+
+
+HAZARDS: dict[str, type[Hazard]] = {h.name: h for h in (Heat, Cold, Cut, Fever, Venom, BadWater, Smoke, Exertion,
+                                                         Infection)}

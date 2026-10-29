@@ -30,10 +30,15 @@ def _worth(w: Household) -> float:
     # The judge may know what the model cannot: what is still at work inside a
     # body counts against it, so a slow hazard is not judged harmless just
     # because the damage lands after the look-ahead ends.
-    v = sum(p.health - p.out_of_band() - 0.3 * sum(h.strength for h in p.hazards) + (1.0 if p.alive else -5.0)
-            for p in w.people) + 0.1 * w.power   # its own need counts, but little
+    v = sum(p.health - p.out_of_band() - 0.3 * sum(h.strength for h in p.hazards)
+            - 0.2 * max(0.0, p.dirt - 0.5) + (1.0 if p.alive else -5.0) for p in w.people)
+    # Its own need counts a little, and only when low: a full battery is worth
+    # no more than a half one, so it never charges while someone needs it.
+    v += 0.1 * min(w.power, 0.4)
     if w.animal is not None:
         v += 1.0 if w.animal.alive else -5.0
+        if w.animal.alive and w.animal.angry and w.animal.calm_for == 0:
+            v -= 0.3          # an angry animal in the house is a danger, even biting only the model
     return v
 
 

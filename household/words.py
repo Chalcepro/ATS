@@ -17,6 +17,7 @@ from household.world import Person
 
 
 VOCAB = ("hot", "cold", "thirsty", "hungry", "tired", "pain", "bleeding", "breathless",
+         "coughing", "sweating", "smelly",
          "hurt", "unwell", "healthy", "dead")
 
 
@@ -32,6 +33,10 @@ def narrate(p: Person) -> list[str]:
     if p.pain > 0.35: w.append("pain")
     if p.bleeding > 0.1: w.append("bleeding")
     if p.breath < 0.75: w.append("breathless")
+    cough, sweat, _, _, smell, flies = p.cues()
+    if cough > 0.4: w.append("coughing")
+    if sweat > 0.4: w.append("sweating")
+    if smell > 0.4 or flies > 0.3: w.append("smelly")
     if p.out_of_band() > 0 or p.health < 0.6:
         w.append("hurt")
     elif w or p.health < 0.85:

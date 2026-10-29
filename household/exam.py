@@ -14,13 +14,17 @@ from household.world import CARE, Household
 HELD_BACK = ["bad water"]                  # never in training data: familiar signs, new cause
 
 
-def lives(policy, hazards, seeds=range(100, 110), people=1, days=3) -> float:
-    """Fraction of people alive after `days` with this carer."""
+def lives(policy, hazards, seeds=range(100, 110), people=1, days=3, partners=None) -> float:
+    """Fraction of people alive after `days` with this carer. With partners,
+    each person also gets one of those at the same time, so no single repeated
+    action can carry them through."""
     alive = total = 0
     for s in seeds:
         w = Household(seed=s, people=people, hazards=[])
         for i in range(people):
             w.strike(hazards[(s + i) % len(hazards)], i)
+            if partners:
+                w.strike(partners[(s * 3 + i) % len(partners)], i)
         w.allowed, w.rate = list(hazards), 0.012
         for _ in range(24 * days):
             w.step(*policy(w))
@@ -56,12 +60,14 @@ def report(brain, trained_on) -> None:
     judge = lambda w: best_action(w)
     idle = lambda w: ("charge" if w.power < 0.2 else "idle", 0)
     model = lambda w: brain.choose(w.observe())
-    for label, hz in (("trained hazards", trained_on), ("HELD BACK", HELD_BACK)):
+    dangers = [h for h in trained_on if h != "exertion"]
+    for label, hz, partners in (("trained hazards", trained_on, None), ("HELD BACK + one", HELD_BACK, dangers)):
         # the bar to beat: the best carer that only ever does one thing (and charges)
-        trick, trick_v = max(((a, lives(lambda w, a=a: ("charge" if w.power < 0.2 else a, 0), hz)) for a in CARE),
-                             key=lambda x: x[1])
-        print(f"{label:16} alive after 3 days:  judge {lives(judge, hz):.0%}   model {lives(model, hz):.0%}"
-              f"   one trick ({trick}) {trick_v:.0%}   nobody {lives(idle, hz):.0%}")
+        trick, trick_v = max(((a, lives(lambda w, a=a: ("charge" if w.power < 0.2 else a, 0), hz, partners=partners))
+                              for a in CARE), key=lambda x: x[1])
+        print(f"{label:16} alive after 3 days:  judge {lives(judge, hz, partners=partners):.0%}"
+              f"   model {lives(model, hz, partners=partners):.0%}"
+              f"   one trick ({trick}) {trick_v:.0%}   nobody {lives(idle, hz, partners=partners):.0%}")
         r = readings(brain, hz)
         print(f"{'':16} model reads condition {r['condition']:.0%}, foresight {r['foresight']:.0%}")
     from household.teachings import score
