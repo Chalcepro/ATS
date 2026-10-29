@@ -221,5 +221,24 @@ class Malaria(Hazard):
         self.over = self.strength <= 0
 
 
+class Burn(Hazard):
+    """Hazard 7 (2026-10-29). A burn from the cooking fire: sharp pain at once,
+    heat in the skin, water lost through it. Cooling it straight away and a
+    clean bandage stop it getting worse; left alone the pain and thirst build
+    and, past the dirt line, it can turn to infection."""
+    name = "burn"
+
+    def onset(self, body, rng):
+        body.pain += 0.4
+        body.temp += 0.05
+
+    def tick(self, body, cares, rng):
+        body.pain += 0.015 * self.strength
+        body.water -= 0.02 * self.strength
+        body.dirt += 0.01 * self.strength
+        self.strength -= 0.12 * len(cares & {"cool", "bandage"}) + 0.01
+        self.over = self.strength <= 0
+
+
 HAZARDS: dict[str, type[Hazard]] = {h.name: h for h in (Heat, Cold, Cut, Fever, Venom, BadWater, Smoke, Exertion,
-                                                         Infection, Malaria)}
+                                                         Infection, Malaria, Burn)}
