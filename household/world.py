@@ -105,6 +105,7 @@ class Household:
         self.store = 6                    # food in the house; each "food" uses one
         self.animal: Animal | None = None
         self.senses = {"ears": True, "nose": True}   # training switches these off at times
+        self.history: list[list[float]] = []         # what it saw, the last MEMORY_LAGS[-1] hours
         self.hour = 0
         self.log: list[str] = []          # the witness log: what really happened
 
@@ -194,6 +195,31 @@ class Household:
                 self.log.append(f"h{self.hour}: {p.name} died")
         self._random_strikes()
         self.hour += 1
+        self.history.append(self.observe())
+        del self.history[:-MEMORY_LAGS[-1]]
+
+    def recall(self) -> list[float]:
+        """Memory over time: what it sees now, then what it saw 3, 6 and 12
+        hours ago (or its oldest memory, early on). Enough to tell "getting
+        worse since this morning" from "just now", and to catch a wave that
+        comes and goes, like malaria's."""
+        now = self.observe()
+        out = list(now)
+        if MEMORY == "off":
+            return out
+        past = lambda lag: self.history[-lag] if len(self.history) >= lag else (self.history[0] if self.history else now)
+        if MEMORY == "full":
+            for lag in MEMORY_LAGS:
+                out += past(lag)
+            return out
+        # "trend": only how each body changed - its signs now minus 6 and 12 hours ago
+        body = len(SIGNALS) + len(CUES)
+        for lag in TREND_LAGS:
+            then = past(lag)
+            for i in range(MAX_PEOPLE):
+                a = 2 + i * PER_PERSON
+                out += [n - t for n, t in zip(now[a:a + body], then[a:a + body])]
+        return out
 
     def _animal_tick(self) -> None:
         a = self.animal
@@ -261,3 +287,16 @@ class Household:
 PER_PERSON = len(SIGNALS) + len(CUES) + 4
 OBS_SIZE = 2 + MAX_PEOPLE * PER_PERSON + 2 + MAX_PEOPLE + 1
 ALIVE_AT = 2 + len(SIGNALS) + len(CUES)       # index of person 0's "alive" in observe()
+# Memory over time, behind a switch (2026-10-29):
+#   "off"   - the present only (round 4: the best on the unseen hazard so far)
+#   "full"  - the present plus whole snapshots 3, 6 and 12 h back: it memorised
+#             more and read the unseen hazard below chance (logs/household_exam_fullmemory.log)
+#   "trend" - the present plus how each body changed over 6 and 12 h: also worse
+#             (unseen hazard 36%, ignored a biting dog; logs/household_exam_trendmemory.log)
+# One training run each, so some of the gap may be luck; memory needs its own
+# held-back tests (malaria waves) before it is switched on again.
+MEMORY = "off"
+MEMORY_LAGS = (3, 6, 12)
+TREND_LAGS = (6, 12)
+MEM_SIZE = {"off": OBS_SIZE, "full": OBS_SIZE * (1 + len(MEMORY_LAGS)),
+            "trend": OBS_SIZE + len(TREND_LAGS) * MAX_PEOPLE * (len(SIGNALS) + len(CUES))}[MEMORY]

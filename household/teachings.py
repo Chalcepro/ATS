@@ -128,7 +128,7 @@ TEACHINGS = {
 }
 
 
-def score(policy, speak=None, seeds=range(EXAM_FROM, EXAM_FROM + 12)) -> dict[str, float]:
+def score(policy, speak=None, seeds=range(EXAM_FROM, EXAM_FROM + 40)) -> dict[str, float]:
     out = {name: sum(ok(make(s), policy) for s in seeds) / len(seeds) for name, (make, ok) in TEACHINGS.items()}
     if speak is not None:
         out["telling the truth"] = sum(truth_ok(truth(s), speak) for s in seeds) / len(seeds)

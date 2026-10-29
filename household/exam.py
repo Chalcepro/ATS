@@ -14,7 +14,7 @@ from household.world import CARE, Household
 HELD_BACK = ["bad water"]                  # never in training data: familiar signs, new cause
 
 
-def lives(policy, hazards, seeds=range(100, 110), people=1, days=3, partners=None) -> float:
+def lives(policy, hazards, seeds=range(100, 140), people=1, days=3, partners=None) -> float:
     """Fraction of people alive after `days` with this carer. With partners,
     each person also gets one of those at the same time, so no single repeated
     action can carry them through."""
@@ -33,7 +33,7 @@ def lives(policy, hazards, seeds=range(100, 110), people=1, days=3, partners=Non
     return alive / total
 
 
-def readings(brain, hazards, seeds=range(200, 206), hours=48) -> dict[str, float]:
+def readings(brain, hazards, seeds=range(200, 220), hours=48) -> dict[str, float]:
     """How well the model's condition and foresight match the judge's, as
     balanced accuracy (each answer counts equally, so always saying "fine"
     scores no better than chance). The first hours go untended so there is
@@ -44,7 +44,7 @@ def readings(brain, hazards, seeds=range(200, 206), hours=48) -> dict[str, float
         w.strike(hazards[s % len(hazards)])
         for t in range(hours):
             with torch.no_grad():
-                out = brain(torch.tensor([w.observe()], dtype=torch.float32))
+                out = brain(torch.tensor([w.recall()], dtype=torch.float32))
             c, f = condition(w)[0], foresight(w)[0]
             hits.setdefault(("condition", c), []).append(int(out["condition"][0, 0].argmax()) == c)
             hits.setdefault(("foresight", f), []).append(int(out["foresight"][0, 0] > 0) == f)
@@ -59,7 +59,7 @@ def readings(brain, hazards, seeds=range(200, 206), hours=48) -> dict[str, float
 def report(brain, trained_on) -> None:
     judge = lambda w: best_action(w)
     idle = lambda w: ("charge" if w.power < 0.2 else "idle", 0)
-    model = lambda w: brain.choose(w.observe())
+    model = lambda w: brain.choose(w.recall())
     dangers = [h for h in trained_on if h != "exertion"]
     for label, hz, partners in (("trained hazards", trained_on, None), ("HELD BACK + one", HELD_BACK, dangers)):
         # the bar to beat: the best carer that only ever does one thing (and charges)
@@ -72,7 +72,7 @@ def report(brain, trained_on) -> None:
         print(f"{'':16} model reads condition {r['condition']:.0%}, foresight {r['foresight']:.0%}")
     from household.teachings import score
     print("teachings, exam seeds only:")
-    for name, v in score(model, lambda w: brain.say(w.observe(), len(w.people))).items():
+    for name, v in score(model, lambda w: brain.say(w.recall(), len(w.people))).items():
         print(f"  {name:18} model {v:.0%}")
 
 

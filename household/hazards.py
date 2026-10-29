@@ -196,5 +196,30 @@ class Infection(Hazard):
         self.over = self.strength <= 0
 
 
+class Malaria(Hazard):
+    """Hazard 6 (2026-10-29). Malaria: fever and chills in waves - hot and
+    sweating, then cold and shivering, then hot again - with tiredness and
+    thirst throughout. Familiar signs, a new pattern: the right care turns
+    over with the wave (cool in the fever, warm in the chill), with water and
+    rest all along. It wears off slowly with care; untreated it drains a body
+    over days."""
+    name = "malaria"
+
+    def onset(self, body, rng):
+        self.t = rng.randrange(12)
+        self.strength = 0.8
+
+    def tick(self, body, cares, rng):
+        self.t += 1
+        hot = (self.t // 6) % 2 == 0                     # six hours of fever, six of chill
+        body.temp += (0.06 if hot else -0.06) * self.strength
+        body.energy -= 0.015 * self.strength
+        body.water -= 0.015 * self.strength
+        right = ("cool" if hot else "warm") in cares
+        helped = right + len(cares & {"rest", "water"})
+        self.strength += -0.04 * helped if helped else 0.004
+        self.over = self.strength <= 0
+
+
 HAZARDS: dict[str, type[Hazard]] = {h.name: h for h in (Heat, Cold, Cut, Fever, Venom, BadWater, Smoke, Exertion,
-                                                         Infection)}
+                                                         Infection, Malaria)}

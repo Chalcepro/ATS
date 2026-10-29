@@ -67,7 +67,7 @@ def episode(seed: int, hours: int = 36) -> list[tuple]:
             break
         act, tgt = best_action(w)
         words = [[int(v in narrate(p)) for v in VOCAB] for p in w.people]
-        rows.append((w.observe(), ACTIONS.index(act), tgt if act in CARE else -1,
+        rows.append((w.recall(), ACTIONS.index(act), tgt if act in CARE else -1,
                      condition(w), foresight(w), words))
         # walk on: mostly the judge's way, sometimes a beginner's mistake
         if rng.random() < 0.7:

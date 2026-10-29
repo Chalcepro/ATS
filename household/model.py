@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 
 from household.words import VOCAB
-from household.world import ACTIONS, MAX_PEOPLE, OBS_SIZE
+from household.world import ACTIONS, MAX_PEOPLE, MEM_SIZE
 
 MEANING = 16
 
@@ -23,7 +23,7 @@ MEANING = 16
 class HouseholdBrain(nn.Module):
     def __init__(self, hidden: int = 128):
         super().__init__()
-        self.body = nn.Sequential(nn.Linear(OBS_SIZE, hidden), nn.ReLU(), nn.Linear(hidden, hidden), nn.ReLU())
+        self.body = nn.Sequential(nn.Linear(MEM_SIZE, hidden), nn.ReLU(), nn.Linear(hidden, hidden), nn.ReLU())
         self.act = nn.Linear(hidden, len(ACTIONS))
         self.target = nn.Linear(hidden, MAX_PEOPLE)
         self.condition = nn.Linear(hidden, MAX_PEOPLE * 3)
