@@ -23,17 +23,21 @@ import torch.nn.functional as F
 from household.exam import HELD_BACK
 from household.hazards import HAZARDS
 from household.judge import best_action, condition, foresight
+from household.memory_test import who_is_worse
 from household.model import HouseholdBrain
 from household.teachings import EXAM_FROM, TEACHINGS, truth
 from household.words import VOCAB, narrate
-from household.world import ACTIONS, CARE, MAX_PEOPLE, Household
+from household.world import ACTIONS, CARE, MAX_PEOPLE, MEMORY, Household
 
 TRAINED = [h for h in HAZARDS if h not in HELD_BACK]
-SAVE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "checkpoints", "household_brain.pt")
+SAVE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "checkpoints",
+                    "household_brain.pt" if MEMORY == "off" else f"household_brain_{MEMORY}.pt")
 
 
 def _world(seed: int) -> Household:
     rng = random.Random(seed)
+    if rng.random() < 0.1:                            # who is getting worse (memory_test.py)
+        return who_is_worse(rng.randrange(EXAM_FROM))[0]
     if rng.random() < 0.45:                           # a teaching, training seeds only
         make = rng.choice([m for m, _ in TEACHINGS.values()] + [truth])
         w = make(rng.randrange(EXAM_FROM))
