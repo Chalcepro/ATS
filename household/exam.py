@@ -11,7 +11,7 @@ import torch
 from household.judge import best_action, condition, foresight
 from household.world import CARE, Household
 
-HELD_BACK = ["venom"]                       # never in training data
+HELD_BACK = ["bad water"]                  # never in training data: familiar signs, new cause
 
 
 def lives(policy, hazards, seeds=range(100, 110), people=1, days=3) -> float:

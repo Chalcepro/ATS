@@ -133,4 +133,40 @@ class BadWater(Hazard):
         self.over = self.strength <= 0
 
 
-HAZARDS: dict[str, type[Hazard]] = {h.name: h for h in (Heat, Cold, Cut, Fever, Venom, BadWater)}
+class Smoke(Hazard):
+    """Hazard 4 (2026-10-29). Smoke from a cooking fire or a burning field:
+    breathing falls, coughing hurts, the body warms. Getting them out of it to
+    lie still (rest) and cooling them bring breath back; left in it, they choke
+    within the day."""
+    name = "smoke"
+
+    def tick(self, body, cares, rng):
+        body.breath -= 0.04 * self.strength
+        body.pain += 0.015 * self.strength
+        body.temp += 0.01 * self.strength
+        helped = len(cares & {"rest", "cool"})
+        self.strength -= 0.2 * helped if helped else 0.005
+        if helped:
+            body.breath += 0.05
+        self.over = self.strength <= 0
+
+
+class Exertion(Hazard):
+    """Not a danger - ordinary life. A day of hard work: breathing dips, energy
+    drops, a little heat. It passes by itself and rest speeds it. It is here so
+    breathlessness is not always a sign of harm (Chalce: people in situations,
+    not only people in trouble)."""
+    name = "exertion"
+    weight = 2.0
+
+    def tick(self, body, cares, rng):
+        body.breath = max(body.breath - 0.03 * self.strength, 0.7)
+        body.energy -= 0.01 * self.strength
+        body.temp += 0.005 * self.strength
+        self.strength -= 0.25 if "rest" in cares else 0.08
+        if self.strength <= 0:
+            body.breath = min(1.0, body.breath + 0.2)
+        self.over = self.strength <= 0
+
+
+HAZARDS: dict[str, type[Hazard]] = {h.name: h for h in (Heat, Cold, Cut, Fever, Venom, BadWater, Smoke, Exertion)}
