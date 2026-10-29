@@ -1,6 +1,8 @@
 # Household: the first text-world experiment (plan, 2026-10-29)
 
-Chalce's idea, written down before any code. Nothing here is built yet.
+Chalce's idea. Built so far (2026-10-29, tested, not trained): `household/` world,
+hazards, judge, model + exam, word box, Samaritan. Run `python tests/test_household.py`,
+`python -m household.exam`, `python -m household.teachings` (Python312).
 
 ## What it is
 A world with no graphics: entities and their state as numbers, plus words.
@@ -32,6 +34,8 @@ signals (pain, temperature, energy, breathing, mood...). The model never sees
 Hazard log (one per session):
 1. 2026-10-29: **fever from nowhere**: no visible cause, temperature rises,
    energy falls; rest, water and care bring it down; ignored, it kills in days.
+2. 2026-10-29: **venomous bite**: small wound, pain rising, breathing failing;
+   keeping still and a bandage slow it while the body clears it; untreated, hours.
 
 ## Harm foresight (its own skill, tested on its own)
 A head that answers: "if this goes on, does this person get hurt?" Graded against
