@@ -296,7 +296,7 @@ ALIVE_AT = 2 + len(SIGNALS) + len(CUES)       # index of person 0's "alive" in o
 #             (unseen hazard 36%, ignored a biting dog; logs/household_exam_trendmemory.log)
 # One training run each, so some of the gap may be luck; memory needs its own
 # held-back tests (malaria waves) before it is switched on again.
-MEMORY = os.environ.get("HOUSEHOLD_MEMORY", "off")   # set the variable to try "full" or "trend"
+MEMORY = os.environ.get("HOUSEHOLD_MEMORY", "trend")   # trend won the 10-29 comparison; "off" and "full" kept behind the switch
 MEMORY_LAGS = (3, 6, 12)
 TREND_LAGS = (6, 12)
 MEM_SIZE = {"off": OBS_SIZE, "full": OBS_SIZE * (1 + len(MEMORY_LAGS)),

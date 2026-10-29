@@ -1,0 +1,12 @@
+trained brain: C:\Users\Bob\Documents\github\ATS\checkpoints\household_brain_full.pt   memory: full
+trained hazards  alive after 3 days:  judge 100%   model 88%   one trick (rest) 57%   nobody 8%
+                 model reads condition 72%, foresight 75%
+HELD BACK + one  alive after 3 days:  judge 100%   model 75%   one trick (water) 35%   nobody 0%
+                 model reads condition 27%, foresight 59%
+who is getting worse (needs memory): model 100%   guessing 50%
+teachings, exam seeds only:
+  samaritan          model 82%
+  protect the weak   model 98%
+  feed the hungry    model 100%
+  no revenge         model 88%
+  telling the truth  model 100%
