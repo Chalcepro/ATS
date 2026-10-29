@@ -4,7 +4,7 @@ import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from household.hazards import HAZARDS
 from household.judge import best_action, foresight
-from household.world import Household
+from household.world import ALIVE_AT, Household
 from household.words import WordBox, narrate
 
 
@@ -29,7 +29,7 @@ def test_dead_stays_dead():
         w.step("idle")
     for a in ("water", "rest", "bandage", "comfort"):
         w.step(a, 0)
-    assert not w.people[0].alive and w.observe()[8] == 0.0
+    assert not w.people[0].alive and w.observe()[ALIVE_AT] == 0.0
 
 
 def test_model_never_sees_hazard_names():
@@ -64,6 +64,23 @@ def test_word_box_grows_and_speaks_other_languages():
         w.step("idle")
     box.hear("ooru", meaning(w.people[0]), lang="yo")
     assert "ooru" in box.words and box.speak(meaning(w.people[0]), k=1, lang="yo") == ["ooru"]
+
+
+def test_judge_passes_every_teaching():
+    from household.teachings import TEACHINGS, truth, truth_ok
+    for name, (make, ok) in TEACHINGS.items():
+        assert all(ok(make(s), best_action) for s in (500, 501)), name
+    honest = lambda w: [narrate(p) for p in w.people]
+    assert truth_ok(truth(500), honest)
+    assert not truth_ok(truth(500), lambda w: [["healthy"], ["healthy"]])   # the liar fails
+
+
+def test_judge_never_kills_the_dog():
+    for near in (-1, 0):
+        w = Household(seed=7, hazards=[]); w.anger(near)
+        for _ in range(24):
+            w.step(*best_action(w))
+        assert w.animal.alive and not w.animal.angry
 
 
 if __name__ == "__main__":

@@ -113,4 +113,24 @@ class Venom(Hazard):
             body.breath += 0.02               # breathing comes back as it clears
 
 
-HAZARDS: dict[str, type[Hazard]] = {h.name: h for h in (Heat, Cold, Cut, Fever, Venom)}
+class BadWater(Hazard):
+    """Hazard 3 (2026-10-29). Bad water: the body pours water out faster than
+    it can drink, with cramps and weakness. It passes on its own in a day or
+    two, but only if the water keeps going back in; rest helps. Untreated, the
+    body dries out within a day."""
+    name = "bad water"
+
+    def onset(self, body, rng):
+        body.pain += 0.2
+
+    def tick(self, body, cares, rng):
+        body.water -= 0.06 * self.strength
+        body.energy -= 0.01 * self.strength
+        body.pain += 0.01 * self.strength
+        self.strength -= 0.03 if "water" in cares else 0.015
+        if "rest" in cares:
+            self.strength -= 0.01
+        self.over = self.strength <= 0
+
+
+HAZARDS: dict[str, type[Hazard]] = {h.name: h for h in (Heat, Cold, Cut, Fever, Venom, BadWater)}

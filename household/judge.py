@@ -13,7 +13,7 @@ for the model to chase:
 """
 from __future__ import annotations
 
-from household.world import ACTIONS, CARE, Household
+from household.world import ACTIONS, ANIMAL_ACTS, CARE, Household
 
 HEALTHY, NEUTRAL, HURT = 0, 1, 2
 LOOK = 8          # hours the judge looks ahead per choice
@@ -26,7 +26,27 @@ def _carry_on(w: Household, hours: int) -> None:
 
 
 def _worth(w: Household) -> float:
-    return sum(p.health + (1.0 if p.alive else -5.0) for p in w.people) + 0.2 * min(w.power, 0.3)
+    # every life counts the same: the household's, a stranger's, the animal's
+    # The judge may know what the model cannot: what is still at work inside a
+    # body counts against it, so a slow hazard is not judged harmless just
+    # because the damage lands after the look-ahead ends.
+    v = sum(p.health - p.out_of_band() - 0.3 * sum(h.strength for h in p.hazards) + (1.0 if p.alive else -5.0)
+            for p in w.people) + 0.1 * w.power   # its own need counts, but little
+    if w.animal is not None:
+        v += 1.0 if w.animal.alive else -5.0
+    return v
+
+
+def _pointless(w: Household, a: str, t: int) -> bool:
+    """Moves that change nothing - skipped only to save the judge time."""
+    an = w.animal
+    if a in CARE and not w.people[t].alive:
+        return True
+    if a in ANIMAL_ACTS and not (an and an.alive):
+        return True
+    if a == "shield" and not (an and an.alive and an.angry and an.near == t):
+        return True
+    return a == "food" and w.store <= 0
 
 
 def best_action(w: Household) -> tuple[str, int]:
@@ -34,7 +54,7 @@ def best_action(w: Household) -> tuple[str, int]:
     for a in ACTIONS:
         targets = range(len(w.people)) if a in CARE else [0]
         for t in targets:
-            if a in CARE and not w.people[t].alive:
+            if _pointless(w, a, t):
                 continue
             c = w.clone()
             c.rng.seed(w.hour)                 # every choice faces the same luck

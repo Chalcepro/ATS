@@ -16,6 +16,10 @@ import math
 from household.world import Person
 
 
+VOCAB = ("hot", "cold", "thirsty", "hungry", "tired", "pain", "bleeding", "breathless",
+         "hurt", "unwell", "healthy", "dead")
+
+
 def narrate(p: Person) -> list[str]:
     if not p.alive:
         return ["dead"]

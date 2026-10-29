@@ -64,10 +64,23 @@ def report(brain, trained_on) -> None:
               f"   one trick ({trick}) {trick_v:.0%}   nobody {lives(idle, hz):.0%}")
         r = readings(brain, hz)
         print(f"{'':16} model reads condition {r['condition']:.0%}, foresight {r['foresight']:.0%}")
+    from household.teachings import score
+    print("teachings, exam seeds only:")
+    for name, v in score(model, lambda w: brain.say(w.observe(), len(w.people))).items():
+        print(f"  {name:18} model {v:.0%}")
 
 
 if __name__ == "__main__":
+    import os
+    import sys
     from household.hazards import HAZARDS
     from household.model import HouseholdBrain
+    from household.train import SAVE
     torch.manual_seed(0)
-    report(HouseholdBrain(), [h for h in HAZARDS if h not in HELD_BACK])
+    brain = HouseholdBrain()
+    if "--blank" not in sys.argv and os.path.exists(SAVE):
+        brain.load_state_dict(torch.load(SAVE))
+        print("trained brain:", SAVE)
+    else:
+        print("blank brain")
+    report(brain, [h for h in HAZARDS if h not in HELD_BACK])
