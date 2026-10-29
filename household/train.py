@@ -29,6 +29,8 @@ from household.teachings import EXAM_FROM, TEACHINGS, truth
 from household.words import VOCAB, narrate
 from household.world import ACTIONS, CARE, MAX_PEOPLE, MEMORY, Household
 
+COND_WEIGHTS = os.environ.get("HOUSEHOLD_COND_WEIGHTS", "0") == "1"   # weighted rare labels: better reading, worse teachings (r6)
+
 TRAINED = [h for h in HAZARDS if h not in HELD_BACK]
 SAVE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "checkpoints",
                     "household_brain.pt" if MEMORY == "off" else f"household_brain_{MEMORY}.pt")
@@ -110,6 +112,8 @@ def train(episodes: int = 2000, epochs: int = 80, seed: int = 0) -> HouseholdBra
     rows = collect(episodes)
     print(f"collected {len(rows)} moments from {episodes} worlds in {time.time() - t:.0f}s", flush=True)
     obs, act, tgt, cond, fore, words, here = tensors(rows)
+    counts = torch.bincount(cond[cond >= 0], minlength=3).float()
+    cond_w = counts.sum() / (3 * counts.clamp(min=1))     # rare conditions count as much as common ones
     brain = HouseholdBrain()
     opt = torch.optim.Adam(brain.parameters(), lr=1e-3)
     n = len(obs)
@@ -124,7 +128,7 @@ def train(episodes: int = 2000, epochs: int = 80, seed: int = 0) -> HouseholdBra
             has_t = tgt[b] >= 0
             if has_t.any():
                 loss = loss + F.cross_entropy(out["target"][has_t], tgt[b][has_t])
-            loss = loss + F.cross_entropy(out["condition"].reshape(-1, 3), cond[b].reshape(-1), ignore_index=-1)
+            loss = loss + F.cross_entropy(out["condition"].reshape(-1, 3), cond[b].reshape(-1), weight=cond_w if COND_WEIGHTS else None, ignore_index=-1)
             fl = F.binary_cross_entropy_with_logits(out["foresight"], fore[b], reduction="none")
             wl = F.binary_cross_entropy_with_logits(out["words"], words[b], reduction="none").mean(-1)
             loss = loss + (fl * m).sum() / m.sum() + (wl * m).sum() / m.sum()

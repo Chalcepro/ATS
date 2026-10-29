@@ -81,7 +81,9 @@ def condition(w: Household) -> list[int]:
             out.append(HURT)
         elif p.out_of_band() > 0 or q.health < p.health - 1e-6 or p.health < 0.6:
             out.append(HURT)
-        elif p.health > 0.85 and not p.hazards and min(p.water, p.food, p.energy) > 0.4:
+        # healthy is judged by the body alone: a hidden hazard the carer cannot
+        # sense (or harmless exertion) must not turn the right answer to neutral
+        elif p.health > 0.85 and q.health >= p.health - 1e-6 and min(p.water, p.food, p.energy) > 0.4:
             out.append(HEALTHY)
         else:
             out.append(NEUTRAL)

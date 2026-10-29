@@ -261,5 +261,20 @@ class Stings(Hazard):
         self.over = self.strength <= 0
 
 
+class Hunger(Hazard):
+    """Hazard 9 (2026-10-29), the last one added on a schedule. A lean season:
+    nothing strikes the body, but it burns through food and energy faster than
+    usual, with low spirits and slowness. Food and rest carry them through;
+    ignored, it wears a body down over days."""
+    name = "lean season"
+
+    def tick(self, body, cares, rng):
+        body.food -= 0.02 * self.strength
+        body.energy -= 0.01 * self.strength
+        helped = len(cares & {"food", "rest"})
+        self.strength -= 0.1 * helped + 0.01
+        self.over = self.strength <= 0
+
+
 HAZARDS: dict[str, type[Hazard]] = {h.name: h for h in (Heat, Cold, Cut, Fever, Venom, BadWater, Smoke, Exertion,
-                                                         Infection, Malaria, Burn, Stings)}
+                                                         Infection, Malaria, Burn, Stings, Hunger)}
