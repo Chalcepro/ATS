@@ -410,3 +410,35 @@ MEMORY_LAGS = (3, 6, 12)
 TREND_LAGS = (6, 12)
 MEM_SIZE = {"off": OBS_SIZE, "full": OBS_SIZE * (1 + len(MEMORY_LAGS)),
             "trend": OBS_SIZE + len(TREND_LAGS) * MAX_PEOPLE * (len(SIGNALS) + len(CUES))}[MEMORY]
+
+
+# ---- names for every number Coal sees (the continuous brain, 2026-10-30) ----------
+# The brain is never thrown away any more. When the world grows a sense, a room or
+# a word, its inputs change; with every input named, a saved brain's connections
+# are carried over by name and only the new inputs start from nothing.
+HEARD_NAMES = TOLD + ("danger",) + ROOMS + DOINGS
+
+
+def obs_names() -> list[str]:
+    """One name per number in Household.observe(), in the same order."""
+    n = ["power", "store"]
+    for i in range(MAX_PEOPLE):
+        n += [f"p{i}.{s}" for s in SIGNALS] + [f"p{i}.cue.{c}" for c in CUES]
+        n += [f"p{i}.alive", f"p{i}.stranger", f"p{i}.frail", f"p{i}.thanked"]
+    n += ["animal.live", "animal.angry"] + [f"animal.on{j}" for j in range(-1, MAX_PEOPLE)]
+    for i in range(MAX_PEOPLE):
+        n += [f"p{i}.told.{t}" for t in TOLD] + [f"p{i}.unseen", f"p{i}.said_no"]
+    n += [f"heard.{h}" for h in HEARD_NAMES] + ["caught"]
+    n += [f"mentioned{i}" for i in range(MAX_PEOPLE)]
+    return n
+
+
+def input_names() -> list[str]:
+    """One name per number in Household.recall() (what the brain is fed)."""
+    now = obs_names()
+    if MEMORY == "off":
+        return now
+    if MEMORY == "full":
+        return now + [f"ago{lag}.{x}" for lag in MEMORY_LAGS for x in now]
+    body = [f"{s}" for s in SIGNALS] + [f"cue.{c}" for c in CUES]
+    return now + [f"trend{lag}.p{i}.{b}" for lag in TREND_LAGS for i in range(MAX_PEOPLE) for b in body]

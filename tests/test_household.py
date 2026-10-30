@@ -83,6 +83,23 @@ def test_judge_never_kills_the_dog():
         assert w.animal.alive and not w.animal.angry
 
 
+def test_brain_is_kept_by_name():
+    """The continuous brain: saved with the names of its inputs, loaded back it
+    acts exactly the same, and every input has its own name to be matched by
+    when the world grows."""
+    import os, tempfile, torch
+    import household.model as hm
+    from household.world import Household, input_names
+    w = Household(people=3)
+    b = hm.HouseholdBrain()
+    path = os.path.join(tempfile.mkdtemp(), "b.pt")
+    hm.save(b, path, 1)
+    b2, rounds = hm.load(path)
+    x = torch.tensor([w.recall()])
+    assert rounds == 1 and torch.allclose(b(x)["act"], b2(x)["act"])
+    assert len(set(input_names())) == len(input_names()) == len(w.recall())
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 
 from household.words import VOCAB
-from household.world import ACTIONS, MAX_PEOPLE, MEM_SIZE
+from household.world import ACTIONS, MAX_PEOPLE, MEM_SIZE, input_names
 
 MEANING = 16
 
@@ -48,3 +48,51 @@ class HouseholdBrain(nn.Module):
         """What it would say about each person: the words it is sure of."""
         out = self(torch.tensor([obs], dtype=torch.float32))["words"][0]
         return [[VOCAB[j] for j in range(len(VOCAB)) if out[i, j] > 0] for i in range(people)]
+
+
+# ---- one brain, kept for life ------------------------------------------------------------
+def save(brain: HouseholdBrain, path: str, rounds: int) -> None:
+    """The weights plus the names of what each input and output means, so a
+    later, bigger world can take this brain over instead of starting again."""
+    torch.save({"state": brain.state_dict(), "inputs": input_names(), "actions": list(ACTIONS),
+                "vocab": list(VOCAB), "hidden": brain.act.in_features, "rounds": rounds}, path)
+
+
+def load(path: str, old_inputs: list[str] | None = None) -> tuple[HouseholdBrain, int]:
+    """Load a brain into today's world. Inputs and outputs that still exist keep
+    their learned connections (matched by name); new ones start at zero, so on
+    day one the brain behaves exactly as before and only learns to use them.
+    old_inputs is for a brain saved before names were kept: the inputs it had."""
+    ck = torch.load(path)
+    if "state" not in ck:                           # an old bare state_dict
+        ck = {"state": ck, "inputs": old_inputs or input_names(), "actions": list(ACTIONS),
+              "vocab": list(VOCAB), "hidden": ck["act.weight"].shape[1], "rounds": 15}
+    brain = HouseholdBrain(ck["hidden"])
+    new = brain.state_dict()
+    old = ck["state"]
+    for k, v in old.items():
+        if k == "body.0.weight":                    # inputs, by name
+            pos = {name: j for j, name in enumerate(ck["inputs"])}
+            w = torch.zeros_like(new[k])
+            for j, name in enumerate(input_names()):
+                if name in pos:
+                    w[:, j] = v[:, pos[name]]
+            new[k] = w
+        elif k.startswith("act."):                  # actions, by name
+            keep = [i for i, a in enumerate(ACTIONS) if a in ck["actions"]]
+            w = new[k].clone() * 0 if k.endswith("weight") else torch.full_like(new[k], -5.0)
+            for i in keep:
+                w[i] = v[ck["actions"].index(ACTIONS[i])]
+            new[k] = w
+        elif k.startswith("words."):                # words it can say, by name
+            per = len(ck["vocab"])
+            w = torch.zeros_like(new[k])
+            for p in range(MAX_PEOPLE):
+                for i, word in enumerate(VOCAB):
+                    if word in ck["vocab"]:
+                        w[p * len(VOCAB) + i] = v[p * per + ck["vocab"].index(word)]
+            new[k] = w
+        elif k in new and new[k].shape == v.shape:
+            new[k] = v
+    brain.load_state_dict(new)
+    return brain, ck.get("rounds", 0)

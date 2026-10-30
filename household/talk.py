@@ -28,8 +28,8 @@ from household.world import Household
 
 
 def load() -> HouseholdBrain:
-    brain = HouseholdBrain()
-    brain.load_state_dict(torch.load(SAVE))
+    from household.model import load as load_brain
+    brain, _ = load_brain(SAVE)
     brain.eval()
     return brain
 

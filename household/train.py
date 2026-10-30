@@ -25,11 +25,12 @@ from household.hazards import HAZARDS
 from household.judge import best_action, condition, foresight
 from household.lexicon import ASKS, URGE, WARN, grow
 from household.memory_test import who_is_worse
-from household.model import HouseholdBrain
+from household.model import HouseholdBrain, load as load_brain, save as save_brain
 from household.teachings import EXAM_FROM, TEACHINGS, truth
 from household.words import VOCAB, narrate
 from household.world import ACTIONS, CARE, MAX_PEOPLE, MEMORY, ROOMS, Household
 
+FRESH = os.environ.get("HOUSEHOLD_FRESH", "0") == "1"   # only to start a new brain on purpose
 COND_WEIGHTS = os.environ.get("HOUSEHOLD_COND_WEIGHTS", "0") == "1"   # weighted rare labels: better reading, worse teachings (r6)
 
 TRAINED = [h for h in HAZARDS if h not in HELD_BACK]
@@ -168,15 +169,25 @@ def tensors(rows):
 
 
 def train(episodes: int = 3000, epochs: int = 80, seed: int = 0) -> HouseholdBrain:
-    torch.manual_seed(seed)
+    """Teach Coal another round. It is the SAME brain every time: the saved one
+    is loaded and keeps learning (fewer passes, a gentler step); only with no
+    brain saved yet does a blank one start."""
+    torch.manual_seed(seed + int(time.time()) % 1000)
     t = time.time()
     rows = collect(episodes)
     print(f"collected {len(rows)} moments from {episodes} worlds in {time.time() - t:.0f}s", flush=True)
     obs, act, tgt, cond, fore, words, here = tensors(rows)
     counts = torch.bincount(cond[cond >= 0], minlength=3).float()
     cond_w = counts.sum() / (3 * counts.clamp(min=1))     # rare conditions count as much as common ones
-    brain = HouseholdBrain()
-    opt = torch.optim.Adam(brain.parameters(), lr=1e-3)
+    rounds = 0
+    if os.path.exists(SAVE) and not FRESH:
+        brain, rounds = load_brain(SAVE)
+        epochs, lr = min(epochs, 30), 3e-4
+        print(f"continuing Coal after {rounds} rounds", flush=True)
+    else:
+        brain, lr = HouseholdBrain(), 1e-3
+        print("a new, blank brain", flush=True)
+    opt = torch.optim.Adam(brain.parameters(), lr=lr)
     n = len(obs)
     for ep in range(epochs):
         perm = torch.randperm(n)
@@ -200,7 +211,7 @@ def train(episodes: int = 3000, epochs: int = 80, seed: int = 0) -> HouseholdBra
         if ep % 10 == 9 or ep == epochs - 1:
             print(f"epoch {ep + 1}: loss {total / n:.3f}", flush=True)
     os.makedirs(os.path.dirname(SAVE), exist_ok=True)
-    torch.save(brain.state_dict(), SAVE)
+    save_brain(brain, SAVE, rounds + 1)
     print("saved", SAVE)
     return brain
 

@@ -110,9 +110,10 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     brain = HouseholdBrain()
     if "--blank" not in sys.argv and os.path.exists(SAVE):
-        brain.load_state_dict(torch.load(SAVE))
+        from household.model import load
         from household.world import MEMORY
-        print("trained brain:", SAVE, "  memory:", MEMORY)
+        brain, rounds = load(SAVE)
+        print("trained brain:", SAVE, f"  memory: {MEMORY}   rounds lived: {rounds}")
     else:
         print("blank brain")
     report(brain, [h for h in HAZARDS if h not in HELD_BACK])
