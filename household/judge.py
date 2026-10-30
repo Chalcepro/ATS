@@ -51,21 +51,39 @@ def _pointless(w: Household, a: str, t: int) -> bool:
         return True
     if a == "shield" and not (an and an.alive and an.angry and an.near == t):
         return True
+    if a == "see":
+        return t not in w.unseen
     return a == "food" and w.store <= 0
+
+
+def _after_seeing(w: Household, t: int) -> float:
+    best = None
+    for a in ("idle",) + CARE:
+        if a != "idle" and _pointless(w, a, t):
+            continue
+        c = w.clone()
+        c.step(a, t)
+        _carry_on(c, LOOK - 1)
+        v = _worth(c)
+        best = v if best is None else max(best, v)
+    return best
 
 
 def best_action(w: Household) -> tuple[str, int]:
     best, best_v = ("idle", 0), None
     for a in ACTIONS:
-        targets = range(len(w.people)) if a in CARE else [0]
+        targets = range(len(w.people)) if a in CARE or a == "see" else [0]
         for t in targets:
             if _pointless(w, a, t):
                 continue
             c = w.clone()
             c.rng.seed(w.hour)                 # every choice faces the same luck
             c.step(a, t)
-            _carry_on(c, LOOK)
-            v = _worth(c)
+            if a == "see":
+                v = _after_seeing(c, t)        # going to see is worth what it lets you do next
+            else:
+                _carry_on(c, LOOK)
+                v = _worth(c)
             if best_v is None or v > best_v + 1e-9:
                 best, best_v = (a, t), v
     return best

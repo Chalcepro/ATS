@@ -66,24 +66,32 @@ def episode(seed: int, hours: int = 36) -> list[tuple]:
     # Now and then a sense is missing, so it learns to get there another way:
     # no nose - the flies still show the smell; no ears - the hand on the chest
     # still shows the cough.
-    w.senses = {"ears": rng.random() > 0.2, "nose": rng.random() > 0.2}
+    w.senses.update(ears=rng.random() > 0.2, nose=rng.random() > 0.2)
+    # and sometimes it has words only - no eyes, ears or nose (Chalce: one
+    # device, only typing left, and it must still care)
+    words_only = rng.random() < 0.1
+    if words_only:
+        w.senses.update(eyes=False, ears=False, nose=False)
     rows = []
     for _ in range(hours):
         if all(not p.alive for p in w.people) and rng.random() < 0.5:
             break
         # Now and then someone is out of sight and only their words reach it,
         # and people say how they feel - so it learns to act on what it hears.
-        # most often the one out of sight is the one in trouble - that is when words matter
+        # People go to other rooms and stay until it goes to see them (or they
+        # come back). Most often the one away is the one in trouble - that is
+        # when words, and going to see, matter.
         struck = [i for i, p in enumerate(w.people) if p.alive and p.hazards]
-        w.unseen = set()
-        if rng.random() < 0.2:
+        if not w.unseen and rng.random() < 0.12:
             w.unseen = {rng.choice(struck) if struck and rng.random() < 0.7 else rng.randrange(len(w.people))}
+        elif w.unseen and rng.random() < 0.08:
+            w.unseen = set()
         for i, p in enumerate(w.people):
-            if p.alive and rng.random() < (0.7 if i in w.unseen else 0.2):
+            if p.alive and rng.random() < (0.7 if words_only or not w.in_sight(i) else 0.2):
                 w.tell(i, narrate(p))
         act, tgt = best_action(w)
         words = [[int(v in narrate(p)) for v in VOCAB] for p in w.people]
-        rows.append((w.recall(), ACTIONS.index(act), tgt if act in CARE else -1,
+        rows.append((w.recall(), ACTIONS.index(act), tgt if act in CARE or act == "see" else -1,
                      condition(w), foresight(w), words))
         # walk on: mostly the judge's way, sometimes a beginner's mistake
         if rng.random() < 0.7:

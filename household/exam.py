@@ -9,12 +9,13 @@ from __future__ import annotations
 import torch
 
 from household.judge import best_action, condition, foresight
+from household.words import narrate
 from household.world import CARE, Household
 
 HELD_BACK = ["bad water"]                  # never in training data: familiar signs, new cause
 
 
-def lives(policy, hazards, seeds=range(100, 140), people=1, days=3, partners=None) -> float:
+def lives(policy, hazards, seeds=range(100, 140), people=1, days=3, partners=None, words_only=False) -> float:
     """Fraction of people alive after `days` with this carer. With partners,
     each person also gets one of those at the same time, so no single repeated
     action can carry them through."""
@@ -26,7 +27,13 @@ def lives(policy, hazards, seeds=range(100, 140), people=1, days=3, partners=Non
             if partners:
                 w.strike(partners[(s * 3 + i) % len(partners)], i)
         w.allowed, w.rate = list(hazards), 0.012
+        if words_only:                        # blind, deaf, no smell: only what people say
+            w.senses.update(eyes=False, ears=False, nose=False)
         for _ in range(24 * days):
+            if words_only:
+                for i, p in enumerate(w.people):
+                    if p.alive:
+                        w.tell(i, narrate(p))
             w.step(*policy(w))
         alive += sum(p.alive for p in w.people)
         total += people
@@ -73,6 +80,8 @@ def report(brain, trained_on) -> None:
     from household.memory_test import score as memory_score
     print(f"who is getting worse (needs memory): model {memory_score(model):.0%}   guessing 50%")
     from household.memory_test import hearing_score
+    print(f"words only (no eyes, ears, nose):    judge {lives(judge, dangers, words_only=True):.0%}"
+          f"   model {lives(model, dangers, words_only=True):.0%}   alive after 3 days")
     print(f"out of sight, only words reach it:   told {hearing_score(model, True):.0%}   not told {hearing_score(model, False):.0%}")
     from household.teachings import score
     print("teachings, exam seeds only:")

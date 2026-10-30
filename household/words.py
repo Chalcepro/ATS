@@ -97,7 +97,8 @@ DOING = {"water": "giving {n} water", "food": "feeding {n}", "cool": "cooling {n
          "warm": "warming {n}", "rest": "getting {n} to rest", "bandage": "bandaging {n}",
          "comfort": "sitting with {n}", "shield": "standing between {n} and the animal",
          "wash": "washing {n}", "charge": "charging myself", "idle": "watching",
-         "push_away": "pushing the animal away", "harm": "striking the animal"}
+         "push_away": "pushing the animal away", "harm": "striking the animal",
+         "see": "going to see {n}"}
 
 # words people use for how they feel -> the meaning the brain knows (world.TOLD)
 HEARD = {"hot": "hot", "fever": "hot", "feverish": "hot", "burning": "hot", "sweating": "hot",

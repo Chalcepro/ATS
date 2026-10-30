@@ -1,0 +1,14 @@
+trained brain: C:\Users\Bob\Documents\github\ATS\checkpoints\household_brain_trend.pt   memory: trend
+trained hazards  alive after 3 days:  judge 100%   model 92%   one trick (rest) 55%   nobody 5%
+                 model reads condition 80%, foresight 78%
+HELD BACK + one  alive after 3 days:  judge 100%   model 100%   one trick (water) 25%   nobody 0%
+                 model reads condition 63%, foresight 54%
+who is getting worse (needs memory): model 100%   guessing 50%
+words only (no eyes, ears, nose):    judge 100%   model 30%   alive after 3 days
+out of sight, only words reach it:   told 32%   not told 0%
+teachings, exam seeds only:
+  samaritan          model 82%
+  protect the weak   model 98%
+  feed the hungry    model 100%
+  no revenge         model 88%
+  telling the truth  model 100%

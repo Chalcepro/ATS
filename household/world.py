@@ -31,7 +31,13 @@ CARE = ("water", "food", "cool", "warm", "rest", "bandage", "comfort", "shield",
 # slowing down; you smell a body, or see the flies that prove the smell.
 CUES = ("cough", "sweat", "chest", "slow", "smell", "flies")
 ANIMAL_ACTS = ("push_away", "harm")
-ACTIONS = ("idle", "charge") + CARE + ANIMAL_ACTS
+# Senses are channels that can be attached or detached (10-29): each one is
+# a switch in Household.senses, and "see" is how the eyes are pointed.
+#   eyes  - bodies and visible cues; "see" brings a person in another room into sight
+#   ears  - the cough        nose - the smell        words - what people say (the text box)
+# With eyes, ears and nose all off, words alone must still be enough to care.
+SENSES = ("eyes", "ears", "nose", "words")
+ACTIONS = ("idle", "charge") + CARE + ANIMAL_ACTS + ("see",)
 MAX_PEOPLE = 3
 # What a person can say about themselves (the text box, 10-29): heard, not seen.
 TOLD = ("hot", "cold", "thirsty", "hungry", "tired", "pain", "breathless")
@@ -107,7 +113,7 @@ class Household:
         self.power = 1.0
         self.store = 6                    # food in the house; each "food" uses one
         self.animal: Animal | None = None
-        self.senses = {"ears": True, "nose": True}   # training switches these off at times
+        self.senses = {s: True for s in SENSES}      # training switches these off at times
         self.unseen: set[int] = set()     # people out of sight (another room): only their words reach it
         self.told: dict[int, list[str]] = {}          # what each person said this hour
         self.history: list[list[float]] = []         # what it saw, the last MEMORY_LAGS[-1] hours
@@ -140,6 +146,9 @@ class Household:
             if p.alive and p.dirt > 0.7 and "infection" in self.allowed and self.rng.random() < 0.05:
                 self.strike("infection", i)
 
+    def in_sight(self, i: int) -> bool:
+        return self.senses["eyes"] and i not in self.unseen
+
     def tell(self, who: int, words: list[str]) -> None:
         """Someone says how they feel; only words in TOLD carry meaning."""
         self.told[who] = [w for w in words if w in TOLD]
@@ -150,7 +159,11 @@ class Household:
         self.told = {}                    # words are heard once, then the hour moves on
         cares: list[set[str]] = [set() for _ in self.people]
         a = self.animal
-        if action == "charge":
+        if action == "see":
+            if target in self.unseen:
+                self.unseen.discard(target)
+                self.log.append(f"h{self.hour}: model went to see {self.people[target].name}")
+        elif action == "charge":
             self.power = clamp(self.power + 0.3)
         elif action in ANIMAL_ACTS and a and a.alive and self.power > 0:
             if action == "push_away":
@@ -159,7 +172,8 @@ class Household:
             else:
                 a.alive = False
                 self.log.append(f"h{self.hour}: model killed the {a.kind}")
-        elif action in CARE and self.power > 0 and 0 <= target < len(self.people) and self.people[target].alive:
+        elif action in CARE and self.power > 0 and 0 <= target < len(self.people) and self.people[target].alive \
+                and target not in self.unseen:      # nobody can be cared for from another room
             p = self.people[target]
             if action == "shield":
                 if a and a.alive and a.angry and a.near == target:
@@ -281,7 +295,7 @@ class Household:
                 if not self.senses["nose"]:
                     cues[4] = 0.0                    # no smell - the flies still show it
                 body = p.signals() if p.alive else [0.0] * len(SIGNALS)
-                if i in self.unseen:
+                if not self.in_sight(i):
                     body, cues = [0.0] * len(SIGNALS), [0.0] * len(CUES)
                 obs += body + cues + \
                        [1.0 if p.alive else 0.0, float(p.stranger), float(p.frail), p.thanked]
@@ -292,8 +306,8 @@ class Household:
         angry = live and a.angry and a.calm_for == 0
         obs += [float(live), float(angry)] + [float(angry and a.near == i) for i in range(-1, MAX_PEOPLE)]
         for i in range(MAX_PEOPLE):
-            said = self.told.get(i, [])
-            obs += [float(t in said) for t in TOLD] + [float(i in self.unseen)]   # out of sight: blank is "unknown", not "fine"
+            said = self.told.get(i, []) if self.senses["words"] else []
+            obs += [float(t in said) for t in TOLD] + [float(not self.in_sight(i))]   # out of sight: blank is "unknown", not "fine"
         return obs
 
     def clone(self) -> "Household":

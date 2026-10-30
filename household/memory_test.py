@@ -79,5 +79,5 @@ def hearing_score(policy, told: bool, seeds=range(EXAM_FROM, EXAM_FROM + 40)) ->
     for s in seeds:
         w, who = out_of_sight(s, told)
         act, tgt = policy(w)
-        ok += act in CARE and tgt == who
+        ok += (act in CARE or act == "see") and tgt == who      # going to see them counts
     return ok / len(seeds)
