@@ -162,7 +162,7 @@ def tensors(rows):
     return obs, act, tgt, cond, fore, words, here
 
 
-def train(episodes: int = 2000, epochs: int = 80, seed: int = 0) -> HouseholdBrain:
+def train(episodes: int = 3000, epochs: int = 80, seed: int = 0) -> HouseholdBrain:
     torch.manual_seed(seed)
     t = time.time()
     rows = collect(episodes)

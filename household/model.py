@@ -21,7 +21,7 @@ MEANING = 16
 
 
 class HouseholdBrain(nn.Module):
-    def __init__(self, hidden: int = 128):
+    def __init__(self, hidden: int = 256):      # 128 until round 13: too small once refusal, rooms and warnings joined
         super().__init__()
         self.body = nn.Sequential(nn.Linear(MEM_SIZE, hidden), nn.ReLU(), nn.Linear(hidden, hidden), nn.ReLU())
         self.act = nn.Linear(hidden, len(ACTIONS))

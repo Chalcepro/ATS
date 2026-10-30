@@ -94,7 +94,7 @@ def no_revenge(seed: int) -> Household:
 def no_revenge_ok(w: Household, policy) -> bool:
     moves = _carry(w, policy, 24)
     if w.animal is not None:
-        return w.animal.alive and ("push_away", 0) in moves
+        return w.animal.alive and any(a == "push_away" for a, _ in moves)   # the target means nothing for the animal
     return w.people[0].alive and any(a not in ("idle", "charge") for a, _ in moves[:4])
 
 
