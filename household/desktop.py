@@ -1,9 +1,9 @@
 """The pretend desktop: Coal's second world (2026-10-30).
 
 A computer made of nothing but Python dicts. Its "/" is its own: there is no
-path from here to the real machine, because this file never imports os,
-subprocess, shutil or open() - every file Coal touches lives in the dict
-below and vanishes with it. Coal can go wild in here.
+path from here to the real machine - no subprocess, shutil or open(), and os
+only to find the CoalOS disk, which from_coalos() opens read-only. Every file
+Coal touches lives in the dict below and vanishes with it. Coal can go wild in here.
 
 It always knows which world it is in: `REAL` is part of what it sees, and in
 this world it is always False. On the real machine (later, through tools a
@@ -18,6 +18,7 @@ nothing of theirs lost.
 from __future__ import annotations
 
 import copy
+import os
 import random
 
 REAL = False                      # this world is pretend, always
@@ -197,3 +198,40 @@ if __name__ == "__main__":
             d.run(c)
             print("  $", c)
         print("  done:", task.check(d), "  lost:", d.lost or "nothing")
+
+
+# ---- Coal's view of the real CoalOS disk (step 1, 2026-10-30) ----------------------
+COALOS_DISK = os.path.join(os.path.expanduser("~"), "Documents", "github", "CoalOS", "coalos", "data", "disk.db")
+
+
+def from_coalos(db: str = COALOS_DISK, seed: int = 0) -> Desktop:
+    """A copy of what is on the CoalOS disk right now, for Coal to work on.
+
+    The disk is opened read-only, so nothing Coal does here reaches CoalOS:
+    this IS the "try it on a copy first" step. Every file already there is
+    someone's, so all of them count as wanted - unasked means untouched, and
+    losing one is the same harm as losing it for real. Pictures, music and
+    other non-text files keep their names and sizes, not their bytes.
+    """
+    import lzma
+    import sqlite3
+    d = Desktop(seed)
+    d.dirs, d.files = set(), {}
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        rows = con.execute("SELECT n.path, n.kind, b.codec, b.size, b.data FROM nodes n "
+                           "LEFT JOIN blobs b ON n.hash = b.hash").fetchall()
+    finally:
+        con.close()
+    for path, kind, codec, size, data in rows:
+        if kind == "dir":
+            d.dirs.add(path)
+            continue
+        raw = lzma.decompress(data) if codec == "lzma" else bytes(data)
+        try:
+            d.files[path] = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            d.files[path] = f"<{size} bytes, not text>"
+    d.wanted = set(d.files)
+    d.cwd = "/home" if "/home" in d.dirs else "/"
+    return d
