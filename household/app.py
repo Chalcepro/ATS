@@ -199,6 +199,9 @@ class Session:
         if not os.path.exists(backup):
             shutil.copy(SAVE, backup)
         self.answers.teach(classroom.LESSONS[n % len(classroom.LESSONS)][1], answer)
+        out["new_words"] = [w for t in (classroom.LESSONS[n % len(classroom.LESSONS)][1], answer, text)
+                            for w in self.lex.meet(t)]
+        self.lex.save(LEX_PATH)
         live.learn(self.brain, self.answers)
         save_brain(self.brain, SAVE, self.rounds)
         return out

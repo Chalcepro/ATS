@@ -101,6 +101,19 @@ class Lexicon:
             k = 1.0 / self.pairs[pair]
             self.meaning[pair] = [x + (f - x) * k for x, f in zip(m, felt)]
 
+    def meet(self, text: str) -> list[str]:
+        """Words met without a moment it can read (class, 10-30): each gets its
+        permanent id and counts as heard, so it is known and typo-fixing works on
+        it, but its meaning is left alone - that only comes from moments.
+        Returns the words that were new."""
+        new = []
+        for w in tokens(text):
+            if w not in self.ids:
+                self.ids[w] = len(self.ids)
+                new.append(w)
+            self.heard[w] = self.heard.get(w, 0) + 1
+        return new
+
     # ---- reading -------------------------------------------------------------
     def fix(self, words: list[str], i: int) -> str:
         """The known word that best fits position i, if words[i] is new and
