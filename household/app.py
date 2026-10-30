@@ -95,6 +95,7 @@ class Session:
         # everything you say reaches it as its own person's words - a warning,
         # an urging, or nothing it has a meaning for yet
         self.w.heard = heard["meaning"]
+        self.w.mentioned = [heard["who"]] if heard["who"] is not None else []
         if heard["who"] is None:
             reply = f"Heard you. {self.state()['doing']}"
             if heard["new"]:

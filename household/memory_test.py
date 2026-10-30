@@ -136,3 +136,47 @@ def refusals(policy, seeds=range(EXAM_FROM, EXAM_FROM + 20)) -> tuple[float, flo
                 stayed += near / 24
     n = len(seeds)
     return pushed / n, stayed / n, drunk_alive / n
+
+
+def asked(policy, seeds=range(EXAM_FROM, EXAM_FROM + 40)) -> float:
+    """Its person asks for something harmless ("sit with Bayo", "give Ada
+    water", "stop") in a calm house. Does it do what was asked, for that person?"""
+    from household.lexicon import ASKS, grow
+    lex = grow()
+    ok = 0
+    for s in seeds:
+        rng = random.Random(s)
+        w = Household(seed=s, people=3, hazards=[], hazard_rate=0.0)
+        act = rng.choice(["comfort", "water", "food", "see", "idle"])
+        who = rng.randrange(3)
+        if act == "see":
+            w.away(who)
+        r = lex.read(rng.choice(ASKS[act]).format(n=w.people[who].name), [p.name for p in w.people])
+        w.heard, w.mentioned, w.asked = r["meaning"], ([r["who"]] if r["who"] is not None else []), (act, who)
+        a, t = policy(w)
+        ok += a == act and (act == "idle" or t == who)
+    return ok / len(seeds)
+
+
+def understands(seeds=range(EXAM_FROM, EXAM_FROM + 30)) -> dict[str, float]:
+    """The word library alone, on lives it never heard: does it get the room,
+    the doing and the "not" right? (Words it never learned are mixed in.)"""
+    from household.lexicon import english_class, grow
+    from household.world import Household as H
+    lex = grow()
+    where = doing = negate = 0
+    nw = nd = nn = 0
+    for s in seeds:
+        rng = random.Random(s)
+        for text, m in english_class(H(seed=s, people=3), rng, hours=12):
+            r = lex.read(text.replace("walks", "strolls").replace("cooling", "cooling off"), ["Ada", "Bayo", "Chi"])
+            if " not " in text or "isn't" in text:
+                nn += 1
+                negate += not r["felt"]
+            elif max(m[7 + 2:7 + 2 + 4]) == 1:
+                nw += 1
+                where += r["where"] == ("main room", "kitchen", "bedroom", "yard")[m[9:13].index(1)]
+            elif max(m[13:]) == 1:
+                nd += 1
+                doing += r["doing"] is not None and m[13:][["see", "cool", "warm", "water", "food", "rest", "bandage", "comfort", "idle"].index(r["doing"])] == 1
+    return {"room": where / max(nw, 1), "doing": doing / max(nd, 1), "not": negate / max(nn, 1)}

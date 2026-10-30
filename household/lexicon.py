@@ -24,12 +24,22 @@ import os
 import random
 import re
 
-from household.world import TOLD, Person
+from household.world import DOINGS, ROOMS, TOLD, Person
 
 # What a word can come to mean: how the speaker felt, then whether the
 # place being talked about turned out dangerous. Words are not told which;
 # they land wherever they kept turning up.
-FEATURES = TOLD + ("danger",)
+FEATURES = TOLD + ("danger",) + ROOMS + DOINGS
+DANGER = len(TOLD)
+FEEL = slice(0, len(TOLD))
+ROOM = slice(DANGER + 1, DANGER + 1 + len(ROOMS))
+DOING = slice(ROOM.stop, ROOM.stop + len(DOINGS))
+
+
+def moment(feel=(), danger: float = 0.0, room: str | None = None, doing: str | None = None) -> list[float]:
+    """A moment as the library stores it."""
+    return ([float(t in feel) for t in TOLD] + [danger] + [float(r == room) for r in ROOMS]
+            + [float(d == doing) for d in DOINGS])
 # Typos: by default the library learns them like any new word, from where
 # they turn up ("freezng" said while freezing ends up meaning cold). The old
 # spelling-distance fixer is kept behind this switch.
@@ -76,8 +86,14 @@ class Lexicon:
             m = self.meaning.setdefault(w, list(felt))
             k = 1.0 / self.heard[w]
             self.meaning[w] = [x + (f - x) * k for x, f in zip(m, felt)]
+        # pairs of words are learned as units too, so "not cold" can come to
+        # mean something other than "cold" - from use, not from a grammar rule
         for a, b in zip(words, words[1:]):
-            self.pairs[f"{a} {b}"] = self.pairs.get(f"{a} {b}", 0) + 1
+            pair = f"{a} {b}"
+            self.pairs[pair] = self.pairs.get(pair, 0) + 1
+            m = self.meaning.setdefault(pair, list(felt))
+            k = 1.0 / self.pairs[pair]
+            self.meaning[pair] = [x + (f - x) * k for x, f in zip(m, felt)]
 
     # ---- reading -------------------------------------------------------------
     def fix(self, words: list[str], i: int) -> str:
@@ -108,32 +124,44 @@ class Lexicon:
         who = next((i for i, n in enumerate(names) if n.lower() in words), None)
         fixed, new, felt = {}, [], [0.0] * len(FEATURES)
         weight = 0.0
+        skip = False
         for i, w in enumerate(words):
+            if skip:
+                skip = False
+                continue
             if names and w in (n.lower() for n in names):
                 continue
             c = self.fix(words, i)
+            pair = f"{c} {words[i + 1]}" if i + 1 < len(words) else ""
+            if self.pairs.get(pair, 0) >= 3 and pair in self.meaning:
+                c, skip = pair, True               # a known pair reads as one unit
             if c != w:
                 fixed[w] = c
             if c in STOP:
                 continue
-            if self.heard.get(c, 0) < 2:
+            if self.heard.get(c, 0) < 2 and self.pairs.get(c, 0) < 3:
                 new.append(w)                     # kept for later, but no meaning yet
                 continue
             # what is unusual about how people felt when they said it
             # feelings: what is unusual about them; danger: as heard, uncentred -
             # most talk is about nothing dangerous, so centring made every
             # word that ever came near a room sound like a warning
-            m = [x - u for x, u in zip(self.meaning[c][:-1], self.usual[:-1])] + [self.meaning[c][-1]]
+            mc = self.meaning[c]
+            m = [x - u for x, u in zip(mc[FEEL], self.usual[FEEL])] + mc[DANGER:]
             # a word that comes with one feeling ("tight") counts for more
             # than one heard with many ("need")
-            sure = (1 - 1 / (1 + self.heard[c])) * max(abs(x) for x in m) ** 2
+            n = self.heard.get(c) or self.pairs.get(c, 0)
+            sure = (1 - 1 / (1 + n)) * max(abs(x) for x in m) ** 2
             felt = [f + sure * x for f, x in zip(felt, m)]
             weight += sure
         if weight:
             felt = [f / weight for f in felt]
         said = [t for t, f in zip(TOLD, felt) if f > 0.25]
+        rooms, doings = felt[ROOM], felt[DOING]
+        where = ROOMS[rooms.index(max(rooms))] if max(rooms) > 0.35 else None
+        doing = DOINGS[doings.index(max(doings))] if max(doings) > 0.35 else None
         return {"who": who, "felt": said, "fixed": fixed, "new": new, "meaning": felt,
-                "danger": felt[-1]}
+                "danger": felt[DANGER], "where": where, "doing": doing}
 
     # ---- keeping it ----------------------------------------------------------
     def save(self, path: str) -> None:
@@ -180,7 +208,7 @@ def felt_by(p: Person, rng: random.Random) -> list[float]:
     felt = {t for t in TOLD if t in shown} | ({"refuse"} if p.refusing else set())
     if "hot" in felt and rng.random() < 0.25:
         felt = (felt - {"hot"}) | {"cold"}
-    return [float(t in felt) for t in TOLD] + [0.0]
+    return moment(felt)
 
 
 def speak_for(p: Person, rng: random.Random) -> tuple[str, list[float]]:
@@ -214,8 +242,56 @@ def grow(lives: int = 400, seed: int = 0) -> Lexicon:
             danger = rng.random() < 0.5
             heeded = rng.random() < 0.85              # people are not always right
             phrase = rng.choice(WARN if danger == heeded else URGE)
-            lex.learn(phrase, [0.0] * len(TOLD) + [float(danger)])
+            lex.learn(phrase, moment(danger=float(danger)))
+        for text, m in english_class(w, rng):
+            lex.learn(text, m)
     return lex
+
+
+# ---- the English class (Chalce, 10-30): its teacher narrates what is really happening ----
+# Simple sentences, each said at the moment it is true, so every word lands
+# on the room, the doing or the feeling it goes with. The teacher varies its
+# words; the library is never told which word means what.
+MOVE = ["walks to", "goes to", "heads to", "runs to", "is going to", "went into"]
+DO = {"cool": ["cooling", "cooling down", "fanning"], "warm": ["warming", "covering", "wrapping up"],
+      "water": ["giving water to", "bringing a drink to"], "food": ["feeding", "bringing food to"],
+      "rest": ["letting", "settling"], "bandage": ["bandaging", "dressing the wound of"],
+      "comfort": ["sitting with", "staying with", "keeping company with"], "see": ["going to see", "checking on"],
+      "idle": ["waiting", "watching", "staying put"]}
+ASKS = {"cool": ["cool {n} down", "{n} needs cooling"], "warm": ["warm {n} up", "cover {n}"],
+        "water": ["give {n} water", "{n} needs a drink"], "food": ["feed {n}", "get {n} something to eat"],
+        "bandage": ["bandage {n}", "dress the wound"], "comfort": ["sit with {n}", "stay with {n}"],
+        "see": ["go and see {n}", "check on {n}", "go to {n}"], "idle": ["stop", "wait", "stay here", "hold on"]}
+NEGATE = ["{n} is not {f}", "{n} isn't {f}", "{n} is not {f} any more"]
+
+
+def english_class(w, rng: random.Random, hours: int = 24) -> list[tuple[str, list[float]]]:
+    """Lessons from one household life: who goes where, what is being done,
+    what someone is not feeling, and the room names shown on entering."""
+    from household.words import narrate
+    out = []
+    w.wander = 0.1
+    for _ in range(hours):
+        before = [p.room for p in w.people]
+        act = rng.choice(("idle", "see") + tuple(ASKS))
+        who = rng.randrange(len(w.people))
+        n = w.people[who].name
+        if rng.random() < 0.5:                    # its person asks for it, then it happens
+            out.append((rng.choice(ASKS[act]).format(n=n), moment(doing=act)))
+        w.step(act if act in ("idle", "see") or w.people[who].alive else "idle", who)
+        out.append((f"coal is {rng.choice(DO[act])} {n}" if act != "idle" else f"coal is {rng.choice(DO[act])}",
+                    moment(doing=act)))
+        for label in w.labels:                    # the room's name, shown on entering
+            out.append((label, moment(room=label)))
+        for p, was in zip(w.people, before):
+            if p.room != was:
+                out.append((f"{p.name} {rng.choice(MOVE)} the {p.room}", moment(room=p.room)))
+        p = rng.choice(w.people)
+        shown = narrate(p)
+        absent = [f for f in ("hot", "cold", "thirsty", "hungry", "tired") if f not in shown]
+        if absent and rng.random() < 0.5:
+            out.append((rng.choice(NEGATE).format(n=p.name, f=rng.choice(absent)), moment()))
+    return out
 
 
 if __name__ == "__main__":

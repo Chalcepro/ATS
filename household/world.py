@@ -137,6 +137,11 @@ class Household:
         self.heard: list[float] = []      # what its own person said this hour, as a meaning (lexicon.FEATURES)
         self.labels: list[str] = []       # words shown to it this hour (a room's name on entering)
         self.refused: list[int] = []      # who said no this hour
+        self.mentioned: list[int] = []    # who its person named this hour
+        # What its person asked for (act, who) - hidden from Coal like a hazard;
+        # Coal only has the words. The judge counts doing it as worth something,
+        # but not more than anyone's health: it listens, and it still thinks.
+        self.asked: tuple[str, int] | None = None
         self.told: dict[int, list[str]] = {}          # what each person said this hour
         self.history: list[list[float]] = []         # what it saw, the last MEMORY_LAGS[-1] hours
         self.hour = 0
@@ -197,7 +202,7 @@ class Household:
         if action not in ACTIONS:
             raise ValueError(action)
         self.told = {}                    # words are heard once, then the hour moves on
-        self.heard, self.labels, self.refused = [], [], []
+        self.heard, self.labels, self.refused, self.mentioned, self.asked = [], [], [], [], None
         if self.caught:                   # stuck: the hour passes without it
             self.caught -= 1
             action = "idle"
@@ -378,6 +383,7 @@ class Household:
         # its own person's words, as a meaning; and whether it is stuck
         heard = self.heard if self.senses["words"] else []
         obs += (list(heard) + [0.0] * HEARD_SIZE)[:HEARD_SIZE] + [float(self.caught > 0)]
+        obs += [float(i in self.mentioned and self.senses["words"]) for i in range(MAX_PEOPLE)]
         return obs
 
     def clone(self) -> "Household":
@@ -385,8 +391,11 @@ class Household:
 
 
 PER_PERSON = len(SIGNALS) + len(CUES) + 4
-HEARD_SIZE = len(TOLD) + 1                     # lexicon.FEATURES: the feelings, then danger
-OBS_SIZE = 2 + MAX_PEOPLE * PER_PERSON + 2 + MAX_PEOPLE + 1 + MAX_PEOPLE * (len(TOLD) + 2) + HEARD_SIZE + 1
+# What a heard word can come to mean (lexicon.FEATURES): how someone feels,
+# whether a place is dangerous, which room, and what is being done.
+DOINGS = ("see", "cool", "warm", "water", "food", "rest", "bandage", "comfort", "idle")
+HEARD_SIZE = len(TOLD) + 1 + len(ROOMS) + len(DOINGS)
+OBS_SIZE = 2 + MAX_PEOPLE * PER_PERSON + 2 + MAX_PEOPLE + 1 + MAX_PEOPLE * (len(TOLD) + 2) + HEARD_SIZE + 1 + MAX_PEOPLE
 ALIVE_AT = 2 + len(SIGNALS) + len(CUES)       # index of person 0's "alive" in observe()
 # Memory over time, behind a switch (2026-10-29):
 #   "off"   - the present only (round 4: the best on the unseen hazard so far)

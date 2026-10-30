@@ -23,7 +23,7 @@ import torch.nn.functional as F
 from household.exam import HELD_BACK
 from household.hazards import HAZARDS
 from household.judge import best_action, condition, foresight
-from household.lexicon import URGE, WARN, grow
+from household.lexicon import ASKS, URGE, WARN, grow
 from household.memory_test import who_is_worse
 from household.model import HouseholdBrain
 from household.teachings import EXAM_FROM, TEACHINGS, truth
@@ -127,6 +127,11 @@ def episode(seed: int, hours: int = 36) -> list[tuple]:
             w.heard, known = lex.read(rng.choice(WARN), [])["meaning"], True
         elif w.unseen and rng.random() < 0.1:
             w.heard = lex.read(rng.choice(URGE), [])["meaning"]
+        elif rng.random() < 0.15:                  # its person asks for something
+            act = rng.choice(sorted(ASKS))
+            who = rng.randrange(len(w.people))
+            r = lex.read(rng.choice(ASKS[act]).format(n=w.people[who].name), [p.name for p in w.people])
+            w.heard, w.mentioned, w.asked = r["meaning"], ([r["who"]] if r["who"] is not None else []), (act, who)
         act, tgt = best_action(w, danger_belief=0.85 if known else 0.0)
         words = [[int(v in narrate(p)) for v in VOCAB] for p in w.people]
         rows.append((w.recall(), ACTIONS.index(act), tgt if act in CARE or act == "see" else -1,

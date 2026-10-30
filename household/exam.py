@@ -79,6 +79,10 @@ def report(brain, trained_on) -> None:
         print(f"{'':16} model reads condition {r['condition']:.0%}, foresight {r['foresight']:.0%}")
     from household.memory_test import score as memory_score
     print(f"who is getting worse (needs memory): model {memory_score(model):.0%}   guessing 50%")
+    from household.memory_test import asked, understands
+    print(f"does what its person asks (harmless asks): judge {asked(judge):.0%}   model {asked(model):.0%}")
+    u = understands()
+    print(f"word library on unseen lives: room {u['room']:.0%}   doing {u['doing']:.0%}   \"not\" {u['not']:.0%}")
     from household.memory_test import refusals
     for label, pol in (("judge", judge), ("model", model)):
         pushed, stayed, drunk = refusals(pol)

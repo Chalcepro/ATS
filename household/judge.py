@@ -112,6 +112,8 @@ def best_action(w: Household, danger_belief: float = 1.0) -> tuple[str, int]:
             v = _value(safe, a, t) if p < 1.0 else 0.0
             if p > 0.0:
                 v = p * _value(w, a, t) + (1 - p) * v
+            if w.asked and a == w.asked[0] and (a == "idle" or t == w.asked[1]):
+                v += 0.4                       # its person asked for this
             if best_v is None or v > best_v + 1e-9:
                 best, best_v = (a, t), v
     return best
