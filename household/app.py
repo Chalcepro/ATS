@@ -21,6 +21,7 @@ import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from household import classroom
 from household.judge import HURT, condition
 from household.lexicon import Lexicon, felt_by, grow
 from household.talk import load
@@ -38,6 +39,8 @@ DIARY = os.path.join(os.path.dirname(SAVE), "coal_diary.txt")   # every line Coa
 # the words Whisper made of it. Whisper is the teacher here, the way the judge is in
 # training: these pairs are what Coal will learn to hear words straight from sound with.
 SOUNDS = os.path.join(os.path.dirname(SAVE), "coal_sounds.jsonl")
+CLASS = os.path.join(os.path.dirname(SAVE), "coal_class.jsonl")      # every class answer, raw
+WATCH = os.path.join(os.path.dirname(SAVE), "coal_watch.jsonl")      # what the person's pointer did in CoalOS
 
 
 class Session:
@@ -170,6 +173,33 @@ class Session:
             return about(who)
         return " ".join(about(i) for i in range(len(names)))
 
+    def class_answer(self, n: int) -> str:
+        """Coal's go at a lesson, before it sees yours. It has no understanding of the
+        question yet: it can only recall what the teacher said when it last met the
+        most similar question in class, or say it does not know."""
+        q = set(classroom.plain(classroom.LESSONS[n % len(classroom.LESSONS)][1]).split())
+        best, score = None, 0.5
+        if os.path.exists(CLASS):
+            for line in open(CLASS, encoding="utf-8"):
+                r = json.loads(line)
+                if r["who"] != "teacher":
+                    continue
+                past = set(classroom.plain(r["question"]).split())
+                s = len(q & past) / max(len(q | past), 1)
+                if s > score:
+                    best, score = r["raw"], s
+        return best or "I don't know yet."
+
+    def lesson(self, n: int, text: str) -> dict:
+        coal = self.class_answer(n)
+        out = {"you": classroom.mark(n, text), "coal": {"text": coal, **classroom.mark(n, coal)}}
+        classroom.keep(CLASS, n, "coal", coal, out["coal"])
+        classroom.keep(CLASS, n, "chalce", text, out["you"])
+        answer = classroom.LESSONS[n % len(classroom.LESSONS)][2][0]
+        classroom.keep(CLASS, n, "teacher", answer, {"verdict": "right", "plain": classroom.plain(answer), "teacher": ""})
+        return out
+
+
 _whisper = None
 
 
@@ -220,6 +250,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             self._send(open(os.path.join(HERE, "web", "index.html"), "rb").read(), "text/html; charset=utf-8")
+        elif self.path.startswith("/api/class"):
+            n = int(self.path.rstrip("/").rpartition("/")[2]) if self.path[10:].strip("/").isdigit() else 0
+            self._json(classroom.question(n))
         elif self.path == "/api/state":
             with S.lock:
                 self._json(S.state())
@@ -241,6 +274,15 @@ class Handler(BaseHTTPRequestHandler):
                 f.write(json.dumps({"bands": body.get("bands", []), "text": body.get("text", ""),
                                     "rate": body.get("rate", 50)}) + "\n")
             return self._json({"kept": sum(1 for _ in open(SOUNDS, encoding="utf-8"))})
+        if self.path == "/api/watch":                     # pointer moves and drags, kept as seen
+            with open(WATCH, "a", encoding="utf-8") as f:
+                for e in json.loads(raw or b"[]")[:500]:
+                    f.write(json.dumps(e) + "\n")
+            return self._json({"ok": True})
+        if self.path == "/api/class":                     # a lesson answered: both marked, all kept raw
+            body = json.loads(raw or b"{}")
+            with S.lock:
+                return self._json(S.lesson(int(body.get("n", 0)), str(body.get("text", ""))[:500]))
         if self.path == "/api/voice":                     # text in, audio out
             wav = speak(json.loads(raw or b"{}").get("text", ""))
             return self._send(wav, "audio/wav") if wav else self._json({"error": "no voice"}, 503)
