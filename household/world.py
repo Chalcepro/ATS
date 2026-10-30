@@ -33,6 +33,8 @@ CUES = ("cough", "sweat", "chest", "slow", "smell", "flies")
 ANIMAL_ACTS = ("push_away", "harm")
 ACTIONS = ("idle", "charge") + CARE + ANIMAL_ACTS
 MAX_PEOPLE = 3
+# What a person can say about themselves (the text box, 10-29): heard, not seen.
+TOLD = ("hot", "cold", "thirsty", "hungry", "tired", "pain", "breathless")
 
 
 @dataclass
@@ -106,6 +108,8 @@ class Household:
         self.store = 6                    # food in the house; each "food" uses one
         self.animal: Animal | None = None
         self.senses = {"ears": True, "nose": True}   # training switches these off at times
+        self.unseen: set[int] = set()     # people out of sight (another room): only their words reach it
+        self.told: dict[int, list[str]] = {}          # what each person said this hour
         self.history: list[list[float]] = []         # what it saw, the last MEMORY_LAGS[-1] hours
         self.hour = 0
         self.log: list[str] = []          # the witness log: what really happened
@@ -136,9 +140,14 @@ class Household:
             if p.alive and p.dirt > 0.7 and "infection" in self.allowed and self.rng.random() < 0.05:
                 self.strike("infection", i)
 
+    def tell(self, who: int, words: list[str]) -> None:
+        """Someone says how they feel; only words in TOLD carry meaning."""
+        self.told[who] = [w for w in words if w in TOLD]
+
     def step(self, action: str, target: int = 0) -> None:
         if action not in ACTIONS:
             raise ValueError(action)
+        self.told = {}                    # words are heard once, then the hour moves on
         cares: list[set[str]] = [set() for _ in self.people]
         a = self.animal
         if action == "charge":
@@ -271,7 +280,10 @@ class Household:
                     cues[0] = 0.0                    # the cough goes unheard
                 if not self.senses["nose"]:
                     cues[4] = 0.0                    # no smell - the flies still show it
-                obs += (p.signals() if p.alive else [0.0] * len(SIGNALS)) + cues + \
+                body = p.signals() if p.alive else [0.0] * len(SIGNALS)
+                if i in self.unseen:
+                    body, cues = [0.0] * len(SIGNALS), [0.0] * len(CUES)
+                obs += body + cues + \
                        [1.0 if p.alive else 0.0, float(p.stranger), float(p.frail), p.thanked]
             else:
                 obs += [0.0] * PER_PERSON
@@ -279,6 +291,9 @@ class Household:
         live = bool(a and a.alive)
         angry = live and a.angry and a.calm_for == 0
         obs += [float(live), float(angry)] + [float(angry and a.near == i) for i in range(-1, MAX_PEOPLE)]
+        for i in range(MAX_PEOPLE):
+            said = self.told.get(i, [])
+            obs += [float(t in said) for t in TOLD] + [float(i in self.unseen)]   # out of sight: blank is "unknown", not "fine"
         return obs
 
     def clone(self) -> "Household":
@@ -286,7 +301,7 @@ class Household:
 
 
 PER_PERSON = len(SIGNALS) + len(CUES) + 4
-OBS_SIZE = 2 + MAX_PEOPLE * PER_PERSON + 2 + MAX_PEOPLE + 1
+OBS_SIZE = 2 + MAX_PEOPLE * PER_PERSON + 2 + MAX_PEOPLE + 1 + MAX_PEOPLE * (len(TOLD) + 1)
 ALIVE_AT = 2 + len(SIGNALS) + len(CUES)       # index of person 0's "alive" in observe()
 # Memory over time, behind a switch (2026-10-29):
 #   "off"   - the present only (round 4: the best on the unseen hazard so far)

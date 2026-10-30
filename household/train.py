@@ -71,6 +71,16 @@ def episode(seed: int, hours: int = 36) -> list[tuple]:
     for _ in range(hours):
         if all(not p.alive for p in w.people) and rng.random() < 0.5:
             break
+        # Now and then someone is out of sight and only their words reach it,
+        # and people say how they feel - so it learns to act on what it hears.
+        # most often the one out of sight is the one in trouble - that is when words matter
+        struck = [i for i, p in enumerate(w.people) if p.alive and p.hazards]
+        w.unseen = set()
+        if rng.random() < 0.2:
+            w.unseen = {rng.choice(struck) if struck and rng.random() < 0.7 else rng.randrange(len(w.people))}
+        for i, p in enumerate(w.people):
+            if p.alive and rng.random() < (0.7 if i in w.unseen else 0.2):
+                w.tell(i, narrate(p))
         act, tgt = best_action(w)
         words = [[int(v in narrate(p)) for v in VOCAB] for p in w.people]
         rows.append((w.recall(), ACTIONS.index(act), tgt if act in CARE else -1,

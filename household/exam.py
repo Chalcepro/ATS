@@ -72,6 +72,8 @@ def report(brain, trained_on) -> None:
         print(f"{'':16} model reads condition {r['condition']:.0%}, foresight {r['foresight']:.0%}")
     from household.memory_test import score as memory_score
     print(f"who is getting worse (needs memory): model {memory_score(model):.0%}   guessing 50%")
+    from household.memory_test import hearing_score
+    print(f"out of sight, only words reach it:   told {hearing_score(model, True):.0%}   not told {hearing_score(model, False):.0%}")
     from household.teachings import score
     print("teachings, exam seeds only:")
     for name, v in score(model, lambda w: brain.say(w.recall(), len(w.people))).items():

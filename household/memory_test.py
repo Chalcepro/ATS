@@ -55,3 +55,29 @@ def score(policy, seeds=range(EXAM_FROM, EXAM_FROM + 40)) -> float:
 if __name__ == "__main__":
     from household.judge import best_action
     print(f"who is getting worse: judge {score(best_action):.0%}")
+
+
+def out_of_sight(seed: int, told: bool) -> tuple[Household, int]:
+    """Hearing: two people, one struck and in another room. Unseen, only their
+    words can reach the carer. Told, it should go to them; untold, it cannot know."""
+    rng = random.Random(seed)
+    cause = rng.choice(sorted(CASES))
+    w = Household(seed=seed, people=2, hazards=[], hazard_rate=0.0)
+    who = rng.randrange(2)
+    w.strike(cause, who)
+    for _ in range(6):
+        w.step("idle")
+    w.unseen = {who}
+    if told:
+        from household.words import narrate
+        w.tell(who, narrate(w.people[who]))
+    return w, who
+
+
+def hearing_score(policy, told: bool, seeds=range(EXAM_FROM, EXAM_FROM + 40)) -> float:
+    ok = 0
+    for s in seeds:
+        w, who = out_of_sight(s, told)
+        act, tgt = policy(w)
+        ok += act in CARE and tgt == who
+    return ok / len(seeds)
