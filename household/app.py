@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from household import classroom
 from household.judge import HURT, condition
 from household.lexicon import Lexicon, felt_by, grow
-from household import live
+from household import ears, live
 from household.model import load as load_brain, save as save_brain
 from household.train import SAVE
 from household.words import DOING, diary, narrate, sentence
@@ -328,6 +328,11 @@ class Handler(BaseHTTPRequestHandler):
                 f.write(json.dumps({"bands": body.get("bands", []), "text": body.get("text", ""),
                                     "rate": body.get("rate", 50)}) + "\n")
             return self._json({"kept": sum(1 for _ in open(SOUNDS, encoding="utf-8"))})
+        if self.path == "/api/ear":                       # Coal's own ears: the sound bands, straight to the brain
+            body = json.loads(raw or b"{}")
+            with S.lock:
+                S.fresh()
+                return self._json(ears.listen(S.brain, body.get("bands", [])[-1500:]))
         if self.path == "/api/watch":                     # pointer moves and drags, kept as seen
             with open(WATCH, "a", encoding="utf-8") as f:
                 for e in json.loads(raw or b"[]")[:500]:

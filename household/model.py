@@ -18,13 +18,14 @@ from household.words import VOCAB
 from household.desk_lessons import DESK_ACTS, DESK_SIZE, desk_names
 from household.page_lessons import PAGE_SIZE, PARTS, page_names
 from household.live import CLASS_SIZE, MAX_ANSWERS, class_names
+from household.ears import EAR_CUES, EAR_SIZE, EAR_WORDS, ENDS, ear_names
 from household.world import ACTIONS, MAX_PEOPLE, MEM_SIZE, input_names
 
-IN_SIZE = MEM_SIZE + DESK_SIZE + PAGE_SIZE + CLASS_SIZE   # household, desktop (gen1), a web page, a class question: one brain
+IN_SIZE = MEM_SIZE + DESK_SIZE + PAGE_SIZE + CLASS_SIZE + EAR_SIZE   # household, desktop, a web page, a class question, the ears: one brain
 
 
 def all_inputs() -> list[str]:
-    return input_names() + desk_names() + page_names() + class_names()
+    return input_names() + desk_names() + page_names() + class_names() + ear_names()
 
 MEANING = 16
 
@@ -41,6 +42,9 @@ class HouseholdBrain(nn.Module):
         self.meaning = nn.Linear(hidden, MEANING)
         self.desk = nn.Linear(hidden, len(DESK_ACTS))   # what to do with this file
         self.reply = nn.Linear(hidden, MAX_ANSWERS)    # which taught answer fits this question (live.py)
+        self.hear = nn.Linear(hidden, EAR_WORDS)       # the word in this slice of sound (ears.py)
+        self.hear_end = nn.Linear(hidden, len(ENDS))   # speaking, a pause, a full stop, a question
+        self.hear_cue = nn.Linear(hidden, EAR_CUES)    # which sound cue, if it is not speech
         self.page = nn.ModuleDict({p: nn.Linear(hidden, len(cs)) for p, cs in PARTS.items()})   # a page piece, part by part
 
     def forward(self, obs: torch.Tensor) -> dict[str, torch.Tensor]:
@@ -48,16 +52,19 @@ class HouseholdBrain(nn.Module):
         if obs.shape[1] == DESK_SIZE:               # a file alone: the rest is blank
             obs = torch.cat([z(MEM_SIZE), obs, z(PAGE_SIZE + CLASS_SIZE)], 1)
         elif obs.shape[1] == PAGE_SIZE:             # a page piece alone
-            obs = torch.cat([z(MEM_SIZE + DESK_SIZE), obs, z(CLASS_SIZE)], 1)
+            obs = torch.cat([z(MEM_SIZE + DESK_SIZE), obs, z(CLASS_SIZE + EAR_SIZE)], 1)
         elif obs.shape[1] == CLASS_SIZE:            # a class question alone
-            obs = torch.cat([z(MEM_SIZE + DESK_SIZE + PAGE_SIZE), obs], 1)
+            obs = torch.cat([z(MEM_SIZE + DESK_SIZE + PAGE_SIZE), obs, z(EAR_SIZE)], 1)
+        elif obs.shape[1] == EAR_SIZE:              # a slice of sound alone
+            obs = torch.cat([z(IN_SIZE - EAR_SIZE), obs], 1)
         elif obs.shape[1] < IN_SIZE:                # the household alone (or with a file)
             obs = torch.cat([obs, z(IN_SIZE - obs.shape[1])], 1)
         h = self.body(obs)
         return {"act": self.act(h), "target": self.target(h),
                 "condition": self.condition(h).view(-1, MAX_PEOPLE, 3),
                 "foresight": self.foresight(h), "words": self.words(h).view(-1, MAX_PEOPLE, len(VOCAB)),
-                "meaning": torch.tanh(self.meaning(h)), "desk": self.desk(h), "page": {p: head(h) for p, head in self.page.items()}, "reply": self.reply(h)}
+                "meaning": torch.tanh(self.meaning(h)), "desk": self.desk(h), "page": {p: head(h) for p, head in self.page.items()}, "reply": self.reply(h),
+                "hear": self.hear(h), "hear_end": self.hear_end(h), "hear_cue": self.hear_cue(h)}
 
     @torch.no_grad()
     def choose(self, obs: list[float]) -> tuple[str, int]:
