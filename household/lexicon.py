@@ -120,7 +120,10 @@ class Lexicon:
                 new.append(w)                     # kept for later, but no meaning yet
                 continue
             # what is unusual about how people felt when they said it
-            m = [x - u for x, u in zip(self.meaning[c], self.usual)]
+            # feelings: what is unusual about them; danger: as heard, uncentred -
+            # most talk is about nothing dangerous, so centring made every
+            # word that ever came near a room sound like a warning
+            m = [x - u for x, u in zip(self.meaning[c][:-1], self.usual[:-1])] + [self.meaning[c][-1]]
             # a word that comes with one feeling ("tight") counts for more
             # than one heard with many ("need")
             sure = (1 - 1 / (1 + self.heard[c])) * max(abs(x) for x in m) ** 2

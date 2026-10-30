@@ -119,7 +119,7 @@ def episode(seed: int, hours: int = 36) -> list[tuple]:
             w.heard, known = lex.read(rng.choice(WARN), [])["meaning"], True
         elif w.unseen and rng.random() < 0.1:
             w.heard = lex.read(rng.choice(URGE), [])["meaning"]
-        act, tgt = best_action(w, knows_danger=known)
+        act, tgt = best_action(w, danger_belief=0.85 if known else 0.0)
         words = [[int(v in narrate(p)) for v in VOCAB] for p in w.people]
         rows.append((w.recall(), ACTIONS.index(act), tgt if act in CARE or act == "see" else -1,
                      condition(w), foresight(w), words))

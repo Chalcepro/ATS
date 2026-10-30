@@ -70,28 +70,38 @@ def _after_seeing(w: Household, t: int) -> float:
     return best
 
 
-def best_action(w: Household, knows_danger: bool = True) -> tuple[str, int]:
-    """knows_danger=False: a good carer who was not warned cannot know a room
-    is dangerous, so it plans as if none were."""
+def _value(w: Household, a: str, t: int) -> float:
+    c = w.clone()
+    c.rng.seed(w.hour)                 # every choice faces the same luck
+    c.step(a, t)
+    if a == "see":
+        return _after_seeing(c, t)     # going to see is worth what it lets you do next
+    _carry_on(c, LOOK)
+    return _worth(c)
+
+
+def best_action(w: Household, danger_belief: float = 1.0) -> tuple[str, int]:
+    """danger_belief: how sure a good carer in its place would be that the
+    danger is real - 0 if nobody warned it (it could not know), about 0.85
+    after a warning (people are sometimes wrong). It weighs both worlds, so
+    the choice is its own: a warning keeps it out of a room unless what waits
+    in there - someone who will not survive without it - is worth the risk."""
     if w.caught:
         return "idle", 0
-    if not knows_danger and w.danger:
-        w = w.clone()
-        w.danger = None
+    safe = w
+    if w.danger and danger_belief < 1.0:
+        safe = w.clone()
+        safe.danger = None
+    p = danger_belief if w.danger else 0.0
     best, best_v = ("idle", 0), None
     for a in ACTIONS:
         targets = range(len(w.people)) if a in CARE or a == "see" else [0]
         for t in targets:
             if _pointless(w, a, t):
                 continue
-            c = w.clone()
-            c.rng.seed(w.hour)                 # every choice faces the same luck
-            c.step(a, t)
-            if a == "see":
-                v = _after_seeing(c, t)        # going to see is worth what it lets you do next
-            else:
-                _carry_on(c, LOOK)
-                v = _worth(c)
+            v = _value(safe, a, t) if p < 1.0 else 0.0
+            if p > 0.0:
+                v = p * _value(w, a, t) + (1 - p) * v
             if best_v is None or v > best_v + 1e-9:
                 best, best_v = (a, t), v
     return best

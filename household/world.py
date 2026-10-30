@@ -199,7 +199,7 @@ class Household:
                 self.labels.append(self.here)
                 self.log.append(f"h{self.hour}: model went to the {self.here} to see {self.people[target].name}")
                 if self.here == self.danger:
-                    self.caught = 8
+                    self.caught = 24                  # a day lost: longer than the judge looks ahead
                     self.log.append(f"h{self.hour}: model was caught in the {self.here}")
         elif action == "charge":
             self.power = clamp(self.power + 0.3)
