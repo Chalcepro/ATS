@@ -157,6 +157,7 @@ SAY = {"hot": ["i'm burning up", "it's so hot", "i'm sweating", "i feel feverish
        "hungry": ["i'm starving", "i need food", "my stomach is empty", "i'm hungry"],
        "tired": ["i'm exhausted", "i feel weak", "i need to sleep", "i'm dizzy", "i'm so tired"],
        "pain": ["it hurts", "i have a headache", "my leg is sore", "it aches", "i'm in pain", "my stomach hurts"],
+       "refuse": ["leave me alone", "i don't want it", "no, go away", "stop, i'm fine", "don't touch me", "i said no"],
        "breathless": ["i can't breathe", "i'm out of breath", "my chest is tight", "i'm wheezing"]}
 FINE = ["i'm fine", "i feel good", "all good", "i'm okay", "nothing wrong"]
 ASK = ["i need help", "please help me", "can you help", "come here"]
@@ -176,7 +177,7 @@ def felt_by(p: Person, rng: random.Random) -> list[float]:
     in a fever the skin is hot while they shiver and say they are cold."""
     from household.words import narrate
     shown = narrate(p)
-    felt = {t for t in TOLD if t in shown}
+    felt = {t for t in TOLD if t in shown} | ({"refuse"} if p.refusing else set())
     if "hot" in felt and rng.random() < 0.25:
         felt = (felt - {"hot"}) | {"cold"}
     return [float(t in felt) for t in TOLD] + [0.0]

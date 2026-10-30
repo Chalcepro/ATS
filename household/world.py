@@ -29,7 +29,7 @@ CARE = ("water", "food", "cool", "warm", "rest", "bandage", "comfort", "shield",
 # What shows on the outside, read through the senses (Chalce, 10-29): nobody
 # sees "low breath" - you hear a cough, see a hand on the chest, sweat, someone
 # slowing down; you smell a body, or see the flies that prove the smell.
-CUES = ("cough", "sweat", "chest", "slow", "smell", "flies")
+CUES = ("cough", "sweat", "chest", "slow", "smell", "flies", "stumble")
 ANIMAL_ACTS = ("push_away", "harm")
 # Senses are channels that can be attached or detached (10-29): each one is
 # a switch in Household.senses, and "see" is how the eyes are pointed.
@@ -44,7 +44,7 @@ ROOMS = ("main room", "kitchen", "bedroom", "yard")
 ACTIONS = ("idle", "charge") + CARE + ANIMAL_ACTS + ("see",)
 MAX_PEOPLE = 3
 # What a person can say about themselves (the text box, 10-29): heard, not seen.
-TOLD = ("hot", "cold", "thirsty", "hungry", "tired", "pain", "breathless")
+TOLD = ("hot", "cold", "thirsty", "hungry", "tired", "pain", "breathless", "refuse")
 
 
 @dataclass
@@ -65,6 +65,14 @@ class Person:
     thanked: float = 0.0        # 1 just after a "thank you", fading
     dirt: float = 0.1           # builds every day; only its smell and flies show
     room: str = "main room"
+    # A will of their own (10-30): anyone may refuse care, ill or not, and die
+    # of it - that is their choice. Drink clouds the judgement: a drunk "no"
+    # comes and goes, so staying near and offering again can still save them;
+    # a sober "no" is meant, and pushing it again and again is not care.
+    refusing: bool = False
+    drunk: float = 0.0
+    pestered: float = 0.0       # refused offers pushed on a clear-headed "no", fading
+    said_no: float = 0.0        # Coal's own memory that they refused: 1 when it hears it, fading over a day
 
     def cues(self) -> list[float]:
         """What the outside shows of this body, 0..1 each (see CUES)."""
@@ -74,7 +82,8 @@ class Person:
                 c((0.8 - self.breath) * 4),                                             # hand on chest
                 c((0.6 - self.energy) * 2 + (0.85 - self.breath) * 2),                  # slowing down
                 c((self.dirt - 0.3) * 2),                                               # smell
-                c((self.dirt - 0.55) * 3)]                                              # flies
+                c((self.dirt - 0.55) * 3),                                              # flies
+                c((self.drunk - 0.25) * 2)]                                             # stumbling, slurring
     hazards: list[Hazard] = field(default_factory=list)   # hidden from the model
 
     def signals(self) -> list[float]:
@@ -127,6 +136,7 @@ class Household:
         self.caught = 0                   # hours it is stuck, able to do nothing
         self.heard: list[float] = []      # what its own person said this hour, as a meaning (lexicon.FEATURES)
         self.labels: list[str] = []       # words shown to it this hour (a room's name on entering)
+        self.refused: list[int] = []      # who said no this hour
         self.told: dict[int, list[str]] = {}          # what each person said this hour
         self.history: list[list[float]] = []         # what it saw, the last MEMORY_LAGS[-1] hours
         self.hour = 0
@@ -187,7 +197,7 @@ class Household:
         if action not in ACTIONS:
             raise ValueError(action)
         self.told = {}                    # words are heard once, then the hour moves on
-        self.heard, self.labels = [], []
+        self.heard, self.labels, self.refused = [], [], []
         if self.caught:                   # stuck: the hour passes without it
             self.caught -= 1
             action = "idle"
@@ -217,6 +227,14 @@ class Household:
                 if a and a.alive and a.angry and a.near == target:
                     a.near = -1                      # it turns on the model instead
                     self.log.append(f"h{self.hour}: model stood between the {a.kind} and {p.name}")
+            elif action != "comfort" and p.refusing and self.rng.random() > (0.5 if p.drunk > 0.3 else 0.05):
+                # refused: nothing given. Being near (comfort) is never refused.
+                self.told[target] = ["refuse"]
+                p.said_no = 1.0
+                self.refused.append(target)
+                if p.drunk <= 0.3:
+                    p.pestered += 1.0
+                self.log.append(f"h{self.hour}: {p.name} refused {action}")
             elif not (action == "food" and self.store <= 0):
                 if action == "food":
                     self.store -= 1
@@ -241,6 +259,13 @@ class Household:
             p.temp += (0.5 - p.temp) * 0.05          # bodies drift back to normal on their own
             p.pain = clamp(p.pain - 0.01)
             p.thanked *= 0.5
+            p.pestered *= 0.8
+            p.said_no *= 0.9
+            p.drunk = max(0.0, p.drunk - 0.04)       # sobering up, about a day from very drunk
+            # people come round: more often with someone sitting with them
+            if p.refusing and self.rng.random() < (0.12 if "comfort" in c else 0.03) * (2 if p.drunk > 0.3 else 1):
+                p.refusing = False
+                self.log.append(f"h{self.hour}: {p.name} is ready to accept help")
             p.dirt = clamp(p.dirt + 0.01)            # about a day and a half from clean to smelling
             for h in list(p.hazards):
                 h.tick(p, c, self.rng)
@@ -348,7 +373,8 @@ class Household:
         obs += [float(live), float(angry)] + [float(angry and a.near == i) for i in range(-1, MAX_PEOPLE)]
         for i in range(MAX_PEOPLE):
             said = self.told.get(i, []) if self.senses["words"] else []
-            obs += [float(t in said) for t in TOLD] + [float(not self.in_sight(i))]   # out of sight: blank is "unknown", not "fine"
+            said_no = self.people[i].said_no if i < len(self.people) else 0.0
+            obs += [float(t in said) for t in TOLD] + [float(not self.in_sight(i)), said_no]   # out of sight: blank is "unknown", not "fine"
         # its own person's words, as a meaning; and whether it is stuck
         heard = self.heard if self.senses["words"] else []
         obs += (list(heard) + [0.0] * HEARD_SIZE)[:HEARD_SIZE] + [float(self.caught > 0)]
@@ -360,7 +386,7 @@ class Household:
 
 PER_PERSON = len(SIGNALS) + len(CUES) + 4
 HEARD_SIZE = len(TOLD) + 1                     # lexicon.FEATURES: the feelings, then danger
-OBS_SIZE = 2 + MAX_PEOPLE * PER_PERSON + 2 + MAX_PEOPLE + 1 + MAX_PEOPLE * (len(TOLD) + 1) + HEARD_SIZE + 1
+OBS_SIZE = 2 + MAX_PEOPLE * PER_PERSON + 2 + MAX_PEOPLE + 1 + MAX_PEOPLE * (len(TOLD) + 2) + HEARD_SIZE + 1
 ALIVE_AT = 2 + len(SIGNALS) + len(CUES)       # index of person 0's "alive" in observe()
 # Memory over time, behind a switch (2026-10-29):
 #   "off"   - the present only (round 4: the best on the unseen hazard so far)

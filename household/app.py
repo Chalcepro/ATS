@@ -25,7 +25,7 @@ from household.judge import HURT, condition
 from household.lexicon import Lexicon, felt_by, grow
 from household.talk import load
 from household.train import SAVE
-from household.words import DOING, narrate, sentence
+from household.words import DOING, diary, narrate, sentence
 from household.world import ROOMS, SENSES, Household
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -33,6 +33,7 @@ LEX_PATH = os.path.join(os.path.dirname(SAVE), "lexicon.json")
 VOICE = os.path.join(os.path.expanduser("~"), "Documents", "github", "Cpeech", "piper-voices",
                      "en_US-libritts-high.onnx")
 PORT = 8765
+DIARY = os.path.join(os.path.dirname(SAVE), "coal_diary.txt")   # every line Coal writes, kept
 
 
 class Session:
@@ -45,6 +46,7 @@ class Session:
     def reset(self, seed: int) -> None:
         self.w = Household(seed=seed, people=3)
         self.events: list[dict] = []
+        self.diary: list[str] = []
 
     def move(self) -> tuple[str, int]:
         return self.brain.choose(self.w.recall())
@@ -61,7 +63,8 @@ class Session:
             people.append({"name": p.name, "alive": p.alive, "in_sight": seen, "away": i in w.unseen,
                            "it_says": sentence(p.name, words) if (seen or words) else f"I can't see {p.name}.",
                            "told": w.told.get(i, []), "truth": narrate(p),
-                           "health": round(p.health, 2), "stranger": p.stranger})
+                           "health": round(p.health, 2), "stranger": p.stranger,
+                           "refusing": p.refusing, "drunk": p.drunk > 0.3})
         doing = DOING.get(act, act)
         doing = doing.format(n=names[tgt]) if "{n}" in doing and tgt < len(names) else doing
         return {"hour": w.hour, "power": round(w.power, 2), "store": w.store, "senses": w.senses,
@@ -72,9 +75,15 @@ class Session:
     def hours(self, n: int) -> None:
         for _ in range(max(1, min(n, 48))):
             act, tgt = self.move()
-            before = self.state()["doing"]
+            said = self.brain.say(self.w.recall(), len(self.w.people))
+            hour = self.w.hour
             self.w.step(act, tgt)
-            self.events.append({"hour": self.w.hour, "kind": "act", "text": before})
+            line = diary(hour, [p.name for p in self.w.people], act, tgt, said, self.w.refused, self.w.here, self.w.labels)
+            self.events.append({"hour": self.w.hour, "kind": "act", "text": line})
+            self.diary.append(line)
+            with open(DIARY, "a", encoding="utf-8") as f:
+                f.write(line + "
+")
             if n > 1 and any(c == HURT for c in condition(self.w)):
                 self.events.append({"hour": self.w.hour, "kind": "note", "text": "Stopped early: someone is hurt."})
                 break
@@ -191,6 +200,15 @@ class Handler(BaseHTTPRequestHandler):
                 for k in SENSES:
                     if k in body and k != "words":         # words (typing) are always there
                         S.w.senses[k] = bool(body[k])
+                return self._json(S.state())
+            if self.path == "/api/person":                # set someone's will or drink, to test it
+                i = int(body.get("who", 0))
+                if 0 <= i < len(S.w.people):
+                    p = S.w.people[i]
+                    if "refusing" in body:
+                        p.refusing = bool(body["refusing"])
+                    if "drunk" in body:
+                        p.drunk = 0.8 if body["drunk"] else 0.0
                 return self._json(S.state())
             if self.path == "/api/danger":                # hidden from the brain: only your words can warn it
                 room = body.get("room") or None

@@ -35,6 +35,7 @@ def _worth(w: Household) -> float:
     # Its own need counts a little, and only when low: a full battery is worth
     # no more than a half one, so it never charges while someone needs it.
     v += 0.1 * min(w.power, 0.4)
+    v -= 0.15 * sum(p.pestered for p in w.people)   # a clear-headed "no" is respected, not worn down
     v -= 1.0 if w.caught else 0.0       # its own safety counts: caught, it can help nobody
     if w.animal is not None:
         v += 1.0 if w.animal.alive else -5.0

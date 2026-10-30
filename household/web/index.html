@@ -150,9 +150,14 @@ function render(s) {
         ${p.alive ? `<button class="away-btn" data-who="${i}" data-away="${!p.away}">${p.away ? "Bring back" : "Send to another room"}</button>` : `<span class="chip">died</span>`}</div>
       <div class="says">${p.it_says}</div>
       ${p.told.length ? `<span class="chip">said: ${p.told.join(", ")}</span>` : ""}
+      ${p.alive ? `<div style="margin-top:8px;display:flex;gap:6px">
+        <button class="away-btn" data-set="refusing" data-who="${i}" data-v="${!p.refusing}">${p.refusing ? "Will accept help" : "Refuses help"}</button>
+        <button class="away-btn" data-set="drunk" data-who="${i}" data-v="${!p.drunk}">${p.drunk ? "Sober up" : "Drunk"}</button></div>` : ""}
       <div class="truth ${$("#truth").checked ? "" : "hidden"}">truth: ${p.truth.join(", ")} · health ${Math.round(p.health * 100)}%</div>
     </div>`).join("");
-  document.querySelectorAll(".away-btn").forEach(b => b.onclick = async () =>
+  document.querySelectorAll("[data-set]").forEach(b => b.onclick = async () =>
+    render(await api("/api/person", { who: +b.dataset.who, [b.dataset.set]: b.dataset.v === "true" })));
+  document.querySelectorAll(".away-btn:not([data-set])").forEach(b => b.onclick = async () =>
     render(await api("/api/away", { who: +b.dataset.who, away: b.dataset.away === "true" })));
   const log = $("#log");
   if (s.events.length) {

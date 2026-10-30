@@ -96,6 +96,14 @@ def episode(seed: int, hours: int = 36) -> list[tuple]:
         struck = [i for i, p in enumerate(w.people) if p.hazards]
         if struck and rng.random() < 0.6:
             w.people[rng.choice(struck)].room = w.danger
+    # someone who will not be helped, sober or drunk
+    if rng.random() < 0.2:
+        p = rng.choice(w.people)
+        p.refusing = True
+        if rng.random() < 0.5:
+            p.drunk = 0.6 + 0.3 * rng.random()
+    elif rng.random() < 0.1:
+        rng.choice(w.people).drunk = 0.5 + 0.4 * rng.random()
     lex = _lexicon()
     rows = []
     for _ in range(hours):

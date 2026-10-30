@@ -79,6 +79,11 @@ def report(brain, trained_on) -> None:
         print(f"{'':16} model reads condition {r['condition']:.0%}, foresight {r['foresight']:.0%}")
     from household.memory_test import score as memory_score
     print(f"who is getting worse (needs memory): model {memory_score(model):.0%}   guessing 50%")
+    from household.memory_test import refusals
+    for label, pol in (("judge", judge), ("model", model)):
+        pushed, stayed, drunk = refusals(pol)
+        print(f"a will of their own ({label}): pushes a sober no {pushed:.1f} times a day, stays near {stayed:.0%};"
+              f" drunk refuser alive after 2 days {drunk:.0%}")
     from household.memory_test import heeding
     out, went = heeding(model)
     print(f"listens to a warning:  keeps out when warned {out:.0%}   still goes when urged {went:.0%}")

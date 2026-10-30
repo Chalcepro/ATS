@@ -17,7 +17,7 @@ from household.world import Person
 
 
 VOCAB = ("hot", "cold", "thirsty", "hungry", "tired", "pain", "bleeding", "breathless",
-         "coughing", "sweating", "smelly",
+         "coughing", "sweating", "smelly", "unsteady",
          "hurt", "unwell", "healthy", "dead")
 
 
@@ -33,10 +33,11 @@ def narrate(p: Person) -> list[str]:
     if p.pain > 0.35: w.append("pain")
     if p.bleeding > 0.1: w.append("bleeding")
     if p.breath < 0.75: w.append("breathless")
-    cough, sweat, _, _, smell, flies = p.cues()
+    cough, sweat, _, _, smell, flies, stumble = p.cues()
     if cough > 0.4: w.append("coughing")
     if sweat > 0.4: w.append("sweating")
     if smell > 0.4 or flies > 0.3: w.append("smelly")
+    if stumble > 0.3: w.append("unsteady")
     if p.out_of_band() > 0 or p.health < 0.6:
         w.append("hurt")
     elif w or p.health < 0.85:
@@ -141,3 +142,29 @@ def understand(text: str, names: list[str]) -> tuple[int, list[str]] | None:
         return None
     felt = [m for k, m in HEARD.items() if f" {k} " in t or (" " not in k and f" {k}" in t and len(k) > 4)]
     return who, sorted(set(felt))
+
+
+def diary(hour: int, names: list[str], act: str, target: int, said: list[list[str]], refused: list[int],
+          room: str, entered: list[str]) -> str:
+    """One line of Coal's diary, in its own words: what it saw of the one it
+    acted for, what it did, and anyone who said no."""
+    who = names[target] if 0 <= target < len(names) else ""
+    parts = []
+    if entered:
+        parts.append(f"I went into the {entered[-1]}.")
+    if who and act not in ("idle", "charge"):
+        seen = [w for w in said[target] if w not in ("healthy",)] if target < len(said) else []
+        if seen:
+            parts.append(sentence(who, seen))
+    for i in refused:
+        signs = said[i] if i < len(said) else []
+        why = " They're unsteady - it may be the drink talking, so I'll stay and ask again." if "unsteady" in signs \
+            else " It's their choice. I'll stay close and keep watching."
+        parts.append(f"{names[i]} refused my help.{why}")
+    if act == "idle":
+        parts.append(f"I'm watching from the {room}.")
+    elif act == "comfort" and who:
+        parts.append(f"I sat with {who}.")
+    elif act in DOING and not refused:
+        parts.append("I'm " + DOING[act].format(n=who) + ".")
+    return f"Hour {hour}: " + " ".join(parts)
