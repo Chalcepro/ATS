@@ -90,6 +90,15 @@ companion he can reason alongside, not a nurse. One model only.
 | Diary line had a broken literal newline | Fixed. |
 | CoalOS server shuts down 20 s after the last page ping | `/coal/*` wakes the household app itself. |
 | Out of sight + told is weak (22%) | Still open. |
+| **r17 desk inputs went into the household's slots** (forward() padded every short input at the end, so desk lessons used household inputs 0-80; the desk's own inputs never trained). r17's desk 91% came through household wiring and may explain urged 2% -> 22%. | Fixed in model.py (each part padded into its own place). Round 18 teaches desk work in its own inputs. |
+
+## Live learning (10-30)
+- Class answers are handed in only after "Is that your final answer?"; speech fills the box so it can be fixed.
+- Reply head: Coal picks among answers it was taught, from the question's words. On each hand-in it
+  trains ~0.2 s (first-layer class inputs + reply head only; household outputs checked unchanged).
+  Trial: 15/15 taught questions, 4/5 new wordings.
+- Chalce, on "nah": its weight depends on mood - happy = playful shrug, sad = take it seriously,
+  angry = a firm refusal. Not built yet.
 
 ## Next
 1. Read r17's exam. Check the household scores held while desk work was learned.
