@@ -24,7 +24,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from household import classroom
 from household.judge import HURT, condition
 from household.lexicon import Lexicon, felt_by, grow
-from household.talk import load
+from household import live
+from household.model import load as load_brain, save as save_brain
 from household.train import SAVE
 from household.words import DOING, diary, narrate, sentence
 from household.world import ROOMS, SENSES, Household
@@ -40,13 +41,16 @@ DIARY = os.path.join(os.path.dirname(SAVE), "coal_diary.txt")   # every line Coa
 # training: these pairs are what Coal will learn to hear words straight from sound with.
 SOUNDS = os.path.join(os.path.dirname(SAVE), "coal_sounds.jsonl")
 CLASS = os.path.join(os.path.dirname(SAVE), "coal_class.jsonl")      # every class answer, raw
+ANSWERS = os.path.join(os.path.dirname(SAVE), "coal_answers.json")    # answers Coal has been taught in class
 WATCH = os.path.join(os.path.dirname(SAVE), "coal_watch.jsonl")      # what the person's pointer did in CoalOS
 
 
 class Session:
     def __init__(self, seed: int = 7):
         self.lock = threading.Lock()
-        self.brain = load()
+        self.brain, self.rounds = load_brain(SAVE)
+        self.brain.eval()
+        self.answers = live.Answers(ANSWERS)
         self.lex = Lexicon.load(LEX_PATH) if os.path.exists(LEX_PATH) else grow()
         self.reset(seed)
 
@@ -169,26 +173,19 @@ class Session:
             yes = [f for f in asked if f in s]
             return (f"Yes, {names[who]} is {' and '.join(yes)}." if yes else
                     f"No, {names[who]} isn't {' or '.join(asked)}. ") + ("" if yes else about(who))
+        if talk == "ask_how" and who is None and not heard["felt"]:   # how are you / how is class going
+            return "I'm good. Learning. What do you need?"
         if who is not None:                       # how is Ada? / is Ada okay?
             return about(who)
         return " ".join(about(i) for i in range(len(names)))
 
     def class_answer(self, n: int) -> str:
-        """Coal's go at a lesson, before it sees yours. It has no understanding of the
-        question yet: it can only recall what the teacher said when it last met the
-        most similar question in class, or say it does not know."""
-        q = set(classroom.plain(classroom.LESSONS[n % len(classroom.LESSONS)][1]).split())
-        best, score = None, 0.5
-        if os.path.exists(CLASS):
-            for line in open(CLASS, encoding="utf-8"):
-                r = json.loads(line)
-                if r["who"] != "teacher":
-                    continue
-                past = set(classroom.plain(r["question"]).split())
-                s = len(q & past) / max(len(q | past), 1)
-                if s > score:
-                    best, score = r["raw"], s
-        return best or "I don't know yet."
+        """Coal's go at a lesson, before it sees yours: its reply head's pick among the
+        answers it has been taught, or that it doesn't know."""
+        text, sure = live.reply(self.brain, self.answers, classroom.LESSONS[n % len(classroom.LESSONS)][1])
+        if text is None or sure < 0.3:
+            return "I don't know yet."
+        return text if sure >= 0.6 else f"I'm not sure. Maybe: {text}"
 
     def lesson(self, n: int, text: str) -> dict:
         coal = self.class_answer(n)
@@ -197,6 +194,13 @@ class Session:
         classroom.keep(CLASS, n, "chalce", text, out["you"])
         answer = classroom.LESSONS[n % len(classroom.LESSONS)][2][0]
         classroom.keep(CLASS, n, "teacher", answer, {"verdict": "right", "plain": classroom.plain(answer), "teacher": ""})
+        # and Coal learns it now: a moment of training on every class question so far
+        backup = SAVE.replace(".pt", "_before_live.pt")
+        if not os.path.exists(backup):
+            shutil.copy(SAVE, backup)
+        self.answers.teach(classroom.LESSONS[n % len(classroom.LESSONS)][1], answer)
+        live.learn(self.brain, self.answers)
+        save_brain(self.brain, SAVE, self.rounds)
         return out
 
 
