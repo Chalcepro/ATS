@@ -75,7 +75,7 @@ def main() -> None:
         if line.startswith(("hide ", "show ")):
             who = next((i for i, n in enumerate(names) if n.lower() == line[5:].strip().lower()), None)
             if who is not None:
-                (w.unseen.add if line.startswith("hide") else w.unseen.discard)(who)
+                w.away(who, line.startswith("hide"))
             continue
         hours = int(line) if line.isdigit() else 1
         if line and not line.isdigit():

@@ -20,10 +20,20 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import random
 import re
 
 from household.world import TOLD, Person
+
+# What a word can come to mean: how the speaker felt, then whether the
+# place being talked about turned out dangerous. Words are not told which;
+# they land wherever they kept turning up.
+FEATURES = TOLD + ("danger",)
+# Typos: by default the library learns them like any new word, from where
+# they turn up ("freezng" said while freezing ends up meaning cold). The old
+# spelling-distance fixer is kept behind this switch.
+FIX_TYPOS = os.environ.get("LEXICON_FIX", "0") == "1"
 
 STOP = {"a", "an", "the", "is", "are", "am", "has", "have", "and", "very", "so", "really", "my", "i", "i'm",
         "im", "feel", "feels", "feeling", "he", "she", "they", "her", "his", "their", "a", "bit", "little", "of"}
@@ -50,12 +60,13 @@ class Lexicon:
         self.heard: dict[str, int] = {}           # how often
         self.meaning: dict[str, list[float]] = {}  # word -> how speakers felt (over TOLD), running average
         self.pairs: dict[str, int] = {}           # "need help" -> how often these two came together
-        self.usual = [0.0] * len(TOLD)            # how people feel on average
+        self.usual = [0.0] * len(FEATURES)        # the average moment
         self.n = 0
 
     # ---- learning ------------------------------------------------------------
     def learn(self, text: str, felt: list[float]) -> None:
-        """Someone said this while feeling `felt` (one number per TOLD word)."""
+        """This was said in a moment like `felt` (one number per FEATURES)."""
+        felt = (list(felt) + [0.0] * len(FEATURES))[:len(FEATURES)]
         self.n += 1
         self.usual = [u + (f - u) / self.n for u, f in zip(self.usual, felt)]
         words = tokens(text)
@@ -73,7 +84,7 @@ class Lexicon:
         """The known word that best fits position i, if words[i] is new and
         looks like a slip of the fingers; otherwise the word as it is."""
         w = words[i]
-        if self.heard.get(w, 0) >= 2 or len(w) < 3:
+        if not FIX_TYPOS or self.heard.get(w, 0) >= 2 or len(w) < 3:
             return w
         prev = words[i - 1] if i else ""
         nxt = words[i + 1] if i + 1 < len(words) else ""
@@ -95,7 +106,7 @@ class Lexicon:
         feel, which words it fixed, and which it is still learning."""
         words = tokens(text)
         who = next((i for i, n in enumerate(names) if n.lower() in words), None)
-        fixed, new, felt = {}, [], [0.0] * len(TOLD)
+        fixed, new, felt = {}, [], [0.0] * len(FEATURES)
         weight = 0.0
         for i, w in enumerate(words):
             if names and w in (n.lower() for n in names):
@@ -118,7 +129,8 @@ class Lexicon:
         if weight:
             felt = [f / weight for f in felt]
         said = [t for t, f in zip(TOLD, felt) if f > 0.25]
-        return {"who": who, "felt": said, "fixed": fixed, "new": new}
+        return {"who": who, "felt": said, "fixed": fixed, "new": new, "meaning": felt,
+                "danger": felt[-1]}
 
     # ---- keeping it ----------------------------------------------------------
     def save(self, path: str) -> None:
@@ -128,6 +140,8 @@ class Lexicon:
     def load(cls, path: str) -> "Lexicon":
         lex = cls()
         lex.__dict__.update(json.load(open(path, encoding="utf-8")))
+        if len(lex.usual) != len(FEATURES):          # an older library: start it again
+            return grow()
         return lex
 
 
@@ -145,6 +159,15 @@ FINE = ["i'm fine", "i feel good", "all good", "i'm okay", "nothing wrong"]
 ASK = ["i need help", "please help me", "can you help", "come here"]
 
 
+# What its own person says about where it is going. Many ways of saying both,
+# and the library is never told which is which - only what happened after.
+WARN = ["no it's a trap", "don't go in there", "stay back", "wait, it's not safe", "careful",
+        "no! stop", "don't, they want you to come", "hold on, something is wrong in there",
+        "it's dangerous", "leave it, it's a setup", "don't trust it", "not that way"]
+URGE = ["go on", "she needs you", "go help", "it's fine, go", "all clear", "hurry",
+        "i checked, it's safe", "go and see", "they need you", "quick, go"]
+
+
 def felt_by(p: Person, rng: random.Random) -> list[float]:
     """How a person feels inside - mostly what the body shows, but not always:
     in a fever the skin is hot while they shiver and say they are cold."""
@@ -153,7 +176,7 @@ def felt_by(p: Person, rng: random.Random) -> list[float]:
     felt = {t for t in TOLD if t in shown}
     if "hot" in felt and rng.random() < 0.25:
         felt = (felt - {"hot"}) | {"cold"}
-    return [float(t in felt) for t in TOLD]
+    return [float(t in felt) for t in TOLD] + [0.0]
 
 
 def speak_for(p: Person, rng: random.Random) -> tuple[str, list[float]]:
@@ -182,6 +205,12 @@ def grow(lives: int = 400, seed: int = 0) -> Lexicon:
             for p in w.people:
                 if p.alive and rng.random() < 0.15:
                     lex.learn(*speak_for(p, rng))
+        # its person talking about a room it might walk into, and what that room turned out to be
+        for _ in range(6):
+            danger = rng.random() < 0.5
+            heeded = rng.random() < 0.85              # people are not always right
+            phrase = rng.choice(WARN if danger == heeded else URGE)
+            lex.learn(phrase, [0.0] * len(TOLD) + [float(danger)])
     return lex
 
 

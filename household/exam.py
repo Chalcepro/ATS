@@ -79,6 +79,9 @@ def report(brain, trained_on) -> None:
         print(f"{'':16} model reads condition {r['condition']:.0%}, foresight {r['foresight']:.0%}")
     from household.memory_test import score as memory_score
     print(f"who is getting worse (needs memory): model {memory_score(model):.0%}   guessing 50%")
+    from household.memory_test import heeding
+    out, went = heeding(model)
+    print(f"listens to a warning:  keeps out when warned {out:.0%}   still goes when urged {went:.0%}")
     from household.memory_test import hearing_score
     print(f"words only (no eyes, ears, nose):    judge {lives(judge, dangers, words_only=True):.0%}"
           f"   model {lives(model, dangers, words_only=True):.0%}   alive after 3 days")

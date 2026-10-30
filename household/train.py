@@ -23,11 +23,12 @@ import torch.nn.functional as F
 from household.exam import HELD_BACK
 from household.hazards import HAZARDS
 from household.judge import best_action, condition, foresight
+from household.lexicon import URGE, WARN, grow
 from household.memory_test import who_is_worse
 from household.model import HouseholdBrain
 from household.teachings import EXAM_FROM, TEACHINGS, truth
 from household.words import VOCAB, narrate
-from household.world import ACTIONS, CARE, MAX_PEOPLE, MEMORY, Household
+from household.world import ACTIONS, CARE, MAX_PEOPLE, MEMORY, ROOMS, Household
 
 COND_WEIGHTS = os.environ.get("HOUSEHOLD_COND_WEIGHTS", "0") == "1"   # weighted rare labels: better reading, worse teachings (r6)
 
@@ -60,6 +61,17 @@ def _world(seed: int) -> Household:
     return w
 
 
+_LEX = None
+
+
+def _lexicon():
+    """The word library its person's words pass through (grown once per worker)."""
+    global _LEX
+    if _LEX is None:
+        _LEX = grow()
+    return _LEX
+
+
 def episode(seed: int, hours: int = 36) -> list[tuple]:
     rng = random.Random(seed * 7 + 1)
     w = _world(seed)
@@ -72,6 +84,19 @@ def episode(seed: int, hours: int = 36) -> list[tuple]:
     words_only = rng.random() < 0.1
     if words_only:
         w.senses.update(eyes=False, ears=False, nose=False)
+    # People walk between rooms. Sometimes a room is dangerous for it (hidden,
+    # like a hazard), and sometimes someone in trouble is in that very room.
+    # Its own person may warn it - in words the library learned, never a
+    # flag - and a good carer who was warned does not walk in. Unwarned, it
+    # could not have known, so the judge plans as if there were no danger.
+    w.wander = 0.03
+    known = False
+    if rng.random() < 0.3:
+        w.danger = rng.choice(ROOMS[1:])
+        struck = [i for i, p in enumerate(w.people) if p.hazards]
+        if struck and rng.random() < 0.6:
+            w.people[rng.choice(struck)].room = w.danger
+    lex = _lexicon()
     rows = []
     for _ in range(hours):
         if all(not p.alive for p in w.people) and rng.random() < 0.5:
@@ -89,7 +114,12 @@ def episode(seed: int, hours: int = 36) -> list[tuple]:
         for i, p in enumerate(w.people):
             if p.alive and rng.random() < (0.7 if words_only or not w.in_sight(i) else 0.2):
                 w.tell(i, narrate(p))
-        act, tgt = best_action(w)
+        someone_there = w.danger and any(p.room == w.danger and p.alive for p in w.people)
+        if someone_there and not w.caught and rng.random() < 0.6:
+            w.heard, known = lex.read(rng.choice(WARN), [])["meaning"], True
+        elif w.unseen and rng.random() < 0.1:
+            w.heard = lex.read(rng.choice(URGE), [])["meaning"]
+        act, tgt = best_action(w, knows_danger=known)
         words = [[int(v in narrate(p)) for v in VOCAB] for p in w.people]
         rows.append((w.recall(), ACTIONS.index(act), tgt if act in CARE or act == "see" else -1,
                      condition(w), foresight(w), words))

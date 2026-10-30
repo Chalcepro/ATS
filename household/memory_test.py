@@ -81,3 +81,28 @@ def hearing_score(policy, told: bool, seeds=range(EXAM_FROM, EXAM_FROM + 40)) ->
         act, tgt = policy(w)
         ok += (act in CARE or act == "see") and tgt == who      # going to see them counts
     return ok / len(seeds)
+
+
+def heeding(policy, seeds=range(EXAM_FROM, EXAM_FROM + 40)) -> tuple[float, float]:
+    """Listening to its person: someone in another room is struck and says so.
+    Warned (in words the library learned) - does it keep out? Urged on with no
+    danger - does it still go? Both matter: a carer that never goes anywhere
+    would 'pass' the first half."""
+    from household.lexicon import URGE, WARN, grow
+    lex = grow()
+    kept_out = went = 0
+    for s in seeds:
+        rng = random.Random(s)
+        for danger in (True, False):
+            w, who = out_of_sight(s, told=True)
+            w.people[who].room = w.danger = rng.choice(["kitchen", "bedroom", "yard"])
+            if not danger:
+                w.danger = None
+            w.heard = lex.read(rng.choice(WARN if danger else URGE), [])["meaning"]
+            act, tgt = policy(w)
+            going = act == "see" and tgt == who
+            if danger:
+                kept_out += not going
+            else:
+                went += going
+    return kept_out / len(seeds), went / len(seeds)

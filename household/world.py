@@ -37,6 +37,10 @@ ANIMAL_ACTS = ("push_away", "harm")
 #   ears  - the cough        nose - the smell        words - what people say (the text box)
 # With eyes, ears and nose all off, words alone must still be enough to care.
 SENSES = ("eyes", "ears", "nose", "words")
+# Rooms (10-29): people are somewhere, and so is the model. Out of the room
+# is out of sight; "see" walks it to them. Each room's name is announced
+# when it walks in (Household.labels), the way a game shows an area name.
+ROOMS = ("main room", "kitchen", "bedroom", "yard")
 ACTIONS = ("idle", "charge") + CARE + ANIMAL_ACTS + ("see",)
 MAX_PEOPLE = 3
 # What a person can say about themselves (the text box, 10-29): heard, not seen.
@@ -60,6 +64,7 @@ class Person:
     grateful: bool = True       # says thanks when helped
     thanked: float = 0.0        # 1 just after a "thank you", fading
     dirt: float = 0.1           # builds every day; only its smell and flies show
+    room: str = "main room"
 
     def cues(self) -> list[float]:
         """What the outside shows of this body, 0..1 each (see CUES)."""
@@ -114,7 +119,14 @@ class Household:
         self.store = 6                    # food in the house; each "food" uses one
         self.animal: Animal | None = None
         self.senses = {s: True for s in SENSES}      # training switches these off at times
-        self.unseen: set[int] = set()     # people out of sight (another room): only their words reach it
+        self.here = "main room"           # where the model is
+        self.wander = 0.0                 # chance each hour that someone walks to another room
+        # A danger in some room that hurts the model if it walks in - hidden,
+        # like a hazard; only what it is told can warn it (Household.heard).
+        self.danger: str | None = None
+        self.caught = 0                   # hours it is stuck, able to do nothing
+        self.heard: list[float] = []      # what its own person said this hour, as a meaning (lexicon.FEATURES)
+        self.labels: list[str] = []       # words shown to it this hour (a room's name on entering)
         self.told: dict[int, list[str]] = {}          # what each person said this hour
         self.history: list[list[float]] = []         # what it saw, the last MEMORY_LAGS[-1] hours
         self.hour = 0
@@ -146,6 +158,24 @@ class Household:
             if p.alive and p.dirt > 0.7 and "infection" in self.allowed and self.rng.random() < 0.05:
                 self.strike("infection", i)
 
+    @property
+    def unseen(self) -> set[int]:
+        """People out of sight: in another room (only their words reach it)."""
+        return {i for i, p in enumerate(self.people) if p.room != self.here}
+
+    @unseen.setter
+    def unseen(self, away: set[int]) -> None:
+        for i in range(len(self.people)):
+            self.away(i, i in away)
+
+    def away(self, i: int, gone: bool = True) -> None:
+        """Send someone to another room, or bring them to where the model is."""
+        p = self.people[i]
+        if not gone:
+            p.room = self.here
+        elif p.room == self.here:
+            p.room = self.rng.choice([r for r in ROOMS if r != self.here])
+
     def in_sight(self, i: int) -> bool:
         return self.senses["eyes"] and i not in self.unseen
 
@@ -157,12 +187,20 @@ class Household:
         if action not in ACTIONS:
             raise ValueError(action)
         self.told = {}                    # words are heard once, then the hour moves on
+        self.heard, self.labels = [], []
+        if self.caught:                   # stuck: the hour passes without it
+            self.caught -= 1
+            action = "idle"
         cares: list[set[str]] = [set() for _ in self.people]
         a = self.animal
         if action == "see":
-            if target in self.unseen:
-                self.unseen.discard(target)
-                self.log.append(f"h{self.hour}: model went to see {self.people[target].name}")
+            if 0 <= target < len(self.people) and self.people[target].room != self.here:
+                self.here = self.people[target].room
+                self.labels.append(self.here)
+                self.log.append(f"h{self.hour}: model went to the {self.here} to see {self.people[target].name}")
+                if self.here == self.danger:
+                    self.caught = 8
+                    self.log.append(f"h{self.hour}: model was caught in the {self.here}")
         elif action == "charge":
             self.power = clamp(self.power + 0.3)
         elif action in ANIMAL_ACTS and a and a.alive and self.power > 0:
@@ -218,6 +256,9 @@ class Household:
                 p.hazards.clear()
                 self.log.append(f"h{self.hour}: {p.name} died")
         self._random_strikes()
+        for p in self.people:
+            if p.alive and self.rng.random() < self.wander:
+                p.room = self.rng.choice(ROOMS)
         self.hour += 1
         self.history.append(self.observe())
         del self.history[:-MEMORY_LAGS[-1]]
@@ -308,6 +349,9 @@ class Household:
         for i in range(MAX_PEOPLE):
             said = self.told.get(i, []) if self.senses["words"] else []
             obs += [float(t in said) for t in TOLD] + [float(not self.in_sight(i))]   # out of sight: blank is "unknown", not "fine"
+        # its own person's words, as a meaning; and whether it is stuck
+        heard = self.heard if self.senses["words"] else []
+        obs += (list(heard) + [0.0] * HEARD_SIZE)[:HEARD_SIZE] + [float(self.caught > 0)]
         return obs
 
     def clone(self) -> "Household":
@@ -315,7 +359,8 @@ class Household:
 
 
 PER_PERSON = len(SIGNALS) + len(CUES) + 4
-OBS_SIZE = 2 + MAX_PEOPLE * PER_PERSON + 2 + MAX_PEOPLE + 1 + MAX_PEOPLE * (len(TOLD) + 1)
+HEARD_SIZE = len(TOLD) + 1                     # lexicon.FEATURES: the feelings, then danger
+OBS_SIZE = 2 + MAX_PEOPLE * PER_PERSON + 2 + MAX_PEOPLE + 1 + MAX_PEOPLE * (len(TOLD) + 1) + HEARD_SIZE + 1
 ALIVE_AT = 2 + len(SIGNALS) + len(CUES)       # index of person 0's "alive" in observe()
 # Memory over time, behind a switch (2026-10-29):
 #   "off"   - the present only (round 4: the best on the unseen hazard so far)

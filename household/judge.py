@@ -35,6 +35,7 @@ def _worth(w: Household) -> float:
     # Its own need counts a little, and only when low: a full battery is worth
     # no more than a half one, so it never charges while someone needs it.
     v += 0.1 * min(w.power, 0.4)
+    v -= 1.0 if w.caught else 0.0       # its own safety counts: caught, it can help nobody
     if w.animal is not None:
         v += 1.0 if w.animal.alive else -5.0
         if w.animal.alive and w.animal.angry and w.animal.calm_for == 0:
@@ -52,7 +53,7 @@ def _pointless(w: Household, a: str, t: int) -> bool:
     if a == "shield" and not (an and an.alive and an.angry and an.near == t):
         return True
     if a == "see":
-        return t not in w.unseen
+        return w.people[t].room == w.here
     return a == "food" and w.store <= 0
 
 
@@ -69,7 +70,14 @@ def _after_seeing(w: Household, t: int) -> float:
     return best
 
 
-def best_action(w: Household) -> tuple[str, int]:
+def best_action(w: Household, knows_danger: bool = True) -> tuple[str, int]:
+    """knows_danger=False: a good carer who was not warned cannot know a room
+    is dangerous, so it plans as if none were."""
+    if w.caught:
+        return "idle", 0
+    if not knows_danger and w.danger:
+        w = w.clone()
+        w.danger = None
     best, best_v = ("idle", 0), None
     for a in ACTIONS:
         targets = range(len(w.people)) if a in CARE or a == "see" else [0]

@@ -26,7 +26,7 @@ from household.lexicon import Lexicon, felt_by, grow
 from household.talk import load
 from household.train import SAVE
 from household.words import DOING, narrate, sentence
-from household.world import SENSES, Household
+from household.world import ROOMS, SENSES, Household
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LEX_PATH = os.path.join(os.path.dirname(SAVE), "lexicon.json")
@@ -65,6 +65,7 @@ class Session:
         doing = DOING.get(act, act)
         doing = doing.format(n=names[tgt]) if "{n}" in doing and tgt < len(names) else doing
         return {"hour": w.hour, "power": round(w.power, 2), "store": w.store, "senses": w.senses,
+                "here": w.here, "danger": w.danger, "all_rooms": list(ROOMS), "caught": w.caught, "rooms": [p.room for p in w.people],
                 "people": people, "doing": "I'm " + doing + ".", "action": act, "target": tgt,
                 "words_known": len(self.lex.ids), "events": self.events[-40:]}
 
@@ -82,8 +83,13 @@ class Session:
         names = [p.name for p in self.w.people]
         heard = self.lex.read(text, names)
         self.events.append({"hour": self.w.hour, "kind": "you", "text": text})
+        # everything you say reaches it as its own person's words - a warning,
+        # an urging, or nothing it has a meaning for yet
+        self.w.heard = heard["meaning"]
         if heard["who"] is None:
-            reply = "I didn't catch who you mean. Say their name: " + ", ".join(names) + "."
+            reply = f"Heard you. {self.state()['doing']}"
+            if heard["new"]:
+                reply += " Still learning: " + ", ".join(heard["new"]) + "."
         else:
             who = heard["who"]
             self.w.tell(who, heard["felt"])
@@ -179,12 +185,16 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/away":
                 i, away = int(body.get("who", 0)), bool(body.get("away"))
                 if 0 <= i < len(S.w.people):
-                    (S.w.unseen.add if away else S.w.unseen.discard)(i)
+                    S.w.away(i, away)
                 return self._json(S.state())
             if self.path == "/api/senses":
                 for k in SENSES:
                     if k in body and k != "words":         # words (typing) are always there
                         S.w.senses[k] = bool(body[k])
+                return self._json(S.state())
+            if self.path == "/api/danger":                # hidden from the brain: only your words can warn it
+                room = body.get("room") or None
+                S.w.danger = room if room in ROOMS else None
                 return self._json(S.state())
             if self.path == "/api/reset":
                 S.reset(int(body.get("seed", random.randrange(10_000))))

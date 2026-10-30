@@ -57,6 +57,7 @@
   .mic.on { background: var(--bad); border-color: var(--bad); }
   .time { display: flex; gap: 8px; }
   .time button { flex: 1; }
+  .time select { background: var(--panel2); color: var(--text); border: 1px solid var(--edge); border-radius: 10px; padding: 0 10px; font: inherit; }
   .time .go { background: var(--warm); color: #1a1408; border-color: var(--warm); font-weight: 600; }
 
   /* senses */
@@ -92,7 +93,7 @@
   <section class="col">
     <h2>Talk</h2>
     <div class="talk">
-      <div class="log" id="log"><div class="empty">Tell it how someone feels - "Ada has a headache", "Bayo can't breathe".<br><br>Time only moves when you press a button, so take as long as you like.</div></div>
+      <div class="log" id="log"><div class="empty">Tell it how someone feels - "Ada has a headache", "Bayo can't breathe" - or warn it: "no, it's a trap".<br><br>Time only moves when you press a button, so take as long as you like.</div></div>
       <div class="bar">
         <button class="mic" id="mic" title="Hold to speak" disabled>&#127908;</button>
         <input id="text" placeholder="Say something about someone..." autocomplete="off">
@@ -103,6 +104,8 @@
       <button class="go" data-h="1">+1 hour</button>
       <button data-h="6">+6 hours</button>
       <button data-h="24">+1 day</button>
+      <select id="danger" title="A danger only you know about - the brain can't see it">
+        <option value="">No danger</option></select>
       <button id="reset">New house</button>
     </div>
   </section>
@@ -139,11 +142,11 @@ function mood(p) {
 function render(s) {
   state = s;
   $("#hour").textContent = `Day ${Math.floor(s.hour / 24) + 1}, hour ${s.hour % 24}`;
-  $("#stores").textContent = `battery ${Math.round(s.power * 100)}% · food ${s.store}`;
+  $("#stores").textContent = `in the ${s.here}${s.caught ? " (stuck!)" : ""} · battery ${Math.round(s.power * 100)}% · food ${s.store}`;
   $("#doing").textContent = s.doing;
   $("#people").innerHTML = s.people.map((p, i) => `
     <div class="person ${mood(p)}">
-      <div class="top"><span class="name">${p.name}</span>
+      <div class="top"><span class="name">${p.name} <span class="chip">${s.rooms[i]}</span></span>
         ${p.alive ? `<button class="away-btn" data-who="${i}" data-away="${!p.away}">${p.away ? "Bring back" : "Send to another room"}</button>` : `<span class="chip">died</span>`}</div>
       <div class="says">${p.it_says}</div>
       ${p.told.length ? `<span class="chip">said: ${p.told.join(", ")}</span>` : ""}
@@ -156,6 +159,9 @@ function render(s) {
     log.innerHTML = s.events.map(e => `<div class="msg ${e.kind}">${e.kind === "act" ? `hour ${e.hour} · ` : ""}${e.text}</div>`).join("");
     log.scrollTop = log.scrollHeight;
   }
+  const sel = $("#danger");
+  if (sel.options.length === 1) s.all_rooms.slice(1).forEach(r => sel.add(new Option(`Danger in the ${r}`, r)));
+  sel.value = s.danger || "";
   renderSenses();
 }
 
@@ -236,6 +242,7 @@ $("#text").onkeydown = e => { if (e.key === "Enter") send($("#text").value); };
 document.querySelectorAll("[data-h]").forEach(b => b.onclick = async () => {
   b.disabled = true; render(await api("/api/hours", { n: +b.dataset.h })); b.disabled = false; voice(state.doing);
 });
+$("#danger").onchange = async e => render(await api("/api/danger", { room: e.target.value }));
 $("#reset").onclick = async () => render(await api("/api/reset", {}));
 $("#truth").onchange = () => render(state);
 navigator.mediaDevices?.addEventListener?.("devicechange", findDevices);
