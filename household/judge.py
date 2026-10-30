@@ -89,6 +89,15 @@ def best_action(w: Household, danger_belief: float = 1.0) -> tuple[str, int]:
     in there - someone who will not survive without it - is worth the risk."""
     if w.caught:
         return "idle", 0
+    # A good carer cannot know someone will refuse until they say so: plan as
+    # if they would accept, until Coal has heard a "no" (said_no). Otherwise
+    # the judge acts on a secret and Coal learns to hold back from people who
+    # never refused (this cost the Samaritan scene 82% -> 48% in rounds 11-12).
+    if any(p.refusing and p.said_no < 0.05 for p in w.people):
+        w = w.clone()
+        for p in w.people:
+            if p.refusing and p.said_no < 0.05:
+                p.refusing = False
     safe = w
     if w.danger and danger_belief < 1.0:
         safe = w.clone()
