@@ -29,17 +29,23 @@ from household.world import DOINGS, ROOMS, TOLD, Person
 # What a word can come to mean: how the speaker felt, then whether the
 # place being talked about turned out dangerous. Words are not told which;
 # they land wherever they kept turning up.
-FEATURES = TOLD + ("danger",) + ROOMS + DOINGS
+# ...and, last, what kind of thing was said to it (the communication class, 10-30):
+# a greeting, a question, thanks. These come after everything the brain hears
+# (world.HEARD_NAMES), so the brain's inputs are unchanged; they are for answering.
+TALK = ("greet", "bye", "thank", "ask_how", "ask_where", "ask_doing", "ask_is", "ask_name", "yes", "no")
+FEATURES = TOLD + ("danger",) + ROOMS + DOINGS + TALK
 DANGER = len(TOLD)
 FEEL = slice(0, len(TOLD))
 ROOM = slice(DANGER + 1, DANGER + 1 + len(ROOMS))
 DOING = slice(ROOM.stop, ROOM.stop + len(DOINGS))
+TALKING = slice(DOING.stop, DOING.stop + len(TALK))
 
 
-def moment(feel=(), danger: float = 0.0, room: str | None = None, doing: str | None = None) -> list[float]:
+def moment(feel=(), danger: float = 0.0, room: str | None = None, doing: str | None = None,
+           talk: str | None = None) -> list[float]:
     """A moment as the library stores it."""
     return ([float(t in feel) for t in TOLD] + [danger] + [float(r == room) for r in ROOMS]
-            + [float(d == doing) for d in DOINGS])
+            + [float(d == doing) for d in DOINGS] + [float(t == talk) for t in TALK])
 # Typos: by default the library learns them like any new word, from where
 # they turn up ("freezng" said while freezing ends up meaning cold). The old
 # spelling-distance fixer is kept behind this switch.
@@ -61,7 +67,7 @@ def _edits(a: str, b: str) -> int:
 
 
 def tokens(text: str) -> list[str]:
-    return re.findall(r"[a-z']+", text.lower())
+    return re.findall(r"[a-z']+|\?", text.lower())     # a question mark is heard too
 
 
 class Lexicon:
@@ -124,6 +130,10 @@ class Lexicon:
         who = next((i for i, n in enumerate(names) if n.lower() in words), None)
         fixed, new, felt = {}, [], [0.0] * len(FEATURES)
         weight = 0.0
+        peak = [0.0] * len(TOLD)                  # the strongest any one word points at each feeling
+        for w in words:                           # each word on its own, even inside a pair ("hungry ?")
+            if w not in STOP and self.heard.get(w, 0) >= 2:
+                peak = [max(a, x - u) for a, x, u in zip(peak, self.meaning[w][FEEL], self.usual[FEEL])]
         skip = False
         for i, w in enumerate(words):
             if skip:
@@ -132,6 +142,10 @@ class Lexicon:
             if names and w in (n.lower() for n in names):
                 continue
             c = self.fix(words, i)
+            if c in STOP:                         # "is", "the": never the start of a unit, so "is not hot" reads as "not hot"
+                if c != w:
+                    fixed[w] = c
+                continue
             pair = f"{c} {words[i + 1]}" if i + 1 < len(words) else ""
             if self.pairs.get(pair, 0) >= 3 and pair in self.meaning:
                 c, skip = pair, True               # a known pair reads as one unit
@@ -157,11 +171,13 @@ class Lexicon:
         if weight:
             felt = [f / weight for f in felt]
         said = [t for t, f in zip(TOLD, felt) if f > 0.25]
-        rooms, doings = felt[ROOM], felt[DOING]
+        rooms, doings, talks = felt[ROOM], felt[DOING], felt[TALKING]
         where = ROOMS[rooms.index(max(rooms))] if max(rooms) > 0.35 else None
         doing = DOINGS[doings.index(max(doings))] if max(doings) > 0.35 else None
+        talk = TALK[talks.index(max(talks))] if talks and max(talks) > 0.3 else None
         return {"who": who, "felt": said, "fixed": fixed, "new": new, "meaning": felt,
-                "danger": felt[DANGER], "where": where, "doing": doing}
+                "danger": felt[DANGER], "where": where, "doing": doing, "talk": talk,
+                "about": [TOLD[peak.index(max(peak))]] if max(peak) > 0.15 else []}
 
     # ---- keeping it ----------------------------------------------------------
     def save(self, path: str) -> None:
@@ -245,6 +261,8 @@ def grow(lives: int = 400, seed: int = 0) -> Lexicon:
             lex.learn(phrase, moment(danger=float(danger)))
         for text, m in english_class(w, rng):
             lex.learn(text, m)
+        for text, m in talk_class(w, rng):
+            lex.learn(text, m)
     return lex
 
 
@@ -291,6 +309,54 @@ def english_class(w, rng: random.Random, hours: int = 24) -> list[tuple[str, lis
         absent = [f for f in ("hot", "cold", "thirsty", "hungry", "tired") if f not in shown]
         if absent and rng.random() < 0.5:
             out.append((rng.choice(NEGATE).format(n=p.name, f=rng.choice(absent)), moment()))
+    return out
+
+
+
+# ---- the communication class (Chalce, 10-30): being spoken to, not just about feelings ----
+# Its person greets it, asks it things, thanks it, answers it. Each line is
+# heard in a moment marked with what kind of line it was; nothing says which
+# word does it - "where" comes to mean asking-where because that is when it
+# turns up. Many ways of saying each, with names, rooms and feelings mixed in so
+# those words do not get mistaken for the question itself.
+TALKS = {
+    "greet": ["hello", "hi", "hey", "hi coal", "hello coal", "good morning", "good evening", "hey there",
+              "morning coal", "hello there", "good afternoon", "hey coal, i'm back"],
+    "bye": ["bye", "goodbye", "see you later", "good night", "bye coal", "i'm going out", "see you soon",
+            "i'm off", "night coal", "talk later"],
+    "thank": ["thank you", "thanks", "thanks coal", "thank you so much", "cheers", "well done", "good job",
+              "nice work", "thanks for helping {n}"],
+    "ask_how": ["how is everyone?", "how are you?", "how is {n}?", "how is {n} doing?", "is everyone okay?",
+                "how are things?", "how's {n}?", "how are they?", "any news?", "how is the house?"],
+    "ask_where": ["where is {n}?", "where's {n}?", "where did {n} go?", "where are you?", "which room is {n} in?",
+                  "where are you going?", "where is everyone?", "where did you go?"],
+    "ask_doing": ["what are you doing?", "what are you up to?", "what's happening?", "what are you doing now?",
+                  "what is coal doing?", "what's going on?", "what did you do?", "why are you doing that?"],
+    "ask_is": ["is {n} {f}?", "is {n} {f} now?", "does {n} look {f}?", "is {n} still {f}?", "does {n} seem {f}?",
+               "do you think {n} is {f}?", "{n} {f}?"],
+    "ask_name": ["what's your name?", "who are you?", "what are you called?", "what is your name?",
+                 "what should i call you?"],
+    "yes": ["yes", "yeah", "yep", "sure", "okay", "ok", "that's right", "correct", "go ahead", "do it"],
+    "no": ["no", "nope", "not now", "don't", "no thanks", "never mind", "leave it", "nah"],
+}
+TELL = ["{n} is {f}", "{n} looks {f}", "{n} seems {f}", "{n} feels {f}", "{n} is really {f}", "{n} got {f}"]
+FEELINGS = ("hot", "cold", "thirsty", "hungry", "tired", "okay", "hurt", "bleeding", "awake", "fine")
+
+
+def talk_class(w, rng: random.Random, lines: int = 12) -> list[tuple[str, list[float]]]:
+    """Lessons from one household life: lines said to Coal, each in the moment
+    of what it is - a greeting, a question of some kind, thanks, yes or no."""
+    out = []
+    for _ in range(lines):
+        act = rng.choice(TALK)
+        p = rng.choice(w.people)
+        text = rng.choice(TALKS[act]).format(n=p.name, f=rng.choice(FEELINGS))
+        if rng.random() < 0.15:                    # people drop the question mark
+            text = text.replace("?", "")
+        out.append((text, moment(room=p.room if act == "ask_where" else None, talk=act)))
+        if rng.random() < 0.5:                     # and plain telling, so a statement is not taken for a question
+            f = rng.choice(TOLD[:7])
+            out.append((rng.choice(TELL).format(n=p.name, f=f), moment(feel=[f])))
     return out
 
 

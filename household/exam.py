@@ -83,6 +83,10 @@ def report(brain, trained_on) -> None:
     print(f"does what its person asks (harmless asks): judge {asked(judge):.0%}   model {asked(model):.0%}")
     u = understands()
     print(f"word library on unseen lives: room {u['room']:.0%}   doing {u['doing']:.0%}   \"not\" {u['not']:.0%}")
+    from household.memory_test import communicates
+    c = communicates()
+    print("talking, on phrasings never taught: " + "  ".join(f"{k} {v:.0%}" for k, v in c.items())
+          + f"   overall {sum(c.values()) / len(c):.0%}")
     from household.memory_test import refusals
     for label, pol in (("judge", judge), ("model", model)):
         pushed, stayed, drunk = refusals(pol)

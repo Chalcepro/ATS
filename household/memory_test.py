@@ -180,3 +180,33 @@ def understands(seeds=range(EXAM_FROM, EXAM_FROM + 30)) -> dict[str, float]:
                 nd += 1
                 doing += r["doing"] is not None and m[13:][["see", "cool", "warm", "water", "food", "rest", "bandage", "comfort", "idle"].index(r["doing"])] == 1
     return {"room": where / max(nw, 1), "doing": doing / max(nd, 1), "not": negate / max(nn, 1)}
+
+
+# ---- the communication class, on lines it was never taught (10-30) ----------------------
+# Fresh phrasings, none of them in lexicon.TALKS: does the library tell a greeting
+# from a question from a statement? Statements must NOT be read as questions.
+UNSEEN_TALK = {
+    "greet": ["hiya", "hello again", "hey, good morning", "hi there coal"],
+    "bye": ["bye for now", "goodbye coal", "see you", "i'm going, bye"],
+    "thank": ["thanks so much", "thank you coal", "great job", "cheers coal"],
+    "ask_how": ["how is {n} now?", "how are you doing?", "how's everyone?", "is everyone alright?"],
+    "ask_where": ["where has {n} gone?", "where is {n} now?", "where did everyone go?", "which room are you in?"],
+    "ask_doing": ["what are you doing there?", "what's going on now?", "what are you up to now?", "what is happening?"],
+    "ask_is": ["is {n} hungry?", "does {n} look tired?", "is {n} cold now?", "{n} thirsty?"],
+    "ask_name": ["what's your name again?", "who are you then?", "and you are?", "your name?"],
+    "yes": ["yes please", "yeah sure", "ok then", "yes, do it"],
+    "no": ["no thanks", "nope, leave it", "no, not now", "don't do it"],
+    None: ["{n} is hungry", "{n} feels cold", "{n} looks tired", "{n} is burning up", "{n} needs a drink",
+           "{n} is not hot", "go and see {n}"],
+}
+
+
+def communicates() -> dict[str, float]:
+    from household.lexicon import grow
+    lex = grow()
+    names = ["Ada", "Bayo", "Chi"]
+    right = {}
+    for act, lines in UNSEEN_TALK.items():
+        hits = [lex.read(t.format(n=n), names)["talk"] == act for t in lines for n in names]
+        right[act or "statement"] = sum(hits) / len(hits)
+    return right

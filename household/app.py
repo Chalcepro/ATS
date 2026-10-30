@@ -98,6 +98,10 @@ class Session:
         # everything you say reaches it as its own person's words - a warning,
         # an urging, or nothing it has a meaning for yet
         self.w.heard = heard["meaning"]
+        if heard["talk"] and heard["talk"] not in ("yes", "no") or heard["talk"] and heard["who"] is None:
+            reply = self.answer(heard)
+            self.events.append({"hour": self.w.hour, "kind": "brain", "text": reply})
+            return {"reply": reply, "heard": heard}
         self.w.mentioned = [heard["who"]] if heard["who"] is not None else []
         if heard["who"] is None:
             reply = f"Heard you. {self.state()['doing']}"
@@ -118,6 +122,54 @@ class Session:
         self.events.append({"hour": self.w.hour, "kind": "brain", "text": reply})
         return {"reply": reply, "heard": heard}
 
+
+    def answer(self, heard: dict) -> str:
+        """Being greeted, asked or thanked: the kind of line is the library's
+        reading (learned); what goes in the answer is what Coal knows right now -
+        only what it can see, or what it was told."""
+        w, names, who, talk = self.w, [p.name for p in self.w.people], heard["who"], heard["talk"]
+
+        def seen(i: int) -> list[str] | None:
+            return narrate(w.people[i]) if w.in_sight(i) and w.senses["eyes"] else w.told.get(i) or None
+
+        def about(i: int) -> str:
+            s = seen(i)
+            if s is None:
+                return f"I can't see {names[i]} from here."
+            return sentence(names[i], s)
+
+        if talk == "greet":
+            return "Hello. " + self.state()["doing"]
+        if talk == "bye":
+            return "Bye. I'll keep an eye on everyone."
+        if talk == "thank":
+            return "You're welcome."
+        if talk == "ask_name":
+            return "I'm Coal. I look after this house."
+        if talk == "yes":
+            return "Okay."
+        if talk == "no":
+            return "Alright, I won't."
+        if talk == "ask_doing":
+            return self.state()["doing"]
+        if talk == "ask_where":
+            if who is None:
+                return f"I'm in the {w.here}."
+            return f"{names[who]} is in the {w.people[who].room}." if w.in_sight(who) else \
+                f"I don't know - I last saw {names[who]} somewhere else. I'm in the {w.here}."
+        if talk == "ask_is" and who is not None:
+            s = seen(who)
+            if s is None:
+                return f"I can't tell, I can't see {names[who]}."
+            asked = heard["felt"] or heard["about"]
+            if not asked:
+                return about(who)
+            yes = [f for f in asked if f in s]
+            return (f"Yes, {names[who]} is {' and '.join(yes)}." if yes else
+                    f"No, {names[who]} isn't {' or '.join(asked)}. ") + ("" if yes else about(who))
+        if who is not None:                       # how is Ada? / is Ada okay?
+            return about(who)
+        return " ".join(about(i) for i in range(len(names)))
 
 _whisper = None
 
