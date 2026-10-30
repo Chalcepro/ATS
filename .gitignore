@@ -24,5 +24,3 @@ replays/
 logs/
 briefings/
 
-# CoalOS pretend disk
-coalos/data/
