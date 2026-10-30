@@ -23,3 +23,6 @@ build_shot.png
 replays/
 logs/
 briefings/
+
+# CoalOS pretend disk
+coalos/data/
