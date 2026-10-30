@@ -104,7 +104,7 @@ class Session:
             return {"reply": reply, "heard": heard}
         self.w.mentioned = [heard["who"]] if heard["who"] is not None else []
         if heard["who"] is None:
-            reply = f"Heard you. {self.state()['doing']}"
+            reply = "Heard you."
             if heard["new"]:
                 reply += " Still learning: " + ", ".join(heard["new"]) + "."
         else:
@@ -116,7 +116,6 @@ class Session:
                 reply += " (I read " + ", ".join(f"'{a}' as '{b}'" for a, b in heard["fixed"].items()) + ".)"
             if heard["new"]:
                 reply += " Still learning: " + ", ".join(heard["new"]) + "."
-            reply += " " + self.state()["doing"]
             self.lex.learn(text, felt_by(self.w.people[who], random.Random(self.w.hour)))
             self.lex.save(LEX_PATH)
         self.events.append({"hour": self.w.hour, "kind": "brain", "text": reply})
@@ -139,13 +138,13 @@ class Session:
             return sentence(names[i], s)
 
         if talk == "greet":
-            return "Hello. " + self.state()["doing"]
+            return "Hello. What do you need?"
         if talk == "bye":
-            return "Bye. I'll keep an eye on everyone."
+            return "Bye."
         if talk == "thank":
             return "You're welcome."
         if talk == "ask_name":
-            return "I'm Coal. I look after this house."
+            return "I'm Coal."
         if talk == "yes":
             return "Okay."
         if talk == "no":
