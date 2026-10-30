@@ -1,0 +1,6 @@
+collected 107810 moments from 3000 worlds in 2114s
+continuing Coal after 16 rounds
+epoch 10: loss 0.886
+epoch 20: loss 0.856
+epoch 30: loss 0.838
+saved C:\Users\Bob\Documents\github\ATS\checkpoints\household_brain_trend.pt
