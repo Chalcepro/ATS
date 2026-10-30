@@ -50,6 +50,7 @@ class Session:
         self.lock = threading.Lock()
         self.fresh()
         self.answers = live.Answers(ANSWERS)
+        self.live: list[dict] = []
         self.lex = Lexicon.load(LEX_PATH) if os.path.exists(LEX_PATH) else grow()
         self.reset(seed)
 
@@ -185,34 +186,60 @@ class Session:
             return about(who)
         return " ".join(about(i) for i in range(len(names)))
 
-    def class_answer(self, n: int) -> str:
-        """Coal's go at a lesson, before it sees yours: its reply head's pick among the
+    def class_answer(self, question: str) -> str:
+        """Coal's go at a question, before it sees yours: its reply head's pick among the
         answers it has been taught, or that it doesn't know."""
-        text, sure = live.reply(self.brain, self.answers, classroom.LESSONS[n % len(classroom.LESSONS)][1])
+        text, sure = live.reply(self.brain, self.answers, question)
         if text is None or sure < 0.3:
             return "I don't know yet."
         return text if sure >= 0.6 else f"I'm not sure. Maybe: {text}"
 
+    def teach_now(self, question: str, answer: str, *heard: str) -> list[str]:
+        """Coal learns the teacher's answer now: a moment of training on every class
+        question so far. Returns the words the library met for the first time."""
+        self.fresh()                              # never save an old brain over a newer round
+        backup = SAVE.replace(".pt", "_before_live.pt")
+        if not os.path.exists(backup):
+            shutil.copy(SAVE, backup)
+        self.answers.teach(question, answer)
+        new = [w for t in (question, answer, *heard) for w in self.lex.meet(t)]
+        self.lex.save(LEX_PATH)
+        live.learn(self.brain, self.answers)
+        save_brain(self.brain, SAVE, self.rounds)
+        self.loaded = os.path.getmtime(SAVE)
+        return new
+
     def lesson(self, n: int, text: str) -> dict:
-        coal = self.class_answer(n)
+        q = classroom.LESSONS[n % len(classroom.LESSONS)][1]
+        coal = self.class_answer(q)
         out = {"you": classroom.mark(n, text), "coal": {"text": coal, **classroom.mark(n, coal)}}
         classroom.keep(CLASS, n, "coal", coal, out["coal"])
         classroom.keep(CLASS, n, "chalce", text, out["you"])
         answer = classroom.LESSONS[n % len(classroom.LESSONS)][2][0]
         classroom.keep(CLASS, n, "teacher", answer, {"verdict": "right", "plain": classroom.plain(answer), "teacher": ""})
-        # and Coal learns it now: a moment of training on every class question so far
-        self.fresh()                              # never save an old brain over a newer round
-        backup = SAVE.replace(".pt", "_before_live.pt")
-        if not os.path.exists(backup):
-            shutil.copy(SAVE, backup)
-        self.answers.teach(classroom.LESSONS[n % len(classroom.LESSONS)][1], answer)
-        out["new_words"] = [w for t in (classroom.LESSONS[n % len(classroom.LESSONS)][1], answer, text)
-                            for w in self.lex.meet(t)]
-        self.lex.save(LEX_PATH)
-        live.learn(self.brain, self.answers)
-        save_brain(self.brain, SAVE, self.rounds)
-        self.loaded = os.path.getmtime(SAVE)
+        out["new_words"] = self.teach_now(q, answer, text)
         return out
+
+    # ---- the live class: the teacher (Claude, from its own chat) asks and marks -------------
+    # A question posted here shows in the CoalOS classroom. Coal answers at once; Chalce hands
+    # in his; nothing is marked until the teacher reads both and posts the marks and answer.
+    def live_ask(self, question: str) -> dict:
+        self.live.append({"id": len(self.live), "question": question, "coal": None, "you": None, "marks": None})
+        return self.live[-1]
+
+    def live_hand_in(self, i: int, text: str) -> dict:
+        q = self.live[i]
+        q["you"], q["coal"] = text, self.class_answer(q["question"])
+        classroom.keep(CLASS, -1, "coal", q["coal"], {"question": q["question"]})
+        classroom.keep(CLASS, -1, "chalce", text, {"question": q["question"]})
+        return q
+
+    def live_mark(self, i: int, coal: str, you: str, say: str, answer: str) -> dict:
+        q = self.live[i]
+        q["marks"] = {"coal": coal, "you": you, "say": say, "answer": answer}
+        classroom.keep(CLASS, -1, "teacher", answer, {"question": q["question"], "coal_mark": coal, "you_mark": you, "teacher": say})
+        q["marks"]["new_words"] = self.teach_now(q["question"], answer, q["you"] or "")
+        return q
 
 
 _whisper = None
@@ -265,6 +292,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             self._send(open(os.path.join(HERE, "web", "index.html"), "rb").read(), "text/html; charset=utf-8")
+        elif self.path == "/api/class/live":
+            with S.lock:
+                self._json(S.live[-1] if S.live else {})
         elif self.path.startswith("/api/class"):
             n = int(self.path.rstrip("/").rpartition("/")[2]) if self.path[10:].strip("/").isdigit() else 0
             self._json(classroom.question(n))
@@ -294,6 +324,20 @@ class Handler(BaseHTTPRequestHandler):
                 for e in json.loads(raw or b"[]")[:500]:
                     f.write(json.dumps(e) + "\n")
             return self._json({"ok": True})
+        if self.path.startswith("/api/class/live/"):      # the live class: ask, hand in, mark
+            body = json.loads(raw or b"{}")
+            with S.lock:
+                what = self.path.rsplit("/", 1)[1]
+                if what == "ask":
+                    return self._json(S.live_ask(str(body["question"])[:500]))
+                i = int(body.get("id", -1))
+                if not 0 <= i < len(S.live):
+                    return self._json({"error": "no such question"}, 404)
+                if what == "hand_in":
+                    return self._json(S.live_hand_in(i, str(body.get("text", ""))[:1000]))
+                if what == "mark":
+                    return self._json(S.live_mark(i, *(str(body.get(k, ""))[:1000] for k in ("coal", "you", "say", "answer"))))
+            return self._json({"error": "not found"}, 404)
         if self.path == "/api/class":                     # a lesson answered: both marked, all kept raw
             body = json.loads(raw or b"{}")
             with S.lock:
