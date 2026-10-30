@@ -15,7 +15,14 @@ import torch
 import torch.nn as nn
 
 from household.words import VOCAB
+from household.desk_lessons import DESK_ACTS, DESK_SIZE, desk_names
 from household.world import ACTIONS, MAX_PEOPLE, MEM_SIZE, input_names
+
+IN_SIZE = MEM_SIZE + DESK_SIZE      # the household, then the desktop (gen1): one brain sees both
+
+
+def all_inputs() -> list[str]:
+    return input_names() + desk_names()
 
 MEANING = 16
 
@@ -23,25 +30,34 @@ MEANING = 16
 class HouseholdBrain(nn.Module):
     def __init__(self, hidden: int = 256):      # 128 until round 13: too small once refusal, rooms and warnings joined
         super().__init__()
-        self.body = nn.Sequential(nn.Linear(MEM_SIZE, hidden), nn.ReLU(), nn.Linear(hidden, hidden), nn.ReLU())
+        self.body = nn.Sequential(nn.Linear(IN_SIZE, hidden), nn.ReLU(), nn.Linear(hidden, hidden), nn.ReLU())
         self.act = nn.Linear(hidden, len(ACTIONS))
         self.target = nn.Linear(hidden, MAX_PEOPLE)
         self.condition = nn.Linear(hidden, MAX_PEOPLE * 3)
         self.foresight = nn.Linear(hidden, MAX_PEOPLE)
         self.words = nn.Linear(hidden, MAX_PEOPLE * len(VOCAB))
         self.meaning = nn.Linear(hidden, MEANING)
+        self.desk = nn.Linear(hidden, len(DESK_ACTS))   # what to do with this file
 
     def forward(self, obs: torch.Tensor) -> dict[str, torch.Tensor]:
+        if obs.shape[1] < IN_SIZE:                  # the household alone: no file in front of it
+            obs = torch.cat([obs, obs.new_zeros(obs.shape[0], IN_SIZE - obs.shape[1])], 1)
+        elif obs.shape[1] == DESK_SIZE:             # a file alone: the household part is blank
+            obs = torch.cat([obs.new_zeros(obs.shape[0], MEM_SIZE), obs], 1)
         h = self.body(obs)
         return {"act": self.act(h), "target": self.target(h),
                 "condition": self.condition(h).view(-1, MAX_PEOPLE, 3),
                 "foresight": self.foresight(h), "words": self.words(h).view(-1, MAX_PEOPLE, len(VOCAB)),
-                "meaning": torch.tanh(self.meaning(h))}
+                "meaning": torch.tanh(self.meaning(h)), "desk": self.desk(h)}
 
     @torch.no_grad()
     def choose(self, obs: list[float]) -> tuple[str, int]:
         out = self(torch.tensor([obs], dtype=torch.float32))
         return ACTIONS[int(out["act"].argmax())], int(out["target"].argmax())
+
+    @torch.no_grad()
+    def file_act(self, desk_obs: list[float]) -> int:
+        return int(self(torch.tensor([desk_obs], dtype=torch.float32))["desk"].argmax())
 
     @torch.no_grad()
     def say(self, obs: list[float], people: int) -> list[list[str]]:
@@ -54,7 +70,7 @@ class HouseholdBrain(nn.Module):
 def save(brain: HouseholdBrain, path: str, rounds: int) -> None:
     """The weights plus the names of what each input and output means, so a
     later, bigger world can take this brain over instead of starting again."""
-    torch.save({"state": brain.state_dict(), "inputs": input_names(), "actions": list(ACTIONS),
+    torch.save({"state": brain.state_dict(), "inputs": all_inputs(), "actions": list(ACTIONS),
                 "vocab": list(VOCAB), "hidden": brain.act.in_features, "rounds": rounds}, path)
 
 
@@ -74,7 +90,7 @@ def load(path: str, old_inputs: list[str] | None = None) -> tuple[HouseholdBrain
         if k == "body.0.weight":                    # inputs, by name
             pos = {name: j for j, name in enumerate(ck["inputs"])}
             w = torch.zeros_like(new[k])
-            for j, name in enumerate(input_names()):
+            for j, name in enumerate(all_inputs()):
                 if name in pos:
                     w[:, j] = v[:, pos[name]]
             new[k] = w

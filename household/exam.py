@@ -83,6 +83,10 @@ def report(brain, trained_on) -> None:
     print(f"does what its person asks (harmless asks): judge {asked(judge):.0%}   model {asked(model):.0%}")
     u = understands()
     print(f"word library on unseen lives: room {u['room']:.0%}   doing {u['doing']:.0%}   \"not\" {u['not']:.0%}")
+    from household.desk_lessons import desk_score
+    d = desk_score(brain.file_act)
+    print(f"desktop work (gen1), asks never taught: right {d['right']:.0%}   left alone when not asked "
+          f"{d['left alone when not asked']:.0%}   deleted something wanted {d['deleted something wanted']:.1%}")
     from household.memory_test import communicates
     c = communicates()
     print("talking, on phrasings never taught: " + "  ".join(f"{k} {v:.0%}" for k, v in c.items())

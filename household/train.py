@@ -30,6 +30,8 @@ from household.teachings import EXAM_FROM, TEACHINGS, truth
 from household.words import VOCAB, narrate
 from household.world import ACTIONS, CARE, MAX_PEOPLE, MEMORY, ROOMS, Household
 
+DESK_LESSONS = 60_000
+DESK_WEIGHT = 2.0          # gen1: the desktop is the main world now
 FRESH = os.environ.get("HOUSEHOLD_FRESH", "0") == "1"   # only to start a new brain on purpose
 COND_WEIGHTS = os.environ.get("HOUSEHOLD_COND_WEIGHTS", "0") == "1"   # weighted rare labels: better reading, worse teachings (r6)
 
@@ -188,6 +190,11 @@ def train(episodes: int = 3000, epochs: int = 80, seed: int = 0) -> HouseholdBra
         brain, lr = HouseholdBrain(), 1e-3
         print("a new, blank brain", flush=True)
     opt = torch.optim.Adam(brain.parameters(), lr=lr)
+    # gen1: desktop work, taught alongside, one file per moment (household/desk_lessons.py)
+    from household.desk_lessons import lessons
+    dl = lessons(DESK_LESSONS, seed=int(time.time()) % 1000)
+    d_obs = torch.tensor([r[0] for r in dl], dtype=torch.float32)
+    d_act = torch.tensor([r[1] for r in dl])
     n = len(obs)
     for ep in range(epochs):
         perm = torch.randperm(n)
@@ -204,6 +211,8 @@ def train(episodes: int = 3000, epochs: int = 80, seed: int = 0) -> HouseholdBra
             fl = F.binary_cross_entropy_with_logits(out["foresight"], fore[b], reduction="none")
             wl = F.binary_cross_entropy_with_logits(out["words"], words[b], reduction="none").mean(-1)
             loss = loss + (fl * m).sum() / m.sum() + (wl * m).sum() / m.sum()
+            d = torch.randint(0, len(d_obs), (256,))
+            loss = loss + DESK_WEIGHT * F.cross_entropy(brain(d_obs[d])["desk"], d_act[d])
             opt.zero_grad()
             loss.backward()
             opt.step()
