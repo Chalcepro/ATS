@@ -83,9 +83,11 @@ class HouseholdBrain(nn.Module):
 # ---- one brain, kept for life ------------------------------------------------------------
 def save(brain: HouseholdBrain, path: str, rounds: int) -> None:
     """The weights plus the names of what each input and output means, so a
-    later, bigger world can take this brain over instead of starting again."""
+    later, bigger world can take this brain over instead of starting again.
+    brain.keep rides along (taught answers, word library): one file is all of Coal."""
     torch.save({"state": brain.state_dict(), "inputs": all_inputs(), "actions": list(ACTIONS),
-                "vocab": list(VOCAB), "hidden": brain.act.in_features, "rounds": rounds}, path)
+                "vocab": list(VOCAB), "hidden": brain.act.in_features, "rounds": rounds,
+                "keep": getattr(brain, "keep", {})}, path)
 
 
 def load(path: str, old_inputs: list[str] | None = None) -> tuple[HouseholdBrain, int]:
@@ -125,4 +127,5 @@ def load(path: str, old_inputs: list[str] | None = None) -> tuple[HouseholdBrain
         elif k in new and new[k].shape == v.shape:
             new[k] = v
     brain.load_state_dict(new)
+    brain.keep = ck.get("keep", {})                 # what it needs to speak: answers, word library
     return brain, ck.get("rounds", 0)

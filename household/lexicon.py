@@ -198,8 +198,12 @@ class Lexicon:
 
     @classmethod
     def load(cls, path: str) -> "Lexicon":
+        return cls.from_dict(json.load(open(path, encoding="utf-8")))
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Lexicon":
         lex = cls()
-        lex.__dict__.update(json.load(open(path, encoding="utf-8")))
+        lex.__dict__.update(d)
         if len(lex.usual) != len(FEATURES):          # an older library: start it again
             return grow()
         return lex

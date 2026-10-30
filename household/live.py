@@ -42,9 +42,10 @@ def class_obs(question: str) -> list[float]:
 class Answers:
     """The answers Coal has been taught, and every (question, answer) it met in class."""
 
-    def __init__(self, path: str):
-        self.path = path
-        d = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
+    def __init__(self, path: str, d: dict | None = None):
+        self.path = path                                 # a readable copy; the brain file holds the real one
+        if d is None:
+            d = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
         self.texts: list[str] = d.get("texts", [])
         self.pairs: list[list] = d.get("pairs", [])     # [question, answer id]
 
@@ -55,8 +56,11 @@ class Answers:
             self.texts.append(answer)
         i = self.texts.index(answer)
         self.pairs.append([question, i])
-        json.dump({"texts": self.texts, "pairs": self.pairs}, open(self.path, "w", encoding="utf-8"), indent=1)
+        json.dump(self.to_dict(), open(self.path, "w", encoding="utf-8"), indent=1)
         return i
+
+    def to_dict(self) -> dict:
+        return {"texts": self.texts, "pairs": self.pairs}
 
 
 @torch.no_grad()

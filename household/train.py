@@ -230,6 +230,8 @@ def train(episodes: int = 3000, epochs: int = 80, seed: int = 0) -> HouseholdBra
         if ep % 10 == 9 or ep == epochs - 1:
             print(f"epoch {ep + 1}: loss {total / n:.3f}", flush=True)
     os.makedirs(os.path.dirname(SAVE), exist_ok=True)
+    if os.path.exists(SAVE):                        # answers and words taught in class during the round
+        brain.keep = load_brain(SAVE)[0].keep
     save_brain(brain, SAVE, rounds + 1)
     print("saved", SAVE)
     return brain

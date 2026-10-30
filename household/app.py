@@ -49,9 +49,11 @@ class Session:
     def __init__(self, seed: int = 7):
         self.lock = threading.Lock()
         self.fresh()
-        self.answers = live.Answers(ANSWERS)
+        keep = self.brain.keep                    # the brain file carries these; the json files are copies
+        self.answers = live.Answers(ANSWERS, keep.get("answers"))
         self.live: list[dict] = []
-        self.lex = Lexicon.load(LEX_PATH) if os.path.exists(LEX_PATH) else grow()
+        self.lex = (Lexicon.from_dict(keep["lexicon"]) if "lexicon" in keep
+                    else Lexicon.load(LEX_PATH) if os.path.exists(LEX_PATH) else grow())
         self.reset(seed)
 
     def fresh(self) -> None:
@@ -60,6 +62,13 @@ class Session:
             self.brain, self.rounds = load_brain(SAVE)
             self.brain.eval()
             self.loaded = os.path.getmtime(SAVE)
+
+    def keep(self) -> None:
+        """Save the brain with its answers and word library inside, so the one file is all of Coal."""
+        self.fresh()                              # never save an old brain over a newer round
+        self.brain.keep = {"answers": self.answers.to_dict(), "lexicon": dict(self.lex.__dict__)}
+        save_brain(self.brain, SAVE, self.rounds)
+        self.loaded = os.path.getmtime(SAVE)
 
     def reset(self, seed: int) -> None:
         self.w = Household(seed=seed, people=3)
@@ -132,6 +141,7 @@ class Session:
                 reply += " Still learning: " + ", ".join(heard["new"]) + "."
             self.lex.learn(text, felt_by(self.w.people[who], random.Random(self.w.hour)))
             self.lex.save(LEX_PATH)
+            self.keep()
         self.events.append({"hour": self.w.hour, "kind": "brain", "text": reply})
         return {"reply": reply, "heard": heard}
 
@@ -205,8 +215,7 @@ class Session:
         new = [w for t in (question, answer, *heard) for w in self.lex.meet(t)]
         self.lex.save(LEX_PATH)
         live.learn(self.brain, self.answers)
-        save_brain(self.brain, SAVE, self.rounds)
-        self.loaded = os.path.getmtime(SAVE)
+        self.keep()
         return new
 
     def lesson(self, n: int, text: str) -> dict:
