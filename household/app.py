@@ -48,11 +48,17 @@ WATCH = os.path.join(os.path.dirname(SAVE), "coal_watch.jsonl")      # what the 
 class Session:
     def __init__(self, seed: int = 7):
         self.lock = threading.Lock()
-        self.brain, self.rounds = load_brain(SAVE)
-        self.brain.eval()
+        self.fresh()
         self.answers = live.Answers(ANSWERS)
         self.lex = Lexicon.load(LEX_PATH) if os.path.exists(LEX_PATH) else grow()
         self.reset(seed)
+
+    def fresh(self) -> None:
+        """Load the saved brain (again, if a training round has saved a newer one since)."""
+        if getattr(self, "loaded", 0) < os.path.getmtime(SAVE):
+            self.brain, self.rounds = load_brain(SAVE)
+            self.brain.eval()
+            self.loaded = os.path.getmtime(SAVE)
 
     def reset(self, seed: int) -> None:
         self.w = Household(seed=seed, people=3)
@@ -195,6 +201,7 @@ class Session:
         answer = classroom.LESSONS[n % len(classroom.LESSONS)][2][0]
         classroom.keep(CLASS, n, "teacher", answer, {"verdict": "right", "plain": classroom.plain(answer), "teacher": ""})
         # and Coal learns it now: a moment of training on every class question so far
+        self.fresh()                              # never save an old brain over a newer round
         backup = SAVE.replace(".pt", "_before_live.pt")
         if not os.path.exists(backup):
             shutil.copy(SAVE, backup)
@@ -204,6 +211,7 @@ class Session:
         self.lex.save(LEX_PATH)
         live.learn(self.brain, self.answers)
         save_brain(self.brain, SAVE, self.rounds)
+        self.loaded = os.path.getmtime(SAVE)
         return out
 
 
