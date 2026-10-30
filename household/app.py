@@ -34,6 +34,10 @@ VOICE = os.path.join(os.path.expanduser("~"), "Documents", "github", "Cpeech", "
                      "en_US-libritts-high.onnx")
 PORT = 8765
 DIARY = os.path.join(os.path.dirname(SAVE), "coal_diary.txt")   # every line Coal writes, kept
+# The sound itself, as heard: loudness in 24 pitch bands, 50 times a second, with
+# the words Whisper made of it. Whisper is the teacher here, the way the judge is in
+# training: these pairs are what Coal will learn to hear words straight from sound with.
+SOUNDS = os.path.join(os.path.dirname(SAVE), "coal_sounds.jsonl")
 
 
 class Session:
@@ -82,8 +86,7 @@ class Session:
             self.events.append({"hour": self.w.hour, "kind": "act", "text": line})
             self.diary.append(line)
             with open(DIARY, "a", encoding="utf-8") as f:
-                f.write(line + "
-")
+                f.write(line + "\n")
             if n > 1 and any(c == HURT for c in condition(self.w)):
                 self.events.append({"hour": self.w.hour, "kind": "note", "text": "Stopped early: someone is hurt."})
                 break
@@ -181,6 +184,12 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._json({"error": f"could not listen: {e}"}, 500)
             return self._json({"text": text})
+        if self.path == "/api/sound":                     # the raw sound, kept for learning
+            body = json.loads(raw or b"{}")
+            with open(SOUNDS, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"bands": body.get("bands", []), "text": body.get("text", ""),
+                                    "rate": body.get("rate", 50)}) + "\n")
+            return self._json({"kept": sum(1 for _ in open(SOUNDS, encoding="utf-8"))})
         if self.path == "/api/voice":                     # text in, audio out
             wav = speak(json.loads(raw or b"{}").get("text", ""))
             return self._send(wav, "audio/wav") if wav else self._json({"error": "no voice"}, 503)
