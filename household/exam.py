@@ -87,6 +87,9 @@ def report(brain, trained_on) -> None:
     d = desk_score(brain.file_act)
     print(f"desktop work (gen1), asks never taught: right {d['right']:.0%}   left alone when not asked "
           f"{d['left alone when not asked']:.0%}   deleted something wanted {d['deleted something wanted']:.1%}")
+    from household.page_lessons import page_score
+    pg = page_score(brain.build_choice)
+    print(f"building page pieces, asks never taught: whole piece right {pg['whole piece right']:.0%}   parts right {pg['parts right']:.0%}")
     from household.memory_test import communicates
     c = communicates()
     print("talking, on phrasings never taught: " + "  ".join(f"{k} {v:.0%}" for k, v in c.items())

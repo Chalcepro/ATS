@@ -100,15 +100,35 @@ EXAM_CHANGE = ["can you make it a bit bigger", "now move it down to the bottom",
                "make it the whole width"]
 
 
+FRAMES = ["make a {d} {e} {p}", "add a {d} {e} {p}", "put a {d} {e} {p}", "i need a {d} {e} {p}", "a {d} {e} {p}"]
+WHERE = {"top": "at the top", "bottom": "at the bottom", "left": "on the left", "right": "on the right", "middle": "in the middle"}
+
+
+def mixed(rng: random.Random) -> str:
+    """A new piece said with any of the words the teacher knows, so every word is met."""
+    pick = lambda part: rng.choice(rng.choice(list(SAYS[part].values())))
+    looks = [pick(q) for q in ("color", "width", "height", "corners") if rng.random() < 0.4]
+    e = pick("element")
+    place = rng.choice(list(SAYS["place"].values()))
+    p = rng.choice([WHERE.get(k, "") for k in WHERE] + [f"at the {w}" for w in place])
+    return " ".join(rng.choice(FRAMES).format(d=" ".join(looks), e=e, p=p).split())
+
+
 def lessons(n: int, seed: int, new=NEW, change=CHANGE) -> list[tuple[list[float], dict]]:
     """n moments: (what the brain sees, the teacher's choice for every part)."""
     rng = random.Random(seed)
     out = []
     for _ in range(n):
-        if rng.random() < 0.5:
+        if new is NEW and rng.random() < 0.35:
+            ask, now = mixed(rng), None
+        elif rng.random() < 0.5:
             ask, now = rng.choice(new), None
         else:
             ask, now = rng.choice(change), teacher(rng.choice(new), None)
+            if new is NEW and rng.random() < 0.4:      # any known word as a change
+                q = rng.choice(("color", "width", "height", "corners", "place"))
+                w = rng.choice(rng.choice(list(SAYS[q].values())))
+                ask = rng.choice(["make it {w}", "now {w}", "can you make it {w}", "change it to {w}", "move it to the {w}"]).format(w=w)
         out.append((page_obs(ask, now), teacher(ask, now)))
     return out
 

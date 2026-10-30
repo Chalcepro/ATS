@@ -16,13 +16,14 @@ import torch.nn as nn
 
 from household.words import VOCAB
 from household.desk_lessons import DESK_ACTS, DESK_SIZE, desk_names
+from household.page_lessons import PAGE_SIZE, PARTS, page_names
 from household.world import ACTIONS, MAX_PEOPLE, MEM_SIZE, input_names
 
-IN_SIZE = MEM_SIZE + DESK_SIZE      # the household, then the desktop (gen1): one brain sees both
+IN_SIZE = MEM_SIZE + DESK_SIZE + PAGE_SIZE   # the household, the desktop (gen1), a web page: one brain sees all
 
 
 def all_inputs() -> list[str]:
-    return input_names() + desk_names()
+    return input_names() + desk_names() + page_names()
 
 MEANING = 16
 
@@ -38,17 +39,21 @@ class HouseholdBrain(nn.Module):
         self.words = nn.Linear(hidden, MAX_PEOPLE * len(VOCAB))
         self.meaning = nn.Linear(hidden, MEANING)
         self.desk = nn.Linear(hidden, len(DESK_ACTS))   # what to do with this file
+        self.page = nn.ModuleDict({p: nn.Linear(hidden, len(cs)) for p, cs in PARTS.items()})   # a page piece, part by part
 
     def forward(self, obs: torch.Tensor) -> dict[str, torch.Tensor]:
-        if obs.shape[1] < IN_SIZE:                  # the household alone: no file in front of it
-            obs = torch.cat([obs, obs.new_zeros(obs.shape[0], IN_SIZE - obs.shape[1])], 1)
-        elif obs.shape[1] == DESK_SIZE:             # a file alone: the household part is blank
-            obs = torch.cat([obs.new_zeros(obs.shape[0], MEM_SIZE), obs], 1)
+        z = lambda k: obs.new_zeros(obs.shape[0], k)
+        if obs.shape[1] == DESK_SIZE:               # a file alone: the rest is blank
+            obs = torch.cat([z(MEM_SIZE), obs, z(PAGE_SIZE)], 1)
+        elif obs.shape[1] == PAGE_SIZE:             # a page piece alone
+            obs = torch.cat([z(MEM_SIZE + DESK_SIZE), obs], 1)
+        elif obs.shape[1] < IN_SIZE:                # the household alone (or with a file)
+            obs = torch.cat([obs, z(IN_SIZE - obs.shape[1])], 1)
         h = self.body(obs)
         return {"act": self.act(h), "target": self.target(h),
                 "condition": self.condition(h).view(-1, MAX_PEOPLE, 3),
                 "foresight": self.foresight(h), "words": self.words(h).view(-1, MAX_PEOPLE, len(VOCAB)),
-                "meaning": torch.tanh(self.meaning(h)), "desk": self.desk(h)}
+                "meaning": torch.tanh(self.meaning(h)), "desk": self.desk(h), "page": {p: head(h) for p, head in self.page.items()}}
 
     @torch.no_grad()
     def choose(self, obs: list[float]) -> tuple[str, int]:
@@ -58,6 +63,11 @@ class HouseholdBrain(nn.Module):
     @torch.no_grad()
     def file_act(self, desk_obs: list[float]) -> int:
         return int(self(torch.tensor([desk_obs], dtype=torch.float32))["desk"].argmax())
+
+    @torch.no_grad()
+    def build_choice(self, page_obs: list[float]) -> dict[str, str]:
+        out = self(torch.tensor([page_obs], dtype=torch.float32))["page"]
+        return {p: PARTS[p][int(out[p].argmax())] for p in PARTS}
 
     @torch.no_grad()
     def say(self, obs: list[float], people: int) -> list[list[str]]:

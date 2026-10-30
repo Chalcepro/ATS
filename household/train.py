@@ -31,6 +31,8 @@ from household.words import VOCAB, narrate
 from household.world import ACTIONS, CARE, MAX_PEOPLE, MEMORY, ROOMS, Household
 
 DESK_LESSONS = 60_000
+PAGE_LESSONS = 40_000       # page pieces from plain asks (10-30)
+PAGE_WEIGHT = 2.0
 DESK_WEIGHT = 2.0          # gen1: the desktop is the main world now
 FRESH = os.environ.get("HOUSEHOLD_FRESH", "0") == "1"   # only to start a new brain on purpose
 COND_WEIGHTS = os.environ.get("HOUSEHOLD_COND_WEIGHTS", "0") == "1"   # weighted rare labels: better reading, worse teachings (r6)
@@ -195,6 +197,11 @@ def train(episodes: int = 3000, epochs: int = 80, seed: int = 0) -> HouseholdBra
     dl = lessons(DESK_LESSONS, seed=int(time.time()) % 1000)
     d_obs = torch.tensor([r[0] for r in dl], dtype=torch.float32)
     d_act = torch.tensor([r[1] for r in dl])
+    # and building page pieces from plain asks (household/page_lessons.py)
+    from household.page_lessons import PARTS, lessons as page_lessons
+    pl = page_lessons(PAGE_LESSONS, seed=int(time.time()) % 1000 + 1)
+    p_obs = torch.tensor([r[0] for r in pl], dtype=torch.float32)
+    p_want = {p: torch.tensor([cs.index(r[1][p]) for r in pl]) for p, cs in PARTS.items()}
     n = len(obs)
     for ep in range(epochs):
         perm = torch.randperm(n)
@@ -213,6 +220,9 @@ def train(episodes: int = 3000, epochs: int = 80, seed: int = 0) -> HouseholdBra
             loss = loss + (fl * m).sum() / m.sum() + (wl * m).sum() / m.sum()
             d = torch.randint(0, len(d_obs), (256,))
             loss = loss + DESK_WEIGHT * F.cross_entropy(brain(d_obs[d])["desk"], d_act[d])
+            g = torch.randint(0, len(p_obs), (256,))
+            pg = brain(p_obs[g])["page"]
+            loss = loss + PAGE_WEIGHT * sum(F.cross_entropy(pg[p], p_want[p][g]) for p in PARTS) / len(PARTS)
             opt.zero_grad()
             loss.backward()
             opt.step()
