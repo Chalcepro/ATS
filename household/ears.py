@@ -17,6 +17,7 @@ from the bands. The words it can hear keep their slot numbers inside the brain f
 
 Run (makes lessons once, then teaches the ears on the brain, then the exam):
   python -m household.ears lessons
+  python -m household.ears many
   python -m household.ears teach
   python -m household.ears exam
 """
@@ -35,13 +36,16 @@ import torch.nn.functional as F
 
 BANDS = 24
 STEP = 2                    # two 20 ms browser slices make one ear slice (40 ms)
-EAR_FRAMES = 8              # the window: 8 x 40 ms, about a third of a second
+EAR_FRAMES = 25             # the window: 25 x 40 ms, one second (a third was too short to hear a sentence end)
 EAR_WORDS = 512             # slots for words it can hear; slot 0 is "no word"
 ENDS = ["quiet", "speaking", "pause", "stop", "question"]
 EAR_CUES = 32               # slots for sound cues; slot 0 is "speech or nothing"
+SURE = 0.5                  # a word is only said when the ear is at least this sure
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LESSONS = os.path.join(ROOT, "checkpoints", "ear_lessons.npz")
+MANY = os.path.join(ROOT, "checkpoints", "ear_lessons_many.npz")      # many speakers, one LibriTTS voice file
+HELD_SPEAKERS = (900, 901, 902, 903)                                   # never practised with: the exam
 CUES = os.path.join(ROOT, "sounds", "coalos")
 VOICES = os.path.join(os.path.expanduser("~"), "Documents", "github", "Cpeech", "piper-voices")
 
@@ -85,14 +89,16 @@ def slices(b: np.ndarray) -> np.ndarray:
 
 def ear_obs(s: np.ndarray, t: int) -> list[float]:
     """What the ear gives the brain at slice t: the last EAR_FRAMES slices, each band
-    against the loudest of the window (so a quiet mic and a loud one sound alike),
+    taken against its own average over the window - so a deep voice and a high one, a
+    quiet mic and a loud one, sound alike, the way an ear gets used to a new speaker -
     and how loud the window is."""
     w = s[max(0, t - EAR_FRAMES + 1):t + 1]
     if len(w) < EAR_FRAMES:
         w = np.concatenate([np.full((EAR_FRAMES - len(w), BANDS), -140, np.float32), w])
     top = float(w.max())
-    rel = np.clip((w - top) / 40.0, -1.5, 0.0) + 1.5
-    return list(rel.reshape(-1) / 1.5) + [float(np.clip((top + 140) / 100, 0, 1.2))]
+    w = np.maximum(w, top - 60)                         # below 60 dB under the loudest is silence
+    rel = np.clip((w - w.mean(0)) / 20.0, -2, 2) / 2
+    return list(rel.reshape(-1)) + [float(np.clip((top + 140) / 100, 0, 1.2))]
 
 
 def ear_all(s: np.ndarray) -> np.ndarray:
@@ -135,27 +141,128 @@ def make_lessons() -> None:
     from piper.config import SynthesisConfig
     whisper = WhisperModel("small.en", device="cpu", compute_type="int8")
     texts = sentences()
-    voices = sorted(glob.glob(os.path.join(VOICES, "*.onnx")))
+    voices = sorted(v for v in glob.glob(os.path.join(VOICES, "*.onnx")) if os.path.exists(v + ".json"))
     print(f"{len(texts)} sentences x {len(voices)} voices x 2 speeds", flush=True)
     rng = random.Random(1)
     clips = []
+
+    def mark(batch, rate):
+        """Whisper always listens to 30 s at a time, so ~8 sentences go in together (with
+        gaps) and each word goes back to the sentence it fell in."""
+        gap = np.zeros(int(rate * 0.7), np.float32)
+        starts, joined, at = [], [], 0
+        for audio in batch:
+            starts.append(at / rate); joined += [audio, gap]; at += len(audio) + len(gap)
+        whole = np.concatenate(joined)
+        a16 = np.interp(np.linspace(0, len(whole) - 1, int(len(whole) * 16000 / rate)), np.arange(len(whole)), whole)
+        try:
+            segs, _ = whisper.transcribe(a16.astype(np.float32), language="en", word_timestamps=True, beam_size=1,
+                                         condition_on_previous_text=False)
+            found = [(w.word, w.start, w.end) for s in segs for w in (s.words or [])]
+        except IndexError:                              # a faster-whisper alignment bug: one at a time instead
+            if len(batch) == 1:
+                return [None]
+            return [x for a in batch for x in mark([a], rate)]
+        out = [[] for _ in batch]
+        for w, a, b in found:
+            k = max(i for i, st in enumerate(starts) if st <= a + 0.05)
+            out[k].append((w, a - starts[k], b - starts[k]))
+        return out
+
+    part = LESSONS + ".part.npz"                        # saved after every voice, so a crash resumes
+    done = set()
+    if os.path.exists(part):
+        clips = list(np.load(part, allow_pickle=True)["clips"])
+        done = {(c["voice"], c.get("speed", 1.0)) for c in clips}
     for vp in voices:
         voice = PiperVoice.load(vp)
+        rate = voice.config.sample_rate
         for speed in (1.0, 1.25):
+            if (os.path.basename(vp), speed) in done:
+                continue
+            made = []
             for text in texts:
                 audio = np.concatenate([c.audio_float_array for c in
                                         voice.synthesize(text, SynthesisConfig(length_scale=speed))])
-                rate = voice.config.sample_rate
                 pad = np.zeros(int(rate * rng.uniform(0.2, 0.5)), np.float32)
-                audio = np.concatenate([pad, audio, pad])
-                audio = audio * rng.uniform(0.2, 1.0) + rng.gauss(0, 1) * 0.003 * np.random.randn(len(audio)).astype(np.float32)
-                a16 = np.interp(np.linspace(0, len(audio) - 1, int(len(audio) * 16000 / rate)), np.arange(len(audio)), audio)
-                segs, _ = whisper.transcribe(a16.astype(np.float32), language="en", word_timestamps=True, beam_size=1)
-                words = [(w.word, w.start, w.end) for s in segs for w in (s.words or [])]
-                clips.append({"bands": bands(audio, rate), "words": words, "text": text, "voice": os.path.basename(vp)})
+                audio = np.concatenate([pad, audio, pad]) * rng.uniform(0.2, 1.0)
+                audio = audio + rng.uniform(0, 0.004) * np.random.randn(len(audio)).astype(np.float32)
+                made.append((text, audio))
+            batch = []
+            for i, (text, audio) in enumerate(made):
+                batch.append((text, audio))
+                if sum(len(a) for _, a in batch) > rate * 22 or i + 1 == len(made):
+                    for (t, a), words in zip(batch, mark([a for _, a in batch], rate)):
+                        if words is not None:
+                            clips.append({"bands": bands(a, rate), "words": words, "text": t,
+                                          "voice": os.path.basename(vp), "speed": speed})
+                    batch = []
+            np.savez_compressed(part, clips=np.array(clips, dtype=object))
             print(f"  {os.path.basename(vp)} x{speed}: {len(clips)} clips", flush=True)
     np.savez_compressed(LESSONS, clips=np.array(clips, dtype=object))
     print("saved", LESSONS)
+
+
+def make_many(speakers: int = 60, each: int = 50) -> None:
+    """LibriTTS holds 904 speakers in one voice file: many people, so the ears learn
+    speech, not six voices. Saved every 10 speakers, so a stop resumes."""
+    from faster_whisper import WhisperModel
+    from piper import PiperVoice
+    from piper.config import SynthesisConfig
+    whisper = WhisperModel("small.en", device="cpu", compute_type="int8")
+    voice = PiperVoice.load(os.path.join(VOICES, "en_US-libritts-high.onnx"))
+    rate = voice.config.sample_rate
+    texts = sentences()
+    rng = random.Random(7)
+    pick = rng.sample(range(900), speakers) + list(HELD_SPEAKERS)
+    clips = list(np.load(MANY, allow_pickle=True)["clips"]) if os.path.exists(MANY) else []
+    done = {c["voice"] for c in clips}
+    for n, spk in enumerate(pick):
+        if f"libritts#{spk}" in done:
+            continue
+        r = random.Random(spk)
+        made = []
+        for text in r.sample(texts, each):
+            cfg = SynthesisConfig(speaker_id=spk, length_scale=r.uniform(0.85, 1.3))
+            audio = np.concatenate([c.audio_float_array for c in voice.synthesize(text, cfg)])
+            pad = np.zeros(int(rate * r.uniform(0.2, 0.5)), np.float32)
+            audio = np.concatenate([pad, audio, pad]) * r.uniform(0.2, 1.0)
+            made.append((text, audio + r.uniform(0, 0.004) * np.random.randn(len(audio)).astype(np.float32)))
+        batch = []
+        for i, (text, audio) in enumerate(made):
+            batch.append((text, audio))
+            if sum(len(a) for _, a in batch) > rate * 22 or i + 1 == len(made):
+                for (t, a), words in zip(batch, _mark(whisper, [a for _, a in batch], rate)):
+                    if words is not None:
+                        clips.append({"bands": bands(a, rate), "words": words, "text": t, "voice": f"libritts#{spk}"})
+                batch = []
+        if n % 10 == 9 or n + 1 == len(pick):
+            np.savez_compressed(MANY, clips=np.array(clips, dtype=object))
+        print(f"  speaker {spk}: {len(clips)} clips", flush=True)
+    np.savez_compressed(MANY, clips=np.array(clips, dtype=object))
+    print("saved", MANY)
+
+
+def _mark(whisper, batch, rate):
+    """Whisper always listens to 30 s at a time, so several sentences go in together (with
+    gaps) and each word goes back to the sentence it fell in. None for one it can't mark."""
+    gap = np.zeros(int(rate * 0.7), np.float32)
+    starts, joined, at = [], [], 0
+    for audio in batch:
+        starts.append(at / rate); joined += [audio, gap]; at += len(audio) + len(gap)
+    whole = np.concatenate(joined)
+    a16 = np.interp(np.linspace(0, len(whole) - 1, int(len(whole) * 16000 / rate)), np.arange(len(whole)), whole)
+    try:
+        segs, _ = whisper.transcribe(a16.astype(np.float32), language="en", word_timestamps=True, beam_size=1,
+                                     condition_on_previous_text=False)
+        found = [(w.word, w.start, w.end) for s in segs for w in (s.words or [])]
+    except IndexError:                                  # a faster-whisper alignment bug: one at a time instead
+        return [None] if len(batch) == 1 else [x for a in batch for x in _mark(whisper, [a], rate)]
+    out = [[] for _ in batch]
+    for w, a, b in found:
+        k = max(i for i, st in enumerate(starts) if st <= a + 0.05)
+        out[k].append((w, a - starts[k], b - starts[k]))
+    return out
 
 
 def labels(clip: dict, vocab: dict) -> tuple[np.ndarray, list[int], list[int]]:
@@ -201,20 +308,36 @@ def cue_clips() -> list[tuple[str, np.ndarray, str]]:
 
 # ---- teaching the ears ---------------------------------------------------------------------
 def moving(brain):
-    """The parts that learn to hear: the ear's columns of the first layer (the rest of
-    that layer gets no change, since only ear inputs are on) and the three ear heads."""
-    return [brain.body[0].weight, *brain.hear.parameters(), *brain.hear_end.parameters(), *brain.hear_cue.parameters()]
+    """The parts that learn to hear: the hearing area and its three heads, nothing else."""
+    return [*brain.ear.parameters(), *brain.hear.parameters(), *brain.hear_end.parameters(), *brain.hear_cue.parameters()]
 
 
-def teach(brain, epochs: int = 6, held_voice: str = "en_US-joy-high.onnx") -> dict:
-    clips = list(np.load(LESSONS, allow_pickle=True)["clips"])
+HELD = {"en_US-lessac-medium.onnx", "chalce-held", *(f"libritts#{s}" for s in HELD_SPEAKERS)}   # voices kept for the exam
+
+
+def all_clips() -> list[dict]:
+    """Piper's voices, LibriTTS's speakers, and Chalce himself: every time he speaks to Coal,
+    Whisper marks where his words fell (app.py), so his real voice and mic become lessons.
+    Every fifth of his is kept back for the exam."""
+    out = [c for f in (LESSONS, MANY) if os.path.exists(f) for c in np.load(f, allow_pickle=True)["clips"]]
+    sounds = os.path.join(ROOT, "checkpoints", "coal_sounds.jsonl")
+    if os.path.exists(sounds):
+        his = [json.loads(l) for l in open(sounds, encoding="utf-8")]
+        his = [d for d in his if d.get("words") and len(d["bands"]) > 20]
+        out += [{"bands": np.array(d["bands"], np.float32), "words": d["words"], "text": d["text"],
+                 "voice": "chalce-held" if i % 5 == 4 else "chalce"} for i, d in enumerate(his)]
+    return out
+
+
+def teach(brain, epochs: int = 12) -> dict:
+    clips = all_clips()
     keep = brain.keep.setdefault("ear_words", ["(none)"])
     vocab = {w: i for i, w in enumerate(keep)}
     cues = brain.keep.setdefault("ear_cues", ["(none)"])
     X, W, E, C, test = [], [], [], [], []
     for c in clips:
         s, w, e = labels(c, vocab)
-        if c["voice"] == held_voice:
+        if c["voice"] in HELD:
             test.append((s, w, e))
             continue
         X.append(ear_all(s)); W += w; E += e; C += [0] * len(s)
@@ -269,12 +392,17 @@ def listen(brain, b, browser: bool = True) -> dict:
     out = brain(torch.tensor(ear_all(s)))
     words = brain.keep.get("ear_words", ["(none)"])
     cues = brain.keep.get("ear_cues", ["(none)"])
-    w = out["hear"].argmax(1).tolist()
-    heard, last = [], 0
-    for i in w:
-        if i and i != last and i < len(words):
-            heard.append(words[i])
-        last = i
+    p = out["hear"].softmax(1)
+    sure, w = p.max(1)
+    w = [i if s >= SURE else 0 for i, s in zip(w.tolist(), sure.tolist())]
+    heard, last, run = [], 0, 0
+    for i in w + [0]:                                   # a word counts once it is held for two slices (80 ms)
+        if i == last:
+            run += 1
+            continue
+        if last and run >= 2 and last < len(words):
+            heard.append(words[last])
+        last, run = i, 1
     e = out["hear_end"].argmax(1).tolist()
     c = out["hear_cue"].softmax(1).mean(0)
     cue = cues[int(c.argmax())] if int(c.argmax()) < len(cues) and float(c.max()) > 0.5 else None
@@ -287,7 +415,7 @@ def exam(brain, test: list | None = None) -> dict:
     and on Chalce's real recordings, how many of Whisper's words it also heard."""
     if test is None:
         vocab = {w: i for i, w in enumerate(brain.keep.get("ear_words", ["(none)"]))}
-        test = [labels(c, dict(vocab)) for c in np.load(LESSONS, allow_pickle=True)["clips"] if c["voice"] == "en_US-joy-high.onnx"]
+        test = [labels(c, dict(vocab)) for c in all_clips() if c["voice"] in HELD]
     ok_w = n_w = ok_e = n_e = 0
     with torch.no_grad():
         for s, w, e in test:
@@ -298,17 +426,17 @@ def exam(brain, test: list | None = None) -> dict:
                     n_w += 1; ok_w += int(pw[j] == w[j])
                 if e[j] >= 2:
                     n_e += 1; ok_e += int(pe[j] == e[j])
-    got = total = 0
+    got = total = said = 0
     sounds = os.path.join(ROOT, "checkpoints", "coal_sounds.jsonl")
     if os.path.exists(sounds):
         for line in open(sounds, encoding="utf-8"):
             d = json.loads(line)
             want = {word(x) for x in d.get("text", "").split()} - {""}
             if want and len(d["bands"]) > 20:
-                h = set(listen(brain, d["bands"])["words"])
-                got += len(want & h); total += len(want)
+                h = listen(brain, d["bands"])["words"]
+                got += len(want & set(h)); total += len(want); said += len(h)
     r = {"words_new_voice": ok_w / max(1, n_w), "endings_new_voice": ok_e / max(1, n_e),
-         "chalce_words_heard": got / max(1, total)}
+         "chalce_words_heard": got / max(1, total), "chalce_heard_right": got / max(1, said)}
     print("ear exam: " + ", ".join(f"{k} {v:.0%}" for k, v in r.items()), flush=True)
     return r
 
@@ -319,6 +447,8 @@ if __name__ == "__main__":
     what = sys.argv[1] if len(sys.argv) > 1 else "exam"
     if what == "lessons":
         make_lessons()
+    elif what == "many":
+        make_many()
     else:
         path = sys.argv[2] if len(sys.argv) > 2 else SAVE
         brain, rounds = load(path)

@@ -42,6 +42,8 @@ class HouseholdBrain(nn.Module):
         self.meaning = nn.Linear(hidden, MEANING)
         self.desk = nn.Linear(hidden, len(DESK_ACTS))   # what to do with this file
         self.reply = nn.Linear(hidden, MAX_ANSWERS)    # which taught answer fits this question (live.py)
+        # the hearing area: its own two layers on the sound, so learning to hear never moves the rest
+        self.ear = nn.Sequential(nn.Linear(EAR_SIZE, hidden), nn.ReLU(), nn.Linear(hidden, hidden), nn.ReLU())
         self.hear = nn.Linear(hidden, EAR_WORDS)       # the word in this slice of sound (ears.py)
         self.hear_end = nn.Linear(hidden, len(ENDS))   # speaking, a pause, a full stop, a question
         self.hear_cue = nn.Linear(hidden, EAR_CUES)    # which sound cue, if it is not speech
@@ -60,11 +62,12 @@ class HouseholdBrain(nn.Module):
         elif obs.shape[1] < IN_SIZE:                # the household alone (or with a file)
             obs = torch.cat([obs, z(IN_SIZE - obs.shape[1])], 1)
         h = self.body(obs)
+        e = self.ear(obs[:, -EAR_SIZE:])
         return {"act": self.act(h), "target": self.target(h),
                 "condition": self.condition(h).view(-1, MAX_PEOPLE, 3),
                 "foresight": self.foresight(h), "words": self.words(h).view(-1, MAX_PEOPLE, len(VOCAB)),
                 "meaning": torch.tanh(self.meaning(h)), "desk": self.desk(h), "page": {p: head(h) for p, head in self.page.items()}, "reply": self.reply(h),
-                "hear": self.hear(h), "hear_end": self.hear_end(h), "hear_cue": self.hear_cue(h)}
+                "hear": self.hear(e), "hear_end": self.hear_end(e), "hear_cue": self.hear_cue(e)}
 
     @torch.no_grad()
     def choose(self, obs: list[float]) -> tuple[str, int]:

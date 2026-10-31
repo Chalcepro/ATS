@@ -254,6 +254,9 @@ class Session:
 _whisper = None
 
 
+_last_words: list = []
+
+
 def transcribe(audio: bytes) -> str:
     """Speech to text on this machine (faster-whisper small.en, already downloaded)."""
     global _whisper
@@ -263,7 +266,9 @@ def transcribe(audio: bytes) -> str:
     with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
         f.write(audio)
     try:
-        segments, _ = _whisper.transcribe(f.name, beam_size=1, vad_filter=True)
+        segments = list(_whisper.transcribe(f.name, beam_size=1, vad_filter=True, word_timestamps=True)[0])
+        global _last_words                    # where each word fell: kept beside the sound as an ear lesson
+        _last_words = [(w.word, round(w.start, 3), round(w.end, 3)) for s in segments for w in (s.words or [])]
         return " ".join(s.text.strip() for s in segments).strip()
     finally:
         os.unlink(f.name)
@@ -326,7 +331,7 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(raw or b"{}")
             with open(SOUNDS, "a", encoding="utf-8") as f:
                 f.write(json.dumps({"bands": body.get("bands", []), "text": body.get("text", ""),
-                                    "rate": body.get("rate", 50)}) + "\n")
+                                    "rate": body.get("rate", 50), "words": _last_words}) + "\n")
             return self._json({"kept": sum(1 for _ in open(SOUNDS, encoding="utf-8"))})
         if self.path == "/api/ear":                       # Coal's own ears: the sound bands, straight to the brain
             body = json.loads(raw or b"{}")
