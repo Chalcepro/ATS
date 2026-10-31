@@ -308,7 +308,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(open(os.path.join(HERE, "web", "index.html"), "rb").read(), "text/html; charset=utf-8")
         elif self.path == "/api/class/live":
             with S.lock:
-                self._json(S.live[-1] if S.live else {})
+                self._json(dict(S.live[-1], before=S.live[-2] if len(S.live) > 1 else None) if S.live else {})
         elif self.path.startswith("/api/class"):
             n = int(self.path.rstrip("/").rpartition("/")[2]) if self.path[10:].strip("/").isdigit() else 0
             self._json(classroom.question(n))
