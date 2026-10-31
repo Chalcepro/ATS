@@ -401,3 +401,11 @@ SAYS2 = [
     ("I love you, Coal.", "thank you, i care about you too"),
 ]
 BANK += [_says(s, a) for s, a in SAYS2]
+
+
+from household.class_bank2 import MORE   # noqa: E402  (10-31: knowledge, how-to and why lessons)
+BANK += MORE
+from household.class_bank3 import MORE3   # noqa: E402  (10-31: animals, food, jobs, home, places, meanings, opposites)
+BANK += MORE3
+from household.class_bank4 import MORE4   # noqa: E402  (10-31: meanings, colours, body, laptop, how and why)
+BANK += MORE4

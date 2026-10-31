@@ -23,7 +23,7 @@ import torch.nn.functional as F
 
 TYPE_HASH = 256            # the typed-so-far words, hashed (like the class question)
 TYPE_POS = 16              # which word of the sentence this is
-TYPE_WORDS = 1024          # slots for words it can type; slot 0 is the end
+TYPE_WORDS = 4096          # slots for words it can type; slot 0 is the end (1024 until 10-31)
 LONGEST = 24
 
 
@@ -78,8 +78,9 @@ def moving(brain):
     return [*brain.typer.parameters(), *brain.typed.parameters()]
 
 
-def teach(brain, pairs, epochs: int = 300) -> float:
+def teach(brain, pairs, epochs: int | None = None) -> float:
     obs, want = steps(brain, pairs)
+    epochs = epochs or max(40, 18000 * 256 // len(obs))     # about the same work however many lessons
     was = [p.requires_grad for p in brain.parameters()]
     for p in brain.parameters():
         p.requires_grad_(False)
