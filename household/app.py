@@ -49,11 +49,7 @@ class Session:
     def __init__(self, seed: int = 7):
         self.lock = threading.Lock()
         self.fresh()
-        keep = self.brain.keep                    # the brain file carries these; the json files are copies
-        self.answers = live.Answers(ANSWERS, keep.get("answers"))
         self.live: list[dict] = []
-        self.lex = (Lexicon.from_dict(keep["lexicon"]) if "lexicon" in keep
-                    else Lexicon.load(LEX_PATH) if os.path.exists(LEX_PATH) else grow())
         self.reset(seed)
 
     def fresh(self) -> None:
@@ -62,11 +58,15 @@ class Session:
             self.brain, self.rounds = load_brain(SAVE)
             self.brain.eval()
             self.loaded = os.path.getmtime(SAVE)
+            keep = self.brain.keep                # the brain file carries these (a virtual class may have added some)
+            self.answers = live.Answers(ANSWERS, keep.get("answers"))
+            self.lex = (Lexicon.from_dict(keep["lexicon"]) if "lexicon" in keep
+                        else Lexicon.load(LEX_PATH) if os.path.exists(LEX_PATH) else grow())
 
     def keep(self) -> None:
         """Save the brain with its answers and word library inside, so the one file is all of Coal."""
         self.fresh()                              # never save an old brain over a newer round
-        self.brain.keep = {"answers": self.answers.to_dict(), "lexicon": dict(self.lex.__dict__)}
+        self.brain.keep.update(answers=self.answers.to_dict(), lexicon=dict(self.lex.__dict__))   # ear words etc. stay
         save_brain(self.brain, SAVE, self.rounds)
         self.loaded = os.path.getmtime(SAVE)
 

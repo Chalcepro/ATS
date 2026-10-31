@@ -20,7 +20,7 @@ import zlib
 import torch
 import torch.nn.functional as F
 
-CLASS_WORDS = 64
+CLASS_WORDS = 256         # 64 until 10-30: too many words shared a slot once the virtual class came
 MAX_ANSWERS = 256          # slots for answers; each one taught takes the next
 
 
