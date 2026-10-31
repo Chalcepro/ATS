@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from household import classroom
 from household.judge import HURT, condition
 from household.lexicon import Lexicon, felt_by, grow
-from household import ears, live
+from household import ears, live, typist
 from household.model import load as load_brain, save as save_brain
 from household.train import SAVE
 from household.words import DOING, diary, narrate, sentence
@@ -197,8 +197,10 @@ class Session:
         return " ".join(about(i) for i in range(len(names)))
 
     def class_answer(self, question: str) -> str:
-        """Coal's go at a question, before it sees yours: its reply head's pick among the
+        """Coal's go at a question, before it sees yours: typed by itself, or (before it could type) its reply head's pick among the
         answers it has been taught, or that it doesn't know."""
+        if len(typist.words(self.brain)) > 1:     # it can type: its own sentence (typist.py)
+            return typist.write(self.brain, question) or "I don't know yet."
         text, sure = live.reply(self.brain, self.answers, question)
         if text is None or sure < 0.3:
             return "I don't know yet."
@@ -215,6 +217,7 @@ class Session:
         new = [w for t in (question, answer, *heard) for w in self.lex.meet(t)]
         self.lex.save(LEX_PATH)
         live.learn(self.brain, self.answers)
+        typist.teach(self.brain, [(q, self.answers.texts[i]) for q, i in self.answers.pairs], epochs=20)
         self.keep()
         return new
 

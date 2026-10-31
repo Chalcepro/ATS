@@ -19,13 +19,16 @@ from household.desk_lessons import DESK_ACTS, DESK_SIZE, desk_names
 from household.page_lessons import PAGE_SIZE, PARTS, page_names
 from household.live import CLASS_SIZE, MAX_ANSWERS, class_names
 from household.ears import EAR_CUES, EAR_SIZE, EAR_WORDS, ENDS, ear_names
+from household.typist import TYPED_SIZE, TYPE_WORDS, typed_names
 from household.world import ACTIONS, MAX_PEOPLE, MEM_SIZE, input_names
 
-IN_SIZE = MEM_SIZE + DESK_SIZE + PAGE_SIZE + CLASS_SIZE + EAR_SIZE   # household, desktop, a web page, a class question, the ears: one brain
+IN_SIZE = MEM_SIZE + DESK_SIZE + PAGE_SIZE + CLASS_SIZE + EAR_SIZE + TYPED_SIZE   # household, desktop, a web page, a class question, the ears, what it typed: one brain
+CLASS_AT = MEM_SIZE + DESK_SIZE + PAGE_SIZE
+EAR_AT = CLASS_AT + CLASS_SIZE
 
 
 def all_inputs() -> list[str]:
-    return input_names() + desk_names() + page_names() + class_names() + ear_names()
+    return input_names() + desk_names() + page_names() + class_names() + ear_names() + typed_names()
 
 MEANING = 16
 
@@ -47,27 +50,35 @@ class HouseholdBrain(nn.Module):
         self.hear = nn.Linear(hidden, EAR_WORDS)       # the word in this slice of sound (ears.py)
         self.hear_end = nn.Linear(hidden, len(ENDS))   # speaking, a pause, a full stop, a question
         self.hear_cue = nn.Linear(hidden, EAR_CUES)    # which sound cue, if it is not speech
+        # the typing area: the question and what it typed so far -> the next word (typist.py)
+        self.typer = nn.Sequential(nn.Linear(CLASS_SIZE + TYPED_SIZE, hidden), nn.ReLU(), nn.Linear(hidden, hidden), nn.ReLU())
+        self.typed = nn.Linear(hidden, TYPE_WORDS)
         self.page = nn.ModuleDict({p: nn.Linear(hidden, len(cs)) for p, cs in PARTS.items()})   # a page piece, part by part
 
     def forward(self, obs: torch.Tensor) -> dict[str, torch.Tensor]:
         z = lambda k: obs.new_zeros(obs.shape[0], k)
-        if obs.shape[1] == DESK_SIZE:               # a file alone: the rest is blank
-            obs = torch.cat([z(MEM_SIZE), obs, z(PAGE_SIZE + CLASS_SIZE)], 1)
-        elif obs.shape[1] == PAGE_SIZE:             # a page piece alone
-            obs = torch.cat([z(MEM_SIZE + DESK_SIZE), obs, z(CLASS_SIZE + EAR_SIZE)], 1)
-        elif obs.shape[1] == CLASS_SIZE:            # a class question alone
-            obs = torch.cat([z(MEM_SIZE + DESK_SIZE + PAGE_SIZE), obs, z(EAR_SIZE)], 1)
-        elif obs.shape[1] == EAR_SIZE:              # a slice of sound alone
-            obs = torch.cat([z(IN_SIZE - EAR_SIZE), obs], 1)
-        elif obs.shape[1] < IN_SIZE:                # the household alone (or with a file)
-            obs = torch.cat([obs, z(IN_SIZE - obs.shape[1])], 1)
+        at = lambda k: torch.cat([z(k), obs, z(IN_SIZE - k - obs.shape[1])], 1)   # one part alone: the rest is blank
+        n = obs.shape[1]
+        if n == DESK_SIZE:                          # a file alone
+            obs = at(MEM_SIZE)
+        elif n == PAGE_SIZE:                        # a page piece alone
+            obs = at(MEM_SIZE + DESK_SIZE)
+        elif n == CLASS_SIZE:                       # a class question alone
+            obs = at(CLASS_AT)
+        elif n == EAR_SIZE:                         # a slice of sound alone
+            obs = at(EAR_AT)
+        elif n == CLASS_SIZE + TYPED_SIZE:          # a class question and what it typed so far
+            obs = torch.cat([z(CLASS_AT), obs[:, :CLASS_SIZE], z(EAR_SIZE), obs[:, CLASS_SIZE:]], 1)
+        elif n < IN_SIZE:                           # the household alone (or with a file)
+            obs = at(0)
         h = self.body(obs)
-        e = self.ear(obs[:, -EAR_SIZE:])
+        e = self.ear(obs[:, EAR_AT:EAR_AT + EAR_SIZE])
+        t = self.typer(torch.cat([obs[:, CLASS_AT:EAR_AT], obs[:, -TYPED_SIZE:]], 1))
         return {"act": self.act(h), "target": self.target(h),
                 "condition": self.condition(h).view(-1, MAX_PEOPLE, 3),
                 "foresight": self.foresight(h), "words": self.words(h).view(-1, MAX_PEOPLE, len(VOCAB)),
                 "meaning": torch.tanh(self.meaning(h)), "desk": self.desk(h), "page": {p: head(h) for p, head in self.page.items()}, "reply": self.reply(h),
-                "hear": self.hear(e), "hear_end": self.hear_end(e), "hear_cue": self.hear_cue(e)}
+                "hear": self.hear(e), "hear_end": self.hear_end(e), "hear_cue": self.hear_cue(e), "type": self.typed(t)}
 
     @torch.no_grad()
     def choose(self, obs: list[float]) -> tuple[str, int]:

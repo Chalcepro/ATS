@@ -18,7 +18,7 @@ import shutil
 
 import torch
 
-from household import classroom, live
+from household import classroom, live, typist
 from household.class_bank import BANK
 from household.lexicon import Lexicon, grow
 from household.model import load, save
@@ -57,6 +57,7 @@ def main() -> None:
             answers.teach(q, answer)
             words += len([w for t in (q, answer) for w in lex.meet(t)])
     live.learn(brain, answers, steps=400)
+    typist.teach(brain, [(q, answers.texts[i]) for q, i in answers.pairs])     # and to type them itself
 
     with torch.no_grad():
         moved = float((brain(probe)["act"] - house).abs().max())
