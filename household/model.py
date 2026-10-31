@@ -145,6 +145,10 @@ def load(path: str, old_inputs: list[str] | None = None) -> tuple[HouseholdBrain
                     if word in ck["vocab"]:
                         w[p * len(VOCAB) + i] = v[p * per + ck["vocab"].index(word)]
             new[k] = w
+        elif k.startswith(("reply.", "typed.")) and k in new and new[k].shape[1:] == v.shape[1:]:   # a head widened: old slots keep their place
+            w = new[k].clone()
+            w[:len(v)] = v
+            new[k] = w
         elif k in new and new[k].shape == v.shape:
             new[k] = v
     brain.load_state_dict(new)

@@ -21,7 +21,7 @@ import torch
 import torch.nn.functional as F
 
 CLASS_WORDS = 256         # 64 until 10-30: too many words shared a slot once the virtual class came
-MAX_ANSWERS = 256          # slots for answers; each one taught takes the next
+MAX_ANSWERS = 1024         # slots for answers; each one taught takes the next (256 until 10-31)
 
 
 def class_names() -> list[str]:
