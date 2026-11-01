@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 
 import torch
 
@@ -56,8 +57,9 @@ def main() -> None:
             classroom.keep(CLASS, -1, "teacher", answer, {"question": q, "virtual": True, "subject": subject})
             answers.teach(q, answer)
             words += len([w for t in (q, answer) for w in lex.meet(t)])
-    live.learn(brain, answers, steps=400)
-    typist.teach(brain, [(q, answers.texts[i]) for q, i in answers.pairs])     # and to type them itself
+    light = "light" in sys.argv                                         # a short round: minutes, not hours
+    live.learn(brain, answers, steps=120 if light else 400)
+    typist.teach(brain, [(q, answers.texts[i]) for q, i in answers.pairs], updates=1500 if light else 12000)     # and to type them itself
 
     with torch.no_grad():
         moved = float((brain(probe)["act"] - house).abs().max())

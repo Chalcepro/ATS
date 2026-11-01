@@ -102,10 +102,10 @@ def moving(brain):
     return [*brain.typer.parameters(), *brain.typed.parameters()]
 
 
-def teach(brain, pairs, epochs: int | None = None) -> float:
+def teach(brain, pairs, epochs: int | None = None, updates: int = 12000) -> float:
     read_questions(brain, [q for q, _ in pairs])
     obs, want = steps(brain, pairs)
-    epochs = epochs or max(10, 12000 * 256 // len(obs))     # about 12000 updates however many lessons (60000 took 4.7 h)
+    epochs = epochs or max(2, updates * 256 // len(obs))     # about 12000 updates however many lessons (60000 took 4.7 h)
     was = [p.requires_grad for p in brain.parameters()]
     for p in brain.parameters():
         p.requires_grad_(False)
