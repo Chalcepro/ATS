@@ -19,7 +19,7 @@ from household.desk_lessons import DESK_ACTS, DESK_SIZE, desk_names
 from household.page_lessons import PAGE_SIZE, PARTS, page_names
 from household.live import CLASS_SIZE, MAX_ANSWERS, class_names
 from household.ears import EAR_CUES, EAR_SIZE, EAR_WORDS, ENDS, ear_names
-from household.typist import TYPED_SIZE, TYPE_WORDS, typed_names
+from household.typist import TYPER_WIDE, TYPED_SIZE, TYPE_WORDS, typed_names
 from household.world import ACTIONS, MAX_PEOPLE, MEM_SIZE, input_names
 
 IN_SIZE = MEM_SIZE + DESK_SIZE + PAGE_SIZE + CLASS_SIZE + EAR_SIZE + TYPED_SIZE   # household, desktop, a web page, a class question, the ears, what it typed: one brain
@@ -51,8 +51,9 @@ class HouseholdBrain(nn.Module):
         self.hear_end = nn.Linear(hidden, len(ENDS))   # speaking, a pause, a full stop, a question
         self.hear_cue = nn.Linear(hidden, EAR_CUES)    # which sound cue, if it is not speech
         # the typing area: the question and what it typed so far -> the next word (typist.py)
-        self.typer = nn.Sequential(nn.Linear(CLASS_SIZE + TYPED_SIZE, hidden), nn.ReLU(), nn.Linear(hidden, hidden), nn.ReLU())
-        self.typed = nn.Linear(hidden, TYPE_WORDS)
+        wide = TYPER_WIDE * hidden                     # 2 tested 10-31 (memorised more, no better on new wordings)
+        self.typer = nn.Sequential(nn.Linear(CLASS_SIZE + TYPED_SIZE, wide), nn.ReLU(), nn.Linear(wide, wide), nn.ReLU())
+        self.typed = nn.Linear(wide, TYPE_WORDS)
         self.page = nn.ModuleDict({p: nn.Linear(hidden, len(cs)) for p, cs in PARTS.items()})   # a page piece, part by part
 
     def forward(self, obs: torch.Tensor) -> dict[str, torch.Tensor]:

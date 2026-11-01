@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import shutil
 import subprocess
 import tempfile
@@ -121,12 +122,22 @@ class Session:
         # everything you say reaches it as its own person's words - a warning,
         # an urging, or nothing it has a meaning for yet
         self.w.heard = heard["meaning"]
+        named = re.search(r"\b(?:my name is|i am called|call me) ([a-z]+)", text.lower())
+        if named:                                 # who it is talking to: kept in the brain, so it travels with it
+            self.brain.keep["owner"] = named.group(1).capitalize()
+            self.keep()
+            reply = f"Nice to meet you, {self.brain.keep['owner']}."
+            self.events.append({"hour": self.w.hour, "kind": "brain", "text": reply})
+            return {"reply": reply, "heard": heard}
         if heard["talk"] and heard["talk"] not in ("yes", "no") or heard["talk"] and heard["who"] is None:
-            reply = self.answer(heard)
+            quick = heard["talk"] in ("greet", "bye", "thank", "yes", "no")
+            reply = (not quick and heard["who"] is None and self.from_class(text)) or self.answer(heard)
             self.events.append({"hour": self.w.hour, "kind": "brain", "text": reply})
             return {"reply": reply, "heard": heard}
         self.w.mentioned = [heard["who"]] if heard["who"] is not None else []
-        if heard["who"] is None:
+        if heard["who"] is None and (known := self.from_class(text)):
+            reply = known                         # something it was taught in class
+        elif heard["who"] is None:
             reply = "Heard you."
             if heard["new"]:
                 reply += " Still learning: " + ", ".join(heard["new"]) + "."
@@ -205,6 +216,15 @@ class Session:
         if text is None or sure < 0.3:
             return "I don't know yet."
         return text if sure >= 0.6 else f"I'm not sure. Maybe: {text}"
+
+    def from_class(self, text: str) -> str | None:
+        """An answer from class, only when Coal is sure: it typed a whole answer it was
+        taught, or its reply head is almost certain. Otherwise None - no babble in chat."""
+        typed = typist.write(self.brain, text) if len(typist.words(self.brain)) > 1 else ""
+        if typed and typed in self.answers.texts:
+            return typed
+        pick, sure = live.reply(self.brain, self.answers, text)
+        return pick if pick and sure >= 0.95 else None
 
     def teach_now(self, question: str, answer: str, *heard: str) -> list[str]:
         """Coal learns the teacher's answer now: a moment of training on every class
@@ -322,6 +342,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
 
     def do_POST(self):
+        try:
+            self._post()
+        except Exception as e:                            # say what broke, never just drop the line
+            import traceback
+            traceback.print_exc()
+            self._json({"error": f"Coal hit a bug: {type(e).__name__}: {e}"}, 500)
+
+    def _post(self):
         n = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(n) if n else b""
         if self.path == "/api/listen":                    # audio in, text out
@@ -408,6 +436,7 @@ def main() -> None:
     global S
     S = Session()
     print(f"household window: http://127.0.0.1:{PORT}   (Ctrl+C to stop)")
+    ThreadingHTTPServer.allow_reuse_address = False   # on Windows reuse lets a 2nd copy share the port; one copy only
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
 
 

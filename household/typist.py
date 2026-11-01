@@ -14,6 +14,7 @@ Run:  python -m household.typist teach      (teaches from every class question s
 """
 from __future__ import annotations
 
+import math
 import re
 import sys
 import zlib
@@ -22,13 +23,16 @@ import torch
 import torch.nn.functional as F
 
 TYPE_HASH = 256            # the typed-so-far words, hashed (like the class question)
+TYPE_ASK = 0               # its own rarity-weighted copy of the question. Off: tested 10-31 at 2048 slots
+                           # (with TYPER_WIDE 2) - taught 94% but new wordings only 13%, and the live brain is 0 / 1x
+TYPER_WIDE = 1             # typing area width, times the hidden size
 TYPE_POS = 16              # which word of the sentence this is
 TYPE_WORDS = 4096          # slots for words it can type; slot 0 is the end (1024 until 10-31)
 LONGEST = 24
 
 
 def typed_names() -> list[str]:
-    return ([f"typed.last{i}" for i in range(TYPE_HASH)] + [f"typed.so_far{i}" for i in range(TYPE_HASH)]
+    return ([f"typed.ask{i}" for i in range(TYPE_ASK)] + [f"typed.last{i}" for i in range(TYPE_HASH)] + [f"typed.so_far{i}" for i in range(TYPE_HASH)]
             + [f"typed.pos{i}" for i in range(TYPE_POS)])
 
 
@@ -39,14 +43,34 @@ def tokens(text: str) -> list[str]:
     return re.findall(r"[a-z0-9']+|[?!.,]", text.lower())
 
 
-def typed_obs(so_far: list[str]) -> list[float]:
+def read_questions(brain, questions) -> None:
+    """Count, over every question it has read, how many use each word."""
+    seen = brain.keep.setdefault("ask_seen", {})
+    for q in set(questions) - set(brain.keep.setdefault("ask_read", [])):
+        for w in set(tokens(q)):
+            seen[w] = seen.get(w, 0) + 1
+        brain.keep["ask_read"].append(q)
+
+
+def ask_bag(question: str, brain=None) -> list[float]:
+    """Rare words count most: words in nearly every question ("what", "say") fade towards 0."""
+    seen = brain.keep.get("ask_seen", {}) if brain is not None else {}
+    n = len(brain.keep.get("ask_read", [])) if brain is not None else 0
+    bag = [0.0] * TYPE_ASK
+    for w in tokens(question) if TYPE_ASK else []:
+        k = zlib.crc32(w.encode()) % TYPE_ASK
+        bag[k] = max(bag[k], math.log((n + 1) / (seen.get(w, 0) + 1)) / math.log(n + 1) if n else 1.0)
+    return bag
+
+
+def typed_obs(so_far: list[str], ask: list[float]) -> list[float]:
     last, bag, pos = [0.0] * TYPE_HASH, [0.0] * TYPE_HASH, [0.0] * TYPE_POS
     for w in so_far:
         bag[zlib.crc32(w.encode()) % TYPE_HASH] = 1.0
     if so_far:
         last[zlib.crc32(so_far[-1].encode()) % TYPE_HASH] = 1.0
     pos[min(len(so_far), TYPE_POS - 1)] = 1.0
-    return last + bag + pos
+    return ask + last + bag + pos
 
 
 def words(brain) -> list[str]:
@@ -67,9 +91,9 @@ def steps(brain, pairs) -> tuple[torch.Tensor, torch.Tensor]:
     from household.live import class_obs
     obs, want = [], []
     for q, answer in pairs:
-        cq, toks = class_obs(q), tokens(answer)[:LONGEST - 1]
+        cq, ask, toks = class_obs(q), ask_bag(q, brain), tokens(answer)[:LONGEST - 1]
         for k, w in enumerate(toks + ["<end>"]):
-            obs.append(cq + typed_obs(toks[:k]))
+            obs.append(cq + typed_obs(toks[:k], ask))
             want.append(slot(brain, w))
     return torch.tensor(obs, dtype=torch.float32), torch.tensor(want)
 
@@ -79,8 +103,9 @@ def moving(brain):
 
 
 def teach(brain, pairs, epochs: int | None = None) -> float:
+    read_questions(brain, [q for q, _ in pairs])
     obs, want = steps(brain, pairs)
-    epochs = epochs or max(40, 18000 * 256 // len(obs))     # about the same work however many lessons
+    epochs = epochs or max(10, 12000 * 256 // len(obs))     # about 12000 updates however many lessons (60000 took 4.7 h)
     was = [p.requires_grad for p in brain.parameters()]
     for p in brain.parameters():
         p.requires_grad_(False)
@@ -104,9 +129,9 @@ def teach(brain, pairs, epochs: int | None = None) -> float:
 def write(brain, question: str) -> str:
     """Coal's own sentence: the likeliest next word each time, until it types the end."""
     from household.live import class_obs
-    cq, out, ws = class_obs(question), [], words(brain)
+    cq, ask, out, ws = class_obs(question), ask_bag(question, brain), [], words(brain)
     for _ in range(LONGEST):
-        p = brain(torch.tensor([cq + typed_obs(out)], dtype=torch.float32))["type"][0, :len(ws)]
+        p = brain(torch.tensor([cq + typed_obs(out, ask)], dtype=torch.float32))["type"][0, :len(ws)]
         for w in out[-2:]:                           # no stutter: not the same word twice running
             p[ws.index(w)] = -1e9
         w = ws[int(p.argmax())]

@@ -409,3 +409,7 @@ from household.class_bank3 import MORE3   # noqa: E402  (10-31: animals, food, j
 BANK += MORE3
 from household.class_bank4 import MORE4   # noqa: E402  (10-31: meanings, colours, body, laptop, how and why)
 BANK += MORE4
+from household.class_bank5 import MORE5   # noqa: E402  (10-31: the world, games, the alphabet, sums)
+BANK += MORE5
+from household.class_bank6 import MORE6   # noqa: E402  (10-31: science, tech, games, music, film, sport, home, nature)
+BANK += MORE6

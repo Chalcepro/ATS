@@ -145,7 +145,7 @@ class Lexicon:
         weight = 0.0
         peak = [0.0] * len(TOLD)                  # the strongest any one word points at each feeling
         for w in words:                           # each word on its own, even inside a pair ("hungry ?")
-            if w not in STOP and self.heard.get(w, 0) >= 2:
+            if w not in STOP and self.heard.get(w, 0) >= 2 and w in self.meaning:   # class words are heard but may have no meaning yet
                 peak = [max(a, x - u) for a, x, u in zip(peak, self.meaning[w][FEEL], self.usual[FEEL])]
         skip = False
         for i, w in enumerate(words):
@@ -166,7 +166,7 @@ class Lexicon:
                 fixed[w] = c
             if c in STOP:
                 continue
-            if self.heard.get(c, 0) < 2 and self.pairs.get(c, 0) < 3:
+            if self.heard.get(c, 0) < 2 and self.pairs.get(c, 0) < 3 or c not in self.meaning:
                 new.append(w)                     # kept for later, but no meaning yet
                 continue
             # what is unusual about how people felt when they said it
