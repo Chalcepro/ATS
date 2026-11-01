@@ -19,6 +19,7 @@ from household.desk_lessons import DESK_ACTS, DESK_SIZE, desk_names
 from household.page_lessons import PAGE_SIZE, PARTS, page_names
 from household.live import CLASS_SIZE, MAX_ANSWERS, class_names
 from household.ears import EAR_CUES, EAR_SIZE, EAR_WORDS, ENDS, ear_names
+from household.desk import DESK_IN, MOVES
 from household.typist import TYPER_WIDE, TYPED_SIZE, TYPE_WORDS, typed_names
 from household.world import ACTIONS, MAX_PEOPLE, MEM_SIZE, input_names
 
@@ -54,6 +55,7 @@ class HouseholdBrain(nn.Module):
         wide = TYPER_WIDE * hidden                     # 2 tested 10-31 (memorised more, no better on new wordings)
         self.typer = nn.Sequential(nn.Linear(CLASS_SIZE + TYPED_SIZE, wide), nn.ReLU(), nn.Linear(wide, wide), nn.ReLU())
         self.typed = nn.Linear(wide, TYPE_WORDS)
+        self.mover = nn.Sequential(nn.Linear(DESK_IN, 64), nn.ReLU(), nn.Linear(64, len(MOVES)))   # moves Rewrite in CoalOS (household/desk.py)
         self.page = nn.ModuleDict({p: nn.Linear(hidden, len(cs)) for p, cs in PARTS.items()})   # a page piece, part by part
 
     def forward(self, obs: torch.Tensor) -> dict[str, torch.Tensor]:

@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from household import classroom
 from household.judge import HURT, condition
 from household.lexicon import Lexicon, felt_by, grow
-from household import ears, live, typist
+from household import desk, ears, live, typist
 from household.model import load as load_brain, save as save_brain
 from household.train import SAVE
 from household.words import DOING, diary, narrate, sentence
@@ -369,6 +369,16 @@ class Handler(BaseHTTPRequestHandler):
             with S.lock:
                 S.fresh()
                 return self._json(ears.listen(S.brain, body.get("bands", [])[-1500:]))
+        if self.path in ("/api/desk/see", "/api/desk/choose"):   # Rewrite on the CoalOS desktop
+            body = json.loads(raw or b"{}")
+            with S.lock:
+                if self.path.endswith("choose"):
+                    return self._json(desk.choose(S.brain, body["state"]))
+                out = {"learned_from": len(desk.seen(S.brain))}
+                if desk.see(S.brain, body["state"], body.get("move", "")):
+                    out["loss"] = round(desk.learn(S.brain), 3)
+                    S.keep()
+                return self._json(out)
         if self.path == "/api/watch":                     # pointer moves and drags, kept as seen
             with open(WATCH, "a", encoding="utf-8") as f:
                 for e in json.loads(raw or b"[]")[:500]:
