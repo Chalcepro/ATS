@@ -13,6 +13,7 @@ Run:  python -m household.auto_class
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
@@ -39,7 +40,9 @@ def main() -> None:
     keep = brain.keep
     answers = live.Answers(ANSWERS, keep.get("answers"))
     lex = Lexicon.from_dict(keep["lexicon"]) if "lexicon" in keep else grow()
-    his = [(q, answers.texts[i]) for q, i in answers.pairs]             # taught live, by Chalce's class
+    # his own class questions (the ones he answered), not every question the virtual class has taught
+    mine = {json.loads(l).get("question") for l in open(CLASS, encoding="utf-8") if '"who": "chalce"' in l}
+    his = [(q, answers.texts[i]) for q, i in answers.pairs if q in mine]
     asked = {q for q, _ in his}
     source = BANK
     if "dict" in sys.argv:                                              # dictionary lessons: "dict 200" = the 200 most common words
