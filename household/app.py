@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from household import classroom
 from household.judge import HURT, condition
 from household.lexicon import Lexicon, felt_by, grow
-from household import desk, ears, live, typist
+from household import desk, ears, live, read, typist
 from household.model import load as load_brain, save as save_brain
 from household.train import SAVE
 from household.words import DOING, diary, narrate, sentence
@@ -369,6 +369,28 @@ class Handler(BaseHTTPRequestHandler):
             with S.lock:
                 S.fresh()
                 return self._json(ears.listen(S.brain, body.get("bands", [])[-1500:]))
+        if self.path.startswith("/api/read_file"):            # a whole file (pdf, docx...): made into text, then read
+            from urllib.parse import parse_qs, urlparse
+            name = parse_qs(urlparse(self.path).query).get("name", ["file.txt"])[0]
+            tmp = os.path.join(tempfile.mkdtemp(), os.path.basename(name))
+            with open(tmp, "wb") as f:
+                f.write(raw)
+            from household.to_text import to_text, tidy
+            text = to_text(tmp)
+            if not text or not text.strip():
+                return self._json({"error": f"no words Coal can read in {name}"}, 415)
+            with S.lock:
+                got = read.read_into(S.lex, S.brain.keep, name, tidy(text))
+                S.lex.save(LEX_PATH)
+                S.keep()
+            return self._json(got)
+        if self.path == "/api/read":                      # a text to read (household/read.py, CoalOS "Give to Coal")
+            body = json.loads(raw or b"{}")
+            with S.lock:
+                got = read.read_into(S.lex, S.brain.keep, str(body.get("name", "text")), str(body.get("text", "")))
+                S.lex.save(LEX_PATH)
+                S.keep()
+            return self._json(got)
         if self.path in ("/api/desk/see", "/api/desk/choose"):   # Rewrite on the CoalOS desktop
             body = json.loads(raw or b"{}")
             with S.lock:
