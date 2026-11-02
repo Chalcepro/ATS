@@ -41,7 +41,12 @@ def main() -> None:
     lex = Lexicon.from_dict(keep["lexicon"]) if "lexicon" in keep else grow()
     his = [(q, answers.texts[i]) for q, i in answers.pairs]             # taught live, by Chalce's class
     asked = {q for q, _ in his}
-    bank = [l for l in BANK if not asked & set(l[1])]                   # a question he answered stays his answer
+    source = BANK
+    if "dict" in sys.argv:                                              # dictionary lessons: "dict 200" = the 200 most common words
+        from household.dictionary import lessons
+        n = int(sys.argv[sys.argv.index("dict") + 1])
+        source = BANK + lessons(0, n)                                   # the old lessons too, so they are practised, not forgotten
+    bank = [l for l in source if not asked & set(l[1])]                 # a question he answered stays his answer
     held = [(asks[-1], ans) for _, asks, ans in bank]
     probe = torch.rand(8, 202)                                          # household senses: must not change
     with torch.no_grad():
