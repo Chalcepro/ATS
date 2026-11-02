@@ -27,7 +27,7 @@ def stamp(paths) -> str:
 
 def main() -> str:
     code = [f for f in os.listdir(os.path.join(ROOT, "household")) if f.endswith(".py")]
-    files = [os.path.join(ROOT, "household", f) for f in code] + [os.path.join(ROOT, "checkpoints", f) for f in BRAIN]
+    files = [os.path.join(ROOT, "household", f) for f in code] + [os.path.join(ROOT, "checkpoints", f) for f in BRAIN] + [os.path.join(ROOT, "docs", "PHONE.md")]
     version = stamp(files)
     old = os.path.join(OUT, "coal_version.json")
     if os.path.exists(old) and json.load(open(old))["version"] == version:
