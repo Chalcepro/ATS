@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import math
 import re
 import zlib
 
@@ -21,7 +22,7 @@ import torch
 import torch.nn.functional as F
 
 CLASS_WORDS = 256         # 64 until 10-30: too many words shared a slot once the virtual class came
-MAX_ANSWERS = 2048         # slots for answers; each one taught takes the next (256, then 1024, until 10-31)
+MAX_ANSWERS = 4096         # slots for answers; each one taught takes the next (256, 1024, 2048 until 11-01)
 
 
 def class_names() -> list[str]:
@@ -31,11 +32,34 @@ def class_names() -> list[str]:
 CLASS_SIZE = len(class_names())
 
 
+WEIGH_RARE = True         # rare words count more in a question. A/B on copies 11-01: dictionary held-back 37% -> 51%, meanings 16% -> 50%
+_rare: dict = {"n": -1, "seen": {}, "of": 0}
+
+
+def _words(question: str) -> list[str]:
+    return [w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w   # "folders" is "folder"
+            for w in re.findall(r"[a-z]+", question.lower())]
+
+
+def rarity(answers: "Answers") -> None:
+    """How many of the questions Coal was taught use each word: "what", "mean" are in hundreds,
+    "buy" in a handful. Learned from its own lessons; recounted when new ones arrive."""
+    if not WEIGH_RARE or _rare["n"] == len(answers.pairs):
+        return
+    seen: dict = {}
+    for q, _ in answers.pairs:
+        for w in set(_words(q)):
+            seen[w] = seen.get(w, 0) + 1
+    _rare.update(n=len(answers.pairs), seen=seen, of=len(answers.pairs))
+
+
 def class_obs(question: str) -> list[float]:
     bag = [0.0] * CLASS_WORDS
-    for w in re.findall(r"[a-z]+", question.lower()):
-        w = w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w   # "folders" is "folder"
-        bag[zlib.crc32(w.encode()) % CLASS_WORDS] = 1.0
+    n = _rare["of"]
+    for w in _words(question):
+        k = zlib.crc32(w.encode()) % CLASS_WORDS
+        v = max(0.1, math.log((n + 1) / (_rare["seen"].get(w, 0) + 1)) / math.log(n + 1)) if WEIGH_RARE and n else 1.0
+        bag[k] = max(bag[k], v)
     return bag + [1.0]
 
 
@@ -68,6 +92,7 @@ def reply(brain, answers: Answers, question: str) -> tuple[str | None, float]:
     """Coal's pick among the answers it knows, and how sure it is."""
     if not answers.texts:
         return None, 0.0
+    rarity(answers)
     logits = brain(torch.tensor([class_obs(question)], dtype=torch.float32))["reply"][0, :len(answers.texts)]
     p = logits.softmax(0)
     i = int(p.argmax())
@@ -76,6 +101,7 @@ def reply(brain, answers: Answers, question: str) -> tuple[str | None, float]:
 
 def learn(brain, answers: Answers, steps: int = 60) -> float:
     """A few quick steps on everything met in class so far; returns the last loss."""
+    rarity(answers)
     obs = torch.tensor([class_obs(q) for q, _ in answers.pairs], dtype=torch.float32)
     want = torch.tensor([i for _, i in answers.pairs])
     first = brain.body[0]

@@ -61,6 +61,7 @@ class Session:
             self.loaded = os.path.getmtime(SAVE)
             keep = self.brain.keep                # the brain file carries these (a virtual class may have added some)
             self.answers = live.Answers(ANSWERS, keep.get("answers"))
+            live.rarity(self.answers)              # how Coal weighs question words, before it types or picks
             self.lex = (Lexicon.from_dict(keep["lexicon"]) if "lexicon" in keep
                         else Lexicon.load(LEX_PATH) if os.path.exists(LEX_PATH) else grow())
 

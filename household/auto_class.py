@@ -66,7 +66,7 @@ def main() -> None:
             answers.teach(q, answer)
             words += len([w for t in (q, answer) for w in lex.meet(t)])
     light = "light" in sys.argv                                         # a short round: minutes, not hours
-    live.learn(brain, answers, steps=120 if light else 400)
+    live.learn(brain, answers, steps=400)
     typist.teach(brain, [(q, answers.texts[i]) for q, i in answers.pairs], updates=1500 if light else 12000)     # and to type them itself
 
     with torch.no_grad():
