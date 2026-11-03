@@ -142,6 +142,14 @@ def batch(r: random.Random, n: int, width: int, ops: list[str]):
         b = r.randint(0, 9) if op == "times" else r.randint(0, 10 ** r.randint(1, width) - 1)
         if op == "subtract" and b > a:
             a, b = b, a
+        if op in ("add", "subtract") and r.random() < 0.5:   # half the sums are full of carries and borrows: rare by chance
+            k = r.randint(2, width)
+            if op == "add":
+                a, b = (number([r.randint(5, 9) for _ in range(k)]) for _ in range(2))
+            else:
+                top = r.randint(2, 9)
+                a = number([r.randint(0, 4) for _ in range(k - 1)] + [top])
+                b = number([r.randint(5, 9) for _ in range(k - 1)] + [r.randint(0, top - 1)])
         want = 0 if op == "compare" else a + b if op == "add" else a - b if op == "subtract" else a * b
         A.append(digits(a, cols)); Bs.append(digits(b, cols)); O.append(OPS.index(op))
         W.append(digits(want, cols)); V.append(0 if a > b else 1 if a == b else 2)

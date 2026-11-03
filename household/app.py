@@ -26,6 +26,7 @@ from household import classroom
 from household.judge import HURT, condition
 from household.lexicon import Lexicon, felt_by, grow
 from household import desk, ears, live, read, typist
+from household.mind import Mind
 from household.model import load as load_brain, save as save_brain
 from household.train import SAVE
 from household.words import DOING, diary, narrate, sentence
@@ -43,6 +44,7 @@ DIARY = os.path.join(os.path.dirname(SAVE), "coal_diary.txt")   # every line Coa
 SOUNDS = os.path.join(os.path.dirname(SAVE), "coal_sounds.jsonl")
 CLASS = os.path.join(os.path.dirname(SAVE), "coal_class.jsonl")      # every class answer, raw
 ANSWERS = os.path.join(os.path.dirname(SAVE), "coal_answers.json")    # answers Coal has been taught in class
+USE_MIND = True    # 11-03: the writer + record + maths answer chat (mind.py); False = the old picker
 WATCH = os.path.join(os.path.dirname(SAVE), "coal_watch.jsonl")      # what the person's pointer did in CoalOS
 
 
@@ -64,11 +66,14 @@ class Session:
             live.rarity(self.answers)              # how Coal weighs question words, before it types or picks
             self.lex = (Lexicon.from_dict(keep["lexicon"]) if "lexicon" in keep
                         else Lexicon.load(LEX_PATH) if os.path.exists(LEX_PATH) else grow())
+            self.mind = Mind(keep["mind"]) if USE_MIND and "mind" in keep else None   # writer + record + maths (mind.py)
 
     def keep(self) -> None:
         """Save the brain with its answers and word library inside, so the one file is all of Coal."""
         self.fresh()                              # never save an old brain over a newer round
         self.brain.keep.update(answers=self.answers.to_dict(), lexicon=dict(self.lex.__dict__))   # ear words etc. stay
+        if self.mind:
+            self.brain.keep["mind"] = self.mind.to_keep()  # its record grows with every line
         save_brain(self.brain, SAVE, self.rounds)
         self.loaded = os.path.getmtime(SAVE)
 
@@ -123,6 +128,14 @@ class Session:
         # everything you say reaches it as its own person's words - a warning,
         # an urging, or nothing it has a meaning for yet
         self.w.heard = heard["meaning"]
+        if self.mind and heard["who"] is None:     # not about someone in the house: Coal's mind answers, and remembers
+            named = re.search(r"\b(?:my name is|call me) ([a-z]+)", text.lower())
+            if named:
+                self.brain.keep["owner"] = named.group(1).capitalize()
+            reply = self.mind.reply(text)
+            self.keep()
+            self.events.append({"hour": self.w.hour, "kind": "brain", "text": reply})
+            return {"reply": reply, "heard": heard}
         named = re.search(r"\b(?:my name is|i am called|call me) ([a-z]+)", text.lower())
         if named:                                 # who it is talking to: kept in the brain, so it travels with it
             self.brain.keep["owner"] = named.group(1).capitalize()
@@ -235,6 +248,8 @@ class Session:
         if not os.path.exists(backup):
             shutil.copy(SAVE, backup)
         self.answers.teach(question, answer)
+        if self.mind:
+            self.mind.taught(question, answer)     # usable at once: recall finds it before any retraining
         new = [w for t in (question, answer, *heard) for w in self.lex.meet(t)]
         self.lex.save(LEX_PATH)
         live.learn(self.brain, self.answers)
