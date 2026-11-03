@@ -229,7 +229,7 @@ def trial() -> None:
     torch.manual_seed(0)
     for name, model in [("column cell (carries along)", ColumnCell()), ("transformer (sees all columns)", ColumnTx())]:
         print(f"{name}: {sum(p.numel() for p in model.parameters())} numbers")
-        secs = practise(model)
+        secs = practise(model, steps=int(sys.argv[2]) if len(sys.argv) > 2 else 3000)
         print(f"  practised in {secs:.0f} s")
         for w in (WIDTH_TRAIN, *WIDTH_TEST):
             print(f"  {w} digits: " + ", ".join(f"{k} {v:.0%}" for k, v in exam(model, w).items()))
