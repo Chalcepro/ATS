@@ -133,3 +133,95 @@ class Writer2(Writer):
                 break
             prev = torch.stack([self.vec(w) for w in nxt])
         return [re.sub(r" ([?!.,])", r"\1", " ".join(w)) for w in written]
+
+
+# ---- inputs built once (11-03): a practice round was spent rebuilding the same rows and word lists in Python ----
+class Prepared:
+    """Every lesson turned into tensors one time: its reading rows, what each row is (as an id in one shared
+    name table, the writer's own words first), and the answer as ids. A batch is then padding and a lookup."""
+
+    def __init__(self, wr: "Writer2", data: list):
+        self.names = list(wr.out)
+        at = {w: i for i, w in enumerate(self.names)}
+
+        def gid(w: str) -> int:
+            if w not in at:
+                at[w] = len(self.names)
+                self.names.append(w)
+            return at[w]
+        self.rows = [rows for (names, rows), _ in data]
+        self.src = [torch.tensor([gid(n) for n in names]) for (names, _), _ in data]
+        self.tgt = [torch.tensor([gid(w) for w in t] + [gid("<end>")]) for _, t in data]
+        self.n_out = len(wr.out)
+        self.vecs = torch.stack([wr.vec(w) for w in self.names])            # every name's vector, once
+
+    def batch(self, idx: list[int]):
+        from torch.nn.utils.rnn import pad_sequence
+        x = pad_sequence([self.rows[i] for i in idx], batch_first=True)
+        lens = torch.tensor([len(self.rows[i]) for i in idx])
+        mask = torch.arange(x.shape[1]).unsqueeze(0) < lens.unsqueeze(1)
+        src_g = pad_sequence([self.src[i] for i in idx], batch_first=True)
+        tgt_g = pad_sequence([self.tgt[i] for i in idx], batch_first=True, padding_value=-1)
+        # this batch's extra names (not among the writer's own words) get the ids after them
+        extra = torch.unique(torch.cat([src_g[mask], tgt_g[tgt_g >= 0]]))
+        extra = extra[extra >= self.n_out]
+        remap = torch.full((len(self.names),), -1, dtype=torch.long)
+        remap[:self.n_out] = torch.arange(self.n_out)
+        remap[extra] = torch.arange(self.n_out, self.n_out + len(extra))
+        src = remap[src_g] * mask
+        tgt = torch.where(tgt_g >= 0, remap[tgt_g.clamp_min(0)], torch.zeros_like(tgt_g))
+        return x, mask, lens, src, tgt, tgt_g >= 0, self.n_out + len(extra)
+
+
+def loss_prepared(wr: "Writer2", P: Prepared, idx: list[int]) -> torch.Tensor:
+    """The same teacher-forced loss as Writer2.forward, from prepared tensors: no Python per word."""
+    x, mask, lens, src, tgt, live, n_ext = P.batch(idx)
+    B, L, _ = x.shape
+    e = torch.relu(wr.enc_in(x))
+    one = torch.full((B, H), 0.5)
+    f = wr.fwd(e, one)
+    ridx = (lens.unsqueeze(1) - 1 - torch.arange(L)).clamp_min(0).unsqueeze(2).expand(B, L, H)
+    bk = wr.bwd(e.gather(1, ridx), one).gather(1, ridx)
+    mem = torch.cat([f, bk], 2).masked_fill(~mask.unsqueeze(2), 0)
+    h0 = _log_g(wr.h0(mem.sum(1) / mask.sum(1, keepdim=True))).exp()
+    T = tgt.shape[1]
+    gprev = torch.cat([torch.full((B, 1), -1), torch.where(live, P_ids(P, idx, T), torch.full_like(tgt, -1))[:, :-1]], 1)
+    prev = torch.where(gprev.unsqueeze(2) >= 0, P.vecs[gprev.clamp_min(0)], torch.zeros(B, T, DIM))
+    V = P.vecs[:P.n_out] + wr.out_fix[:P.n_out]
+    h1 = wr.d1(prev, h0)
+    a, ctx = wr._look(h1, mem, mask)
+    h2 = wr.d2(torch.cat([h1, ctx], -1), h0)
+    p = wr._probs(h2, ctx, prev, a, src, V, n_ext)
+    nll = -(p.gather(2, tgt.unsqueeze(2)).squeeze(2) + 1e-9).log()
+    return (nll * live).sum() / live.sum()
+
+
+def P_ids(P: Prepared, idx: list[int], T: int) -> torch.Tensor:
+    from torch.nn.utils.rnn import pad_sequence
+    t = pad_sequence([P.tgt[i] for i in idx], batch_first=True, padding_value=-1)
+    return Fn.pad(t, (0, T - t.shape[1]), value=-1)
+
+
+def train_prepared(wr: "Writer2", data: list, epochs: int = 12, log=print) -> None:
+    """writer.train's loop on prepared inputs (Writer2 only)."""
+    import random
+    import time
+    for _, t in data:
+        for w in t:
+            wr.add_out(w)
+    P = Prepared(wr, data)
+    params = [p for n, p in wr.named_parameters() if not n.startswith("wl.")]
+    opt = torch.optim.Adam(params, lr=2e-3)
+    order = list(range(len(data)))
+    for e in range(epochs):
+        t0, total = time.time(), 0.0
+        wr.train()
+        random.shuffle(order)
+        for i in range(0, len(order), 64):
+            loss = loss_prepared(wr, P, order[i:i + 64])
+            opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(params, 1.0)
+            opt.step()
+            total += float(loss.detach()) * len(order[i:i + 64])
+        log(f"  epoch {e + 1}/{epochs}: loss {total / len(data):.3f}  ({time.time() - t0:.0f} s, prepared)")

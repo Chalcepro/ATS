@@ -200,6 +200,9 @@ def train(wr: Writer, pairs: list[tuple[str, str]], known: set[str], epochs: int
     noise = lambda: [f"{r.choice(['you said', 'i said'])} : {r.choice(talk)}" for _ in range(r.randint(0, 3))] if record else []
     data = [(wr.reading(q, known, noise(), record.recall(q, skip=q) if record else ()), tokens(a)[:LONGEST - 1]) for q, a in pairs]
     data += [(wr.reading(q, known, rec, record.recall(q) if record else ()), tokens(a)[:LONGEST - 1]) for q, a, rec in extra]   # as in a real chat: recall is on
+    if hasattr(wr, "d1"):                                  # the fast writer: inputs built once (writer2.py)
+        from household.writer2 import train_prepared
+        return train_prepared(wr, data, epochs, log)
     params = [p for n, p in wr.named_parameters() if not n.startswith("wl.")]
     opt = torch.optim.Adam(params, lr=2e-3)
     import time
