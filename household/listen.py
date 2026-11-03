@@ -3,7 +3,7 @@
     py -3.12 -m household.listen hear FILE.wav --when "2026-11-03 10:40"   (Coal listens to a stretch of sound)
     py -3.12 -m household.listen ask "who said I can get the documents tomorrow?"
     py -3.12 -m household.listen enrol NAME FILE.wav                        (teach Coal a voice)
-    py -3.12 -m household.listen name "someone new 2" Registrar             (name a voice Coal heard)
+    py -3.12 -m household.listen name "Person B" Registrar                  (rename a voice Coal heard)
     py -3.12 -m household.listen check                                      (is the chain of recordings unbroken?)
 
 The ear (always on, cheap): loudness in 30 ms frames against a moving noise floor - is someone talking?
@@ -15,7 +15,7 @@ Starting to record (v0 cues; which cues matter is to be learned from what Chalce
 Stopping: STOP_QUIET seconds of quiet, then a buzz (the phone vibrates) so he knows.
 Voices by their sound, not by text: each voice gets prints from its frequencies (the shape of its spectrum and
 its pitch), minus what all voices share (average_voice.npy). A voice is matched on its best three samples;
-a new voice is "someone new 1, 2, ..." until he names it.
+a new voice is named by Coal (Person A, B, ...) until Chalce renames it.
 What is kept: only recorded moments - the clip, the exact words (local speech-to-text), who, when - each linked
 to the one before by a fingerprint (sha256), so editing or slipping in a clip later breaks the chain.
 Asked "who said ...?", Coal quotes: best match first, with the date, the voice and the clip. It only
@@ -45,6 +45,9 @@ CUE = re.compile(r"\b(record|recording)\b", re.I)
 
 # ---- sound in ------------------------------------------------------------------------------------
 def read_wav(path: str) -> np.ndarray:
+    if not path.lower().endswith(".wav"):                  # mp3, m4a, ogg...: decoded to 16 kHz by the speech-to-text package's reader
+        from faster_whisper.audio import decode_audio
+        return decode_audio(path, sampling_rate=SR).astype(np.float32)
     with wave.open(path) as w:
         x = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(np.float32) / 32768
         if w.getnchannels() > 1:
@@ -145,7 +148,7 @@ def who(print_: np.ndarray, known: dict) -> str:
         if s > best:
             best, name = s, k
     if name is None or best < SAME:
-        name = f"someone new {sum(k.startswith('someone new') for k in known) + 1}"
+        name = f"Person {chr(ord('A') + sum(k.startswith('Person ') for k in known))}"   # Coal names them; Chalce can rename
         known[name] = []
     known[name] = (known[name] + [list(print_)])[-KEEP_PRINTS:]
     return name
@@ -193,6 +196,7 @@ def check() -> list[str]:
 
 # ---- hearing a stretch of sound ------------------------------------------------------------------------
 _model = None
+SURE, GUESS = 0.4, 0.12     # word confidence; 11-03 on Chalce's own voice note 0.6/0.3 flagged many words it had right
 
 
 def words(x: np.ndarray) -> str:
@@ -201,8 +205,18 @@ def words(x: np.ndarray) -> str:
     if _model is None:
         from faster_whisper import WhisperModel
         _model = WhisperModel("small.en", device="cpu", compute_type="int8")
-    segs, _ = _model.transcribe(x, language="en", beam_size=1, vad_filter=False)
-    return " ".join(s.text.strip() for s in segs).strip()
+    segs, _ = _model.transcribe(x, language="en", beam_size=1, vad_filter=False, word_timestamps=True)
+    out = []
+    for seg in segs:
+        for w in seg.words or []:
+            t = w.word.strip()
+            if w.probability >= SURE:
+                out.append(t)
+            elif w.probability >= GUESS:                     # heard, not sure: a guess, marked
+                out.append(f"[{t.strip('.,?!')}?]")
+            elif not out or out[-1] != "[inaudible]":
+                out.append("[inaudible]")
+    return " ".join(out).strip()
 
 
 def hear(x: np.ndarray, start: dt.datetime, log=print) -> list[dict]:
@@ -219,6 +233,9 @@ def hear(x: np.ndarray, start: dt.datetime, log=print) -> list[dict]:
             turns.append([a, b, v])
     for a, b, voice in turns:
         t0, t1 = a * FRAME / SR, b * FRAME / SR
+        if t1 - t0 < 0.6 and voice.startswith("Person ") and len(known[voice]) == 1:
+            del known[voice]                               # a cough or a click is not a new person
+            continue
         clip = x[a * FRAME:b * FRAME]
         if recording and t0 - last_end > STOP_QUIET:
             recording = False
@@ -228,7 +245,7 @@ def hear(x: np.ndarray, start: dt.datetime, log=print) -> list[dict]:
         if not recording:
             if t0 - last_end > QUIET_START:
                 why = "talk after a long quiet"
-            elif voice.startswith("someone new"):
+            elif voice.startswith("Person ") and len(known[voice]) == 1:
                 why = "a new voice"
             else:
                 head = words(clip[: 4 * SR])                    # only the first seconds are checked for "record"
@@ -239,6 +256,8 @@ def hear(x: np.ndarray, start: dt.datetime, log=print) -> list[dict]:
                 log(f"  [{fmt(start, t0)}] recording ({why})")
         if recording:
             text = words(clip)
+            if not text:
+                continue
             e = keep({"when": fmt(start, t0), "who": voice, "text": text, "secs": round(t1 - t0, 1)}, clip)
             kept.append(e)
             log(f"  [{e['when']}] {voice}: {text}")
@@ -259,7 +278,7 @@ STOP = set("who what when where did said say says the a an i you me my is was to
 
 
 def names() -> dict:
-    """Names Chalce gave to voices ("someone new 2" is the Registrar). Kept apart from the chain, so naming
+    """Names Chalce gave to voices ("Person B" is the Registrar). Kept apart from the chain, so naming
     a voice later never changes a recording."""
     p = os.path.join(EARS, "names.json")
     return json.load(open(p)) if os.path.exists(p) else {}
@@ -308,7 +327,7 @@ def main() -> None:
         v[sys.argv[2]] = [list(voiceprint(talk[i:i + 24000])) for i in range(0, max(1, len(talk) - 12000), 12000)][:KEEP_PRINTS]
         save_voices(v)
         print(f"Coal knows {sys.argv[2]}'s voice.")
-    elif cmd == "name":                                     # name "someone new 2" Registrar
+    elif cmd == "name":                                     # name "Person B" Registrar
         nm = names()
         nm[sys.argv[2]] = " ".join(sys.argv[3:])
         json.dump(nm, open(os.path.join(EARS, "names.json"), "w"), indent=1)
