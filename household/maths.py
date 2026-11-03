@@ -76,6 +76,27 @@ class ColumnCell(nn.Module):
         return torch.stack(out, 1), self.verdict(h)
 
 
+class ColumnTx(nn.Module):
+    """The same job done by a small transformer: every column sees all the columns below it at once
+    (causal attention, units first) instead of passing a carry along. No position numbers are given,
+    so nothing ties it to the lengths it practised on."""
+
+    def __init__(self, d: int = 64, heads: int = 4, layers: int = 2):
+        super().__init__()
+        self.inp = nn.Linear(10 + 10 + len(OPS), d)
+        self.body = nn.TransformerEncoder(nn.TransformerEncoderLayer(d, heads, 4 * d, dropout=0.0, batch_first=True), layers)
+        self.write = nn.Linear(d, 10)
+        self.verdict = nn.Linear(d, 3)
+
+    def forward(self, a: torch.Tensor, b: torch.Tensor, op: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        B, C = a.shape
+        o = Fn.one_hot(op, len(OPS)).float().unsqueeze(1).expand(B, C, len(OPS))
+        x = self.inp(torch.cat([Fn.one_hot(a, 10).float(), Fn.one_hot(b, 10).float(), o], 2))
+        mask = torch.triu(torch.full((C, C), float("-inf")), 1)      # a column sees itself and the ones below it
+        h = self.body(x, mask=mask)
+        return self.write(h), self.verdict(h[:, -1])
+
+
 # ---- working a sum, the way it is done on paper ------------------------------------------------
 @torch.no_grad()
 def column(cell: ColumnCell, a: int, b: int, op: str, width: int) -> list[int]:
@@ -163,6 +184,60 @@ def read_sum(question: str) -> tuple[int, str, int] | None:
     return None
 
 
+def practise(model: nn.Module, steps: int = 3000, log=print) -> float:
+    """The maths class: column lessons up to WIDTH_TRAIN digits. Returns the seconds it took."""
+    import time
+    r, opt, t0 = random.Random(1), torch.optim.Adam(model.parameters(), lr=2e-3), time.time()
+    for step in range(steps):
+        A, B, O, W, V = batch(r, 256, WIDTH_TRAIN, ["add", "subtract", "times", "compare"])
+        out, v = model(A, B, O)
+        cmp = O == OPS.index("compare")
+        loss = Fn.cross_entropy(out[~cmp].reshape(-1, 10), W[~cmp].reshape(-1)) + Fn.cross_entropy(v[cmp], V[cmp])
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+        if step % 1000 == 0:
+            log(f"    step {step}: loss {float(loss.detach()):.3f}")
+    return time.time() - t0
+
+
+@torch.no_grad()
+def exam(model: nn.Module, width: int, n: int = 500) -> dict[str, float]:
+    """Exactly right, per operation, on numbers of exactly `width` digits."""
+    r, out = random.Random(100 + width), {}
+    for op in ["add", "subtract", "times", "compare"]:
+        A, B, O, W, V = batch(r, n, width, [op])
+        if op != "times":                                  # force the full width (batch picks 1..width)
+            A = torch.tensor([digits(r.randint(10 ** (width - 1), 10 ** width - 1), width + 2) for _ in range(n)])
+            B = torch.tensor([digits(r.randint(10 ** (width - 1), 10 ** width - 1), width + 2) for _ in range(n)])
+            if op == "subtract":
+                a, b = [number(x) for x in A.tolist()], [number(x) for x in B.tolist()]
+                A = torch.tensor([digits(max(x, y), width + 2) for x, y in zip(a, b)])
+                B = torch.tensor([digits(min(x, y), width + 2) for x, y in zip(a, b)])
+            a, b = [number(x) for x in A.tolist()], [number(x) for x in B.tolist()]
+            W = torch.tensor([digits(x + y if op == "add" else x - y, width + 2) for x, y in zip(a, b)])
+            V = torch.tensor([0 if x > y else 1 if x == y else 2 for x, y in zip(a, b)])
+        o, v = model(A, B, O)
+        out[op] = float((v.argmax(1) == V).float().mean()) if op == "compare" else float((o.argmax(2) == W).all(1).float().mean())
+    return out
+
+
+def trial() -> None:
+    """Both engines, the same lessons: practise on up to 3 digits, then the exam on 3, 5 and 6."""
+    import os
+    from household.train import SAVE
+    torch.manual_seed(0)
+    for name, model in [("column cell (carries along)", ColumnCell()), ("transformer (sees all columns)", ColumnTx())]:
+        print(f"{name}: {sum(p.numel() for p in model.parameters())} numbers")
+        secs = practise(model)
+        print(f"  practised in {secs:.0f} s")
+        for w in (WIDTH_TRAIN, *WIDTH_TEST):
+            print(f"  {w} digits: " + ", ".join(f"{k} {v:.0%}" for k, v in exam(model, w).items()))
+        if isinstance(model, ColumnCell):
+            print(f"  worked on paper: 4821 x 37 = {work(model, 4821, 37, 'times')} (true {4821 * 37}),  90517 - 8829 = {work(model, 90517, 8829, 'subtract')} (true {90517 - 8829})")
+        torch.save(model.state_dict(), os.path.join(os.path.dirname(SAVE), f"maths_{'cell' if isinstance(model, ColumnCell) else 'tx'}_test.pt"))
+
+
 def show() -> None:
     r = random.Random(0)
     for op in ["add", "subtract", "times", "compare"]:
@@ -179,4 +254,4 @@ def show() -> None:
 
 
 if __name__ == "__main__":
-    show() if sys.argv[1:2] == ["show"] else print(__doc__)
+    {"show": show, "trial": trial}.get(sys.argv[1] if sys.argv[1:] else "", lambda: print(__doc__))()
