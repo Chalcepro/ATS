@@ -295,7 +295,8 @@ def chat_lessons(n: int, names: list[str], pool: list[str], seed: int) -> list[t
         kind = r.random()
         if kind < 0.15:
             x = r.choice(names)
-            out.append((r.choice(["my name is {x}", "call me {x}", "i am {x}"]).format(x=x), f"nice to meet you, {x}.", noise))
+            # not "i am {x}": "i am sad" is a feeling, not a name
+            out.append((r.choice(["my name is {x}", "call me {x}", "you can call me {x}"]).format(x=x), f"nice to meet you, {x}.", noise))
         elif kind < 0.6:
             said, ask, ans, _ = r.choice(FACTS)
             fill = {"x": r.choice(names), "c": r.choice(COLOURS), "p": r.choice(PLACES)}
@@ -337,7 +338,8 @@ def test_recall() -> None:
     record = Record(wr, [{"when": "", "kind": "lesson", "text": q, "answer": a} for q, a in pairs])
     pool = [w for w in facts() if w.isalpha() and len(w) > 3]
     random.shuffle(pool)
-    idk_train = dont_know_lessons(known, pool[: len(pool) // 2], len(pairs) // 6, seed=1)
+    # 1 in 12: at 1 in 6 it said "i don't know" to a third of what it was taught
+    idk_train = dont_know_lessons(known, pool[: len(pool) // 2], len(pairs) // 12, seed=1)
     idk_test = dont_know_lessons(known, pool[len(pool) // 2:], 200, seed=2)
     lines = [q for q, _ in pairs]
     chat_train = chat_lessons(1500, NAMES, lines, seed=4)
