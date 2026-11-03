@@ -40,6 +40,8 @@ FRAME = 480                                                # 30 ms
 QUIET_START = 20.0                                         # talk after this much quiet starts a recording
 STOP_QUIET = 4.0                                           # this much quiet stops it (minutes, in real life)
 PAUSE = 0.25                                               # a pause this long ends a piece (turns come quick)
+SPLIT_LONG = False         # 11-03 on Chalce's clip over a TikTok: catches some other voices, but noise turned his own
+                           # voice into "Person D" too. Off until prints hold up in noise.
 CUE = re.compile(r"\b(record|recording)\b", re.I)
 
 
@@ -225,12 +227,18 @@ def hear(x: np.ndarray, start: dt.datetime, log=print) -> list[dict]:
     speech = talking(x)
     recording, last_end, kept, buzzes = False, 0.0, [], []
     turns = []                                              # pieces of talk, joined while the same voice goes on
-    for a, b in utterances(speech):
-        v = who(voiceprint(x[a * FRAME:b * FRAME]), known)
-        if turns and turns[-1][2] == v and (a - turns[-1][1]) * FRAME / SR < 1.0:
-            turns[-1][1] = b
-        else:
-            turns.append([a, b, v])
+    win = int(1.5 * SR / FRAME) if SPLIT_LONG else 10 ** 9  # check a long stretch every ~1.5 s (voices take turns fast)
+    for a0, b0 in utterances(speech):
+        for a in range(a0, b0, win):
+            b = min(b0, a + win)
+            if b - a < win // 2 and turns and turns[-1][1] == a:   # a short tail joins the piece before it
+                turns[-1][1] = b
+                continue
+            v = who(voiceprint(x[a * FRAME:b * FRAME]), known)
+            if turns and turns[-1][2] == v and (a - turns[-1][1]) * FRAME / SR < 1.0:
+                turns[-1][1] = b
+            else:
+                turns.append([a, b, v])
     for a, b, voice in turns:
         t0, t1 = a * FRAME / SR, b * FRAME / SR
         if t1 - t0 < 0.6 and voice.startswith("Person ") and len(known[voice]) == 1:
