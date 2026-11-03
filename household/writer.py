@@ -304,10 +304,12 @@ def chat_lessons(n: int, names: list[str], pool: list[str], seed: int) -> list[t
             out.append((ask, ans.format(**fill), lines))
         elif kind < 0.8:
             prev = r.choice(pool)
-            out.append((r.choice(["what did i just ask you?", "what was my last question?"]), f"you asked {prev}", noise[:1] + [f"you said : {prev}"]))
+            reply = [f"i said : {r.choice(pool)}"] if r.random() < 0.7 else []      # in a real chat its own answer comes after the question
+            out.append((r.choice(["what did i just ask you?", "what was my last question?"]), f"you asked {prev}", noise[:1] + [f"you said : {prev}"] + reply))
         else:
             prev = r.choice(pool)
-            out.append((r.choice(["what did you just say?", "what was your last answer?"]), f"i said {prev}", noise[:1] + [f"i said : {prev}"]))
+            asked = [f"you said : {r.choice(pool)}"] if r.random() < 0.7 else []
+            out.append((r.choice(["what did you just say?", "what was your last answer?"]), f"i said {prev}", noise[:1] + asked + [f"i said : {prev}"]))
     return out
 
 
@@ -327,6 +329,8 @@ def test_recall() -> None:
     held = [(asks[-1], ans) for _, asks, ans in BANK + lessons(0, 500)]
     held_q = {q for q, _ in held}
     pairs = [(q, A.texts[i]) for q, i in A.pairs if q not in held_q]
+    have = {q for q, _ in pairs}
+    pairs += [(q, ans) for _, asks, ans in BANK for q in asks[:-1] if q not in have]
     known = known_words(pairs)
     wl = WordLayer.from_keep(torch.load(os.path.join(os.path.dirname(SAVE), "wordlayer_test.pt")))
     wr = Writer(wl)
@@ -363,7 +367,7 @@ def test_recall() -> None:
     for (q, a, rec), w in list(zip(chat_test, chat_w))[:6]:
         print(f"  [{' / '.join(rec)}] {q} -> {w}   (want: {a})")
     # the chat from earlier, with a live record: what it heard goes in as it goes
-    for line in ["my name is chalce", "what is my name?", "what is a guitar?", "what did i just ask you?", "what is a florp?",
+    for line in ["my name is chalce", "what is my name?", "what is a guitar?", "what did i just ask you?", "what is a florp?", "i'm feeling stressed today",
                  "what kind of word is quickly?", "is a dog an animal?", "what is a violin?", "what does buy mean?", "i am sad today"]:
         rec = record.recent(3)
         out = wr.write([line], known, record, [rec])[0]

@@ -413,3 +413,5 @@ from household.class_bank5 import MORE5   # noqa: E402  (10-31: the world, games
 BANK += MORE5
 from household.class_bank6 import MORE6   # noqa: E402  (10-31: science, tech, games, music, film, sport, home, nature)
 BANK += MORE6
+from household.class_bank7 import MORE8   # noqa: E402  (11-02: feelings said straight, not framed)
+BANK += MORE8
