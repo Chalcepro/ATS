@@ -202,7 +202,9 @@ def train(wr: Writer, pairs: list[tuple[str, str]], known: set[str], epochs: int
     data += [(wr.reading(q, known, rec, record.recall(q) if record else ()), tokens(a)[:LONGEST - 1]) for q, a, rec in extra]   # as in a real chat: recall is on
     params = [p for n, p in wr.named_parameters() if not n.startswith("wl.")]
     opt = torch.optim.Adam(params, lr=2e-3)
+    import time
     for e in range(epochs):
+        t0 = time.time()
         wr.train()
         random.shuffle(data)
         total = 0.0
@@ -214,7 +216,7 @@ def train(wr: Writer, pairs: list[tuple[str, str]], known: set[str], epochs: int
             nn.utils.clip_grad_norm_(params, 1.0)
             opt.step()
             total += float(loss) * len(b)
-        log(f"  epoch {e + 1}/{epochs}: loss {total / len(data):.3f}")
+        log(f"  epoch {e + 1}/{epochs}: loss {total / len(data):.3f}  ({time.time() - t0:.0f} s)")
 
 
 def overlap(a: str, b: str) -> float:
@@ -334,7 +336,10 @@ def test_recall() -> None:
     pairs += [(q, ans) for _, asks, ans in BANK for q in asks[:-1] if q not in have]
     known = known_words(pairs)
     wl = WordLayer.from_keep(torch.load(os.path.join(os.path.dirname(SAVE), "wordlayer_test.pt")))
-    wr = Writer(wl)
+    fast = "fast" in sys.argv                              # the race: the parallel-training engine (writer2.py)
+    if fast:
+        from household.writer2 import Writer2
+    wr = Writer2(wl) if fast else Writer(wl)
     record = Record(wr, [{"when": "", "kind": "lesson", "text": q, "answer": a} for q, a in pairs])
     pool = [w for w in facts() if w.isalpha() and len(w) > 3]
     random.shuffle(pool)
@@ -369,7 +374,7 @@ def test_recall() -> None:
     for (q, a, rec), w in list(zip(chat_test, chat_w))[:6]:
         print(f"  [{' / '.join(rec)}] {q} -> {w}   (want: {a})")
     torch.save({"out": wr.out, "known": sorted(known), "state": {k: v for k, v in wr.state_dict().items() if not k.startswith("wl.")}},
-               os.path.join(os.path.dirname(SAVE), "writer_recall_test.pt"))   # kept, so it can be looked into without retraining
+               os.path.join(os.path.dirname(SAVE), "writer_fast_test.pt" if fast else "writer_recall_test.pt"))   # kept, so it can be looked into without retraining
     # the chat from earlier, with a live record: what it heard goes in as it goes
     for line in ["my name is chalce", "what is my name?", "what is a guitar?", "what did i just ask you?", "what is a florp?", "i'm feeling stressed today",
                  "what kind of word is quickly?", "is a dog an animal?", "what is a violin?", "what does buy mean?", "i am sad today"]:
