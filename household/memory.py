@@ -52,13 +52,19 @@ class Record:
         return Fn.normalize((w.unsqueeze(1) * v).sum(0), dim=0)
 
     def _index(self) -> None:
+        """Only events added since last time are indexed: a chat line costs one row, not the whole record."""
         if self._built == len(self.events) and self._mat is not None:
             return
-        self._df = {}
-        for e in self.events:
-            for x in set(content(e["text"])):
+        new = range(self._built if self._mat is not None else 0, len(self.events))
+        if self._mat is None:
+            self._df, self._has = {}, {}
+        for i in new:
+            for x in set(content(self.events[i]["text"])):
                 self._df[x] = self._df.get(x, 0) + 1
-        self._mat = torch.stack([self._vec(content(e["text"])) for e in self.events]) if self.events else None
+                self._has.setdefault(x, []).append(i)
+        rows = torch.stack([self._vec(content(self.events[i]["text"])) for i in new]) if len(new) else None
+        if rows is not None:
+            self._mat = rows if self._mat is None else torch.cat([self._mat, rows])
         self._built = len(self.events)
 
     def recall(self, question: str, k: int = 3, skip: str | None = None) -> list[str]:
@@ -66,12 +72,23 @@ class Record:
         self._index()
         if self._mat is None:
             return []
-        q = self._vec(content(question))
+        words = content(question)
+        q = self._vec(words)
         sims = self._mat @ q
+        # meaning alone misses exact words (the vectors still lean on spelling): shared words count too, rare ones most
+        n = len(self.events)
+        idf = {w: math.log((n + 1) / (self._df.get(w, 0) + 1)) for w in set(words)}
+        total = sum(idf.values()) or 1.0
+        cands = set(sims.topk(min(n, k + 30)).indices.tolist())
+        for w in sorted(idf, key=lambda w: -idf[w])[:3]:
+            cands.update(self._has.get(w, [])[:200])
+        def score(i: int) -> float:
+            shared = set(content(self.events[i]["text"])) & set(words)
+            return float(sims[i]) + sum(idf[w] for w in shared) / total
         out = []
-        for i in sims.topk(min(len(self.events), k + 8)).indices.tolist():
+        for i in sorted(cands, key=score, reverse=True):
             e = self.events[i]
-            if e["text"] != skip and float(sims[i]) > 0.3:
+            if e["text"] != skip and score(i) > 0.3:
                 out.append(self.show(e))
             if len(out) == k:
                 break

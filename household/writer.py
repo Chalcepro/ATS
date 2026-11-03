@@ -368,6 +368,8 @@ def test_recall() -> None:
         print(f"  {q}\n     writer+recall: {w}\n     picker: {p}\n     teacher: {a}")
     for (q, a, rec), w in list(zip(chat_test, chat_w))[:6]:
         print(f"  [{' / '.join(rec)}] {q} -> {w}   (want: {a})")
+    torch.save({"out": wr.out, "known": sorted(known), "state": {k: v for k, v in wr.state_dict().items() if not k.startswith("wl.")}},
+               os.path.join(os.path.dirname(SAVE), "writer_recall_test.pt"))   # kept, so it can be looked into without retraining
     # the chat from earlier, with a live record: what it heard goes in as it goes
     for line in ["my name is chalce", "what is my name?", "what is a guitar?", "what did i just ask you?", "what is a florp?", "i'm feeling stressed today",
                  "what kind of word is quickly?", "is a dog an animal?", "what is a violin?", "what does buy mean?", "i am sad today"]:
