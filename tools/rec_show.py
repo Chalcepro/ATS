@@ -13,6 +13,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from household.train import SAVE  # noqa: E402
 
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 RECS = os.path.join(os.path.dirname(SAVE), "recordings")
 
 
@@ -28,7 +29,8 @@ def line(e):
     if k in ("opened", "closed", "minimized", "maximized", "retitled"):
         return f"{k} {e.get('title') or e.get('app')}"
     if k in ("click", "double_click", "right_click"):
-        return f"{k.replace('_', ' ')} {e.get('role', '')} '{on}'{where}"
+        spot = f" at {e['inside'][0]:.0%} across, {e['inside'][1]:.0%} down" if e.get("inside") and on in ("canvas", "empty desktop") else ""
+        return f"{k.replace('_', ' ')} {e.get('role', '')} '{on}'{spot}{where}"
     if k == "drag":
         return f"dragged '{on}'{where} onto '{e.get('dropped_on')}'"
     if k in ("typed", "ticked", "picked"):
