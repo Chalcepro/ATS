@@ -45,7 +45,8 @@ SOUNDS = os.path.join(os.path.dirname(SAVE), "coal_sounds.jsonl")
 CLASS = os.path.join(os.path.dirname(SAVE), "coal_class.jsonl")      # every class answer, raw
 ANSWERS = os.path.join(os.path.dirname(SAVE), "coal_answers.json")    # answers Coal has been taught in class
 USE_MIND = True    # 11-03: the writer + record + maths answer chat (mind.py); False = the old picker
-WATCH = os.path.join(os.path.dirname(SAVE), "coal_watch.jsonl")      # what the person's pointer did in CoalOS
+WATCH = os.path.join(os.path.dirname(SAVE), "coal_watch.jsonl")
+RECS = os.path.join(os.path.dirname(SAVE), "recordings")                 # CoalOS recorder: one file per session      # what the person's pointer did in CoalOS
 
 
 class Session:
@@ -417,6 +418,13 @@ class Handler(BaseHTTPRequestHandler):
                     out["loss"] = round(desk.learn(S.brain), 3)
                     S.keep()
                 return self._json(out)
+        if self.path == "/api/rec":                       # the CoalOS recorder: your steps in apps, one file a session
+            os.makedirs(RECS, exist_ok=True)
+            for e in json.loads(raw or b"[]")[:2000]:
+                name = "".join(c for c in str(e.get("session", "unknown")) if c.isalnum() or c in "-T")[:40] or "unknown"
+                with open(os.path.join(RECS, name + ".jsonl"), "a", encoding="utf-8") as f:
+                    f.write(json.dumps(e) + "\n")
+            return self._json({"ok": True})
         if self.path == "/api/watch":                     # pointer moves and drags, kept as seen
             with open(WATCH, "a", encoding="utf-8") as f:
                 for e in json.loads(raw or b"[]")[:500]:
