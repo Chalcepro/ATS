@@ -40,7 +40,7 @@ FRAME = 480                                                # 30 ms
 QUIET_START = 20.0                                         # talk after this much quiet starts a recording
 STOP_QUIET = 4.0                                           # this much quiet stops it (minutes, in real life)
 PAUSE = 0.25                                               # a pause this long ends a piece (turns come quick)
-NOISE_SUB = 1.5           # 11-05: background (the quiet just before) taken off before a voice is compared; 0 = off
+NOISE_SUB = 0.0           # 11-05: background (the quiet just before) taken off before a voice is compared; 0 = off
 SPLIT_LONG = False         # 11-03 on Chalce's clip over a TikTok: catches some other voices, but noise turned his own
                            # voice into "Person D" too. Off until prints hold up in noise.
 CUE = re.compile(r"\b(record|recording)\b", re.I)
