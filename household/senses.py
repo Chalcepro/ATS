@@ -26,6 +26,9 @@ WIN = 640                      # 40 ms
 NAMES = (["loud", "attack", "pitch", "voicing"] + [f"harm{k}" for k in range(2, 7)] +
          ["noisiness", "brightness", "f1", "f2", "f3", "rhythm_beat", "rhythm_syllable", "rhythm_fast",
           "steady", "reverb", "direction"])
+WINDOW = 25                    # the senses area hears the last second: 25 slices of 40 ms
+SENSE_SIZE = WINDOW * len(NAMES)
+HEARD = ["voice", "music"]     # what the senses area says is in a slice, each yes/no
 
 
 def _frames(x):
@@ -125,9 +128,110 @@ def streams(x, right=None):
     return np.column_stack([loud, attack, pitch, voicing, harm, noisiness, brightness, form, rhythm, steady, reverb, direction])
 
 
+# ---- the senses area of Coal's brain: what is in this slice? ---------------------------------------
+def windows(x, norm=None):
+    """(slices of 40 ms, SENSE_SIZE): each slice with the second before it, every sense taken against its
+    usual level (norm = (mean, spread) learned in teach and kept in the brain file)."""
+    s = streams(x)
+    s = s[:len(s) // 2 * 2].reshape(-1, 2, len(NAMES)).mean(1)
+    pad = np.concatenate([np.zeros((WINDOW - 1, len(NAMES))), s])
+    w = np.lib.stride_tricks.sliding_window_view(pad, (WINDOW, len(NAMES)))[:, 0].reshape(len(s), -1)
+    if norm is not None:
+        w = (w - norm[0]) / norm[1]
+    return w.astype(np.float32)
+
+
+def heard(brain, x):
+    """Per 40 ms slice, (voice yes/no, music yes/no) from Coal's senses area. None if it was never taught."""
+    import torch
+    norm = brain.keep.get("sense_norm")
+    if norm is None:
+        return None
+    with torch.no_grad():
+        out = brain.sense(torch.tensor(windows(x, (np.array(norm[0]), np.array(norm[1]))))) > 0
+    return out.numpy()
+
+
+def _mixes(voices, musics, n, rng):
+    """n 4-second clips: voice alone, music alone, both (music 15 dB under the voice .. 3 dB over it), and the truth
+    for every slice. Voice slices come from the loudness ear run on the clean voice, where it is reliable."""
+    from household.listen import FRAME, loud_talking
+    clip, out = 4 * SR, []
+    marks = [np.pad(loud_talking(v).repeat(FRAME), (0, FRAME))[:len(v)] for v in voices]
+    for i in range(n):
+        kind = i % 3
+        k = rng.integers(len(voices))
+        v, vm = voices[k], marks[k]
+        m = musics[rng.integers(len(musics))]
+        a, b = rng.integers(0, len(v) - clip), rng.integers(0, len(m) - clip)
+        vv, mm, has_v = v[a:a + clip], m[b:b + clip], vm[a:a + clip]
+        mm = mm / (np.sqrt((mm ** 2).mean()) + 1e-6) * (np.sqrt((vv ** 2).mean()) + 1e-6) * 10 ** (rng.uniform(-15, 3) / 20)
+        x = (vv if kind != 1 else 0) + (mm if kind != 0 else 0)
+        x = x * 10 ** (rng.uniform(-12, 6) / 20)                     # near or far from the mic
+        T = clip // (2 * HOP) - 1
+        yv = np.array([has_v[t * 2 * HOP:(t + 1) * 2 * HOP].mean() > 0.5 for t in range(T)]) & (kind != 1)
+        out.append((x.astype(np.float32), np.stack([yv, np.full(T, kind != 0)], 1).astype(np.float32)))
+    return out
+
+
+def _build(clips, norm=None):
+    W, Y = [], []
+    for x, y in clips:
+        w = windows(x)
+        T = min(len(w), len(y))
+        W.append(w[WINDOW:T]); Y.append(y[WINDOW:T])                # the first second has no full window
+    W, Y = np.concatenate(W), np.concatenate(Y)
+    if norm is None:
+        norm = (W.mean(0), W.std(0) + 1e-6)
+    return (W - norm[0]) / norm[1], Y, norm
+
+
+def teach(brain, voice_files, music_files, clips=600, epochs=10, seed=0):
+    """Teach the senses area from clean voice files and clean music files (or file:start:end). The first 70% of
+    each file teaches, the rest is the exam. Only the senses area and its heads move."""
+    import torch
+    from household.listen import read_wav
+    def load(f):
+        f, *se = f.rsplit(":", 2) if f.count(":") >= 3 else (f,)
+        x = read_wav(f)
+        return x[int(float(se[0]) * SR):int(float(se[1]) * SR)] if se else x
+    rng = np.random.default_rng(seed)
+    torch.manual_seed(seed)
+    vs, ms = [load(f) for f in voice_files], [load(f) for f in music_files]
+    cut = lambda xs, a, b: [x[int(len(x) * a):int(len(x) * b)] for x in xs]
+    W, Y, norm = _build(_mixes(cut(vs, 0, .7), cut(ms, 0, .7), clips, rng))
+    Wt, Yt, _ = _build(_mixes(cut(vs, .7, 1), cut(ms, .7, 1), clips // 4, rng), norm)
+    params = [*brain.sense_ear.parameters(), *brain.heard.parameters()]
+    opt = torch.optim.Adam(params, 1e-3)
+    W, Y = torch.tensor(W), torch.tensor(Y)
+    for _ in range(epochs):
+        for i in torch.randperm(len(W)).split(256):
+            loss = torch.nn.functional.binary_cross_entropy_with_logits(brain.sense(W[i]), Y[i])
+            opt.zero_grad(); loss.backward(); opt.step()
+    brain.keep["sense_norm"] = [norm[0].tolist(), norm[1].tolist()]
+    with torch.no_grad():
+        p = (brain.sense(torch.tensor(Wt)) > 0).numpy()
+    both = Yt[:, 1] == 1
+    res = {"voice": float((p[:, 0] == Yt[:, 0]).mean()), "voice_over_music": float((p[both, 0] == Yt[both, 0]).mean()),
+           "music": float((p[:, 1] == Yt[:, 1]).mean())}
+    print(f"exam (later minutes, never taught): voice right {res['voice']:.1%} | voice over music {res['voice_over_music']:.1%}"
+          f" | music right {res['music']:.1%}  ({len(W)} slices taught, {len(Wt)} tested)")
+    return res
+
+
 if __name__ == "__main__":
+    import os
     import sys
-    sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__import__("os").path.abspath(__file__))))
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if sys.argv[1] == "teach":       # py -3.12 -m household.senses teach BRAIN.pt --voice a.wav b.wav --music c.wav d.wav:280:500
+        from household.model import load, save
+        args = sys.argv[3:]
+        vi, mi = args.index("--voice"), args.index("--music")
+        brain, rounds = load(sys.argv[2])
+        teach(brain, args[vi + 1:mi] if vi < mi else args[vi + 1:], args[mi + 1:] if mi > vi else args[mi + 1:vi])
+        save(brain, sys.argv[2], rounds)
+        print("saved", sys.argv[2])
+        sys.exit()
     from household.listen import read_wav
     x = read_wav(sys.argv[1])
     a = int(float(sys.argv[2]) * SR) if len(sys.argv) > 2 else 0

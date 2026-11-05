@@ -20,6 +20,7 @@ from household.page_lessons import PAGE_SIZE, PARTS, page_names
 from household.live import CLASS_SIZE, MAX_ANSWERS, class_names
 from household.ears import EAR_CUES, EAR_SIZE, EAR_WORDS, ENDS, ear_names
 from household.desk import DESK_IN, MOVES
+from household.senses import SENSE_SIZE, HEARD
 from household.typist import TYPER_WIDE, TYPED_SIZE, TYPE_WORDS, typed_names
 from household.world import ACTIONS, MAX_PEOPLE, MEM_SIZE, input_names
 
@@ -51,6 +52,9 @@ class HouseholdBrain(nn.Module):
         self.hear = nn.Linear(hidden, EAR_WORDS)       # the word in this slice of sound (ears.py)
         self.hear_end = nn.Linear(hidden, len(ENDS))   # speaking, a pause, a full stop, a question
         self.hear_cue = nn.Linear(hidden, EAR_CUES)    # which sound cue, if it is not speech
+        # the senses area (11-05): the 20 sense streams over the last second, its own layers, so it never moves the rest
+        self.sense_ear = nn.Sequential(nn.Linear(SENSE_SIZE, hidden), nn.ReLU(), nn.Linear(hidden, hidden), nn.ReLU())
+        self.heard = nn.Linear(hidden, len(HEARD))     # what is in this slice: a voice, music (each yes/no)
         # the typing area: the question and what it typed so far -> the next word (typist.py)
         wide = TYPER_WIDE * hidden                     # 2 tested 10-31 (memorised more, no better on new wordings)
         self.typer = nn.Sequential(nn.Linear(CLASS_SIZE + TYPED_SIZE, wide), nn.ReLU(), nn.Linear(wide, wide), nn.ReLU())
@@ -82,6 +86,10 @@ class HouseholdBrain(nn.Module):
                 "foresight": self.foresight(h), "words": self.words(h).view(-1, MAX_PEOPLE, len(VOCAB)),
                 "meaning": torch.tanh(self.meaning(h)), "desk": self.desk(h), "page": {p: head(h) for p, head in self.page.items()}, "reply": self.reply(h),
                 "hear": self.hear(e), "hear_end": self.hear_end(e), "hear_cue": self.hear_cue(e), "type": self.typed(t)}
+
+    def sense(self, win: torch.Tensor) -> torch.Tensor:
+        """Sense windows (senses.windows) to one score per HEARD kind (above 0 = yes)."""
+        return self.heard(self.sense_ear(win))
 
     @torch.no_grad()
     def choose(self, obs: list[float]) -> tuple[str, int]:

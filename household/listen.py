@@ -70,7 +70,36 @@ def write_wav(path: str, x: np.ndarray) -> None:
 
 
 # ---- the ear: is someone talking? -------------------------------------------------------------------
+_BRAIN = []
+
+
+def _brain():
+    """Coal's brain, loaded once, for its senses area (COAL_BRAIN picks the file, e.g. a test copy)."""
+    if not _BRAIN:
+        try:
+            from household.model import load
+            from household.train import SAVE
+            _BRAIN.append(load(os.environ.get("COAL_BRAIN") or SAVE)[0])
+        except Exception as e:                              # no brain file here: the loudness ear alone
+            print("ear: no brain for the senses area -", e, file=sys.stderr)
+            _BRAIN.append(None)
+    return _BRAIN[0]
+
+
 def talking(x: np.ndarray) -> np.ndarray:
+    """One yes/no per 30 ms frame: loud enough (loud_talking) AND Coal's senses area hears a voice in it, so music
+    alone is not talk (11-05). Until the senses area is taught (or with COAL_SENSES=off), loudness alone."""
+    loud = loud_talking(x)
+    b = _brain() if os.environ.get("COAL_SENSES", "on") != "off" else None
+    from household.senses import heard
+    h = heard(b, x) if b is not None else None
+    if h is None or not len(h):
+        return loud
+    at = np.minimum((np.arange(len(loud)) * FRAME + FRAME // 2) // 640, len(h) - 1)   # each 30 ms frame -> its 40 ms slice
+    return loud & h[at, 0]
+
+
+def loud_talking(x: np.ndarray) -> np.ndarray:
     """One yes/no per 30 ms frame, against a noise floor that follows the room."""
     n = len(x) // FRAME
     e = 10 * np.log10((x[:n * FRAME].reshape(n, FRAME) ** 2).mean(1) + 1e-10)
