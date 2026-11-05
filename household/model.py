@@ -54,7 +54,7 @@ class HouseholdBrain(nn.Module):
         self.hear_cue = nn.Linear(hidden, EAR_CUES)    # which sound cue, if it is not speech
         # the senses area (11-05): the 20 sense streams over the last second, its own layers, so it never moves the rest
         self.sense_ear = nn.Sequential(nn.Linear(SENSE_SIZE, hidden), nn.ReLU(), nn.Linear(hidden, hidden), nn.ReLU())
-        self.heard = nn.Linear(hidden, len(HEARD))     # what is in this slice: a voice, music (each yes/no)
+        self.heard = nn.Linear(hidden, len(HEARD))     # what is in this slice: a voice, music (each yes/no), and is it Chalce
         # the typing area: the question and what it typed so far -> the next word (typist.py)
         wide = TYPER_WIDE * hidden                     # 2 tested 10-31 (memorised more, no better on new wordings)
         self.typer = nn.Sequential(nn.Linear(CLASS_SIZE + TYPED_SIZE, wide), nn.ReLU(), nn.Linear(wide, wide), nn.ReLU())

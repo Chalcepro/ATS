@@ -170,6 +170,27 @@ def voiceprint(x: np.ndarray, noise: np.ndarray | None = None) -> np.ndarray:
     return v / (np.linalg.norm(v) + 1e-9)
 
 
+def sense_print(x: np.ndarray, noise: np.ndarray | None = None) -> np.ndarray:
+    """11-05 trial: a voice by its senses - the mouth and throat (formants F1-F3: where they sit and how they move),
+    the wave shape (overtones), brightness, breathiness - and no pitch, so one voice higher or lower stays itself."""
+    from household.senses import streams, NAMES
+    s = streams(x)
+    i = {n: k for k, n in enumerate(NAMES)}
+    on = (s[:, i["voicing"]] > 0.45) & (s[:, i["loud"]] > np.median(s[:, i["loud"]])) & (s[:, i["f3"]] > 0)
+    if on.sum() < 10:
+        on = s[:, i["loud"]] > np.median(s[:, i["loud"]])
+    v = s[on]
+    f = v[:, [i["f1"], i["f2"], i["f3"]]]
+    h = v[:, [i[f"harm{k}"] for k in range(2, 7)]] / 20
+    rest = v[:, [i["brightness"], i["noisiness"]]]
+    q = lambda a: np.percentile(a, [25, 50, 75], axis=0).reshape(-1)
+    out = np.concatenate([q(f) * 2, q(h), rest.mean(0), rest.std(0)])
+    return out / (np.linalg.norm(out) + 1e-9)
+
+
+AVERAGE_SENSES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "average_voice_senses.npy")
+
+
 def voices() -> dict:
     p = os.path.join(EARS, "voices.json")
     return json.load(open(p)) if os.path.exists(p) else {}
@@ -187,7 +208,8 @@ KEEP_PRINTS = 20
 
 def centred(p: np.ndarray) -> np.ndarray:
     """A print minus what all voices share, so only what makes this voice itself is compared."""
-    v = p - np.load(AVERAGE) if os.path.exists(AVERAGE) else p
+    avg = AVERAGE_SENSES if len(p) != 65 else AVERAGE     # a senses print or a band print
+    v = p - np.load(avg) if os.path.exists(avg) else p
     return v / (np.linalg.norm(v) + 1e-9)
 
 

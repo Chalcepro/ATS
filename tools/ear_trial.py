@@ -12,6 +12,8 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["COAL_EARS"] = tempfile.mkdtemp(prefix="ear_trial_")
 from household import listen as L  # noqa: E402
+if os.environ.get("PRINT") == "senses":
+    L.voiceprint = L.sense_print
 
 
 def enrol(x):

@@ -28,7 +28,7 @@ NAMES = (["loud", "attack", "pitch", "voicing"] + [f"harm{k}" for k in range(2, 
           "steady", "reverb", "direction"])
 WINDOW = 25                    # the senses area hears the last second: 25 slices of 40 ms
 SENSE_SIZE = WINDOW * len(NAMES)
-HEARD = ["voice", "music"]     # what the senses area says is in a slice, each yes/no
+HEARD = ["voice", "music", "chalce"]   # what the senses area says is in a slice, each yes/no ("chalce": his voice)
 
 
 def _frames(x):
@@ -152,25 +152,35 @@ def heard(brain, x):
     return out.numpy()
 
 
-def _mixes(voices, musics, n, rng):
+def _mixes(voices, musics, n, rng, others=(), room=None):
     """n 4-second clips: voice alone, music alone, both (music 15 dB under the voice .. 3 dB over it), and the truth
     for every slice. Voice slices come from the loudness ear run on the clean voice, where it is reliable."""
     from household.listen import FRAME, loud_talking
     clip, out = 4 * SR, []
     marks = [np.pad(loud_talking(v).repeat(FRAME), (0, FRAME))[:len(v)] for v in voices]
+    omarks = [np.pad(loud_talking(v).repeat(FRAME), (0, FRAME))[:len(v)] for v in others]
     for i in range(n):
         kind = i % 3
-        k = rng.integers(len(voices))
-        v, vm = voices[k], marks[k]
+        his = not others or rng.random() < 0.55               # his voice, or someone else's
+        if his:
+            k = rng.integers(len(voices))
+            v, vm = voices[k], marks[k]
+        else:
+            k = rng.integers(len(others))
+            v, vm = others[k], omarks[k]
+            # their voice gets his room's background below, so "clean" is not a giveaway
         m = musics[rng.integers(len(musics))]
         a, b = rng.integers(0, len(v) - clip), rng.integers(0, len(m) - clip)
         vv, mm, has_v = v[a:a + clip], m[b:b + clip], vm[a:a + clip]
+        if not his and room is not None and len(room) > clip:
+            r = rng.integers(0, len(room) - clip)
+            vv = vv + room[r:r + clip] * rng.uniform(0.5, 1.5)
         mm = mm / (np.sqrt((mm ** 2).mean()) + 1e-6) * (np.sqrt((vv ** 2).mean()) + 1e-6) * 10 ** (rng.uniform(-15, 3) / 20)
         x = (vv if kind != 1 else 0) + (mm if kind != 0 else 0)
         x = x * 10 ** (rng.uniform(-12, 6) / 20)                     # near or far from the mic
         T = clip // (2 * HOP) - 1
         yv = np.array([has_v[t * 2 * HOP:(t + 1) * 2 * HOP].mean() > 0.5 for t in range(T)]) & (kind != 1)
-        out.append((x.astype(np.float32), np.stack([yv, np.full(T, kind != 0)], 1).astype(np.float32)))
+        out.append((x.astype(np.float32), np.stack([yv, np.full(T, kind != 0), yv & his], 1).astype(np.float32)))
     return out
 
 
@@ -186,7 +196,7 @@ def _build(clips, norm=None):
     return (W - norm[0]) / norm[1], Y, norm
 
 
-def teach(brain, voice_files, music_files, clips=600, epochs=10, seed=0):
+def teach(brain, voice_files, music_files, other_files=(), clips=600, epochs=10, seed=0):
     """Teach the senses area from clean voice files and clean music files (or file:start:end). The first 70% of
     each file teaches, the rest is the exam. Only the senses area and its heads move."""
     import torch
@@ -197,10 +207,12 @@ def teach(brain, voice_files, music_files, clips=600, epochs=10, seed=0):
         return x[int(float(se[0]) * SR):int(float(se[1]) * SR)] if se else x
     rng = np.random.default_rng(seed)
     torch.manual_seed(seed)
-    vs, ms = [load(f) for f in voice_files], [load(f) for f in music_files]
+    from household.listen import FRAME, loud_talking
+    vs, ms, os_ = [load(f) for f in voice_files], [load(f) for f in music_files], [load(f) for f in other_files]
+    room = np.concatenate([v[:len(v) // FRAME * FRAME][~loud_talking(v).repeat(FRAME)[:len(v) // FRAME * FRAME]] for v in vs])
     cut = lambda xs, a, b: [x[int(len(x) * a):int(len(x) * b)] for x in xs]
-    W, Y, norm = _build(_mixes(cut(vs, 0, .7), cut(ms, 0, .7), clips, rng))
-    Wt, Yt, _ = _build(_mixes(cut(vs, .7, 1), cut(ms, .7, 1), clips // 4, rng), norm)
+    W, Y, norm = _build(_mixes(cut(vs, 0, .7), cut(ms, 0, .7), clips, rng, cut(os_, 0, .7), room))
+    Wt, Yt, _ = _build(_mixes(cut(vs, .7, 1), cut(ms, .7, 1), clips // 4, rng, cut(os_, .7, 1), room), norm)
     params = [*brain.sense_ear.parameters(), *brain.heard.parameters()]
     opt = torch.optim.Adam(params, 1e-3)
     W, Y = torch.tensor(W), torch.tensor(Y)
@@ -214,8 +226,10 @@ def teach(brain, voice_files, music_files, clips=600, epochs=10, seed=0):
     both = Yt[:, 1] == 1
     res = {"voice": float((p[:, 0] == Yt[:, 0]).mean()), "voice_over_music": float((p[both, 0] == Yt[both, 0]).mean()),
            "music": float((p[:, 1] == Yt[:, 1]).mean())}
+    talk = Yt[:, 0] == 1
+    res["chalce"] = float((p[talk, 2] == Yt[talk, 2]).mean()) if talk.any() else 0.0
     print(f"exam (later minutes, never taught): voice right {res['voice']:.1%} | voice over music {res['voice_over_music']:.1%}"
-          f" | music right {res['music']:.1%}  ({len(W)} slices taught, {len(Wt)} tested)")
+          f" | music right {res['music']:.1%} | who (Chalce or not, while talking) {res['chalce']:.1%}  ({len(W)} slices taught, {len(Wt)} tested)")
     return res
 
 
@@ -226,9 +240,10 @@ if __name__ == "__main__":
     if sys.argv[1] == "teach":       # py -3.12 -m household.senses teach BRAIN.pt --voice a.wav b.wav --music c.wav d.wav:280:500
         from household.model import load, save
         args = sys.argv[3:]
-        vi, mi = args.index("--voice"), args.index("--music")
+        flags = [k for k, a in enumerate(args) if a.startswith("--")] + [len(args)]
+        part = {args[k]: args[k + 1:flags[j + 1]] for j, k in enumerate(flags[:-1])}
         brain, rounds = load(sys.argv[2])
-        teach(brain, args[vi + 1:mi] if vi < mi else args[vi + 1:], args[mi + 1:] if mi > vi else args[mi + 1:vi])
+        teach(brain, part["--voice"], part["--music"], part.get("--others", []))
         save(brain, sys.argv[2], rounds)
         print("saved", sys.argv[2])
         sys.exit()
