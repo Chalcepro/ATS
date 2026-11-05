@@ -40,6 +40,7 @@ FRAME = 480                                                # 30 ms
 QUIET_START = 20.0                                         # talk after this much quiet starts a recording
 STOP_QUIET = 4.0                                           # this much quiet stops it (minutes, in real life)
 PAUSE = 0.25                                               # a pause this long ends a piece (turns come quick)
+NOISE_SUB = 1.5           # 11-05: background (the quiet just before) taken off before a voice is compared; 0 = off
 SPLIT_LONG = False         # 11-03 on Chalce's clip over a TikTok: catches some other voices, but noise turned his own
                            # voice into "Person D" too. Off until prints hold up in noise.
 CUE = re.compile(r"\b(record|recording)\b", re.I)
@@ -102,12 +103,33 @@ def utterances(speech: np.ndarray) -> list[tuple[int, int]]:
 
 
 # ---- voices by their sound ----------------------------------------------------------------------------
-def voiceprint(x: np.ndarray) -> np.ndarray:
+def spectrum(x: np.ndarray) -> np.ndarray:
+    """Magnitude per frequency, 512-sample frames (32 ms)."""
+    n = len(x) // 512
+    return np.abs(np.fft.rfft(x[:n * 512].reshape(n, 512) * np.hanning(512), axis=1))
+
+
+def background(x: np.ndarray, speech: np.ndarray, a: int, secs: float = 6.0) -> np.ndarray | None:
+    """What the room sounded like just before frame `a` when nobody was talking (music, a fan, a TV):
+    the median spectrum of the quiet frames in the last `secs` seconds. None if there were too few."""
+    lo = max(0, a - int(secs * SR / FRAME))
+    quiet = [i for i in range(lo, a) if not speech[i]]
+    if len(quiet) < 10:
+        return None
+    clip = np.concatenate([x[i * FRAME:(i + 1) * FRAME] for i in quiet])
+    m = spectrum(clip)
+    return np.median(m, 0) if len(m) else None
+
+
+def voiceprint(x: np.ndarray, noise: np.ndarray | None = None) -> np.ndarray:
     """The shape of a voice: average energy in 32 bands (log-spaced 80 Hz - 7.6 kHz), how much it varies,
-    and the pitch. Normalised, so loudness does not count."""
+    and the pitch. Normalised, so loudness does not count. With `noise` (a background spectrum), that much
+    is taken off every frame first, so the voice looks the same over music as in a quiet room."""
     n = len(x) // 512
     frames = x[:n * 512].reshape(n, 512) * np.hanning(512)
     mag = np.abs(np.fft.rfft(frames, axis=1))
+    if noise is not None and NOISE_SUB:
+        mag = np.maximum(mag - NOISE_SUB * noise, 0.05 * mag)   # keep a little, so no band falls to nothing
     edges = np.geomspace(80, 7600, 33) / (SR / 512)
     bands = np.stack([mag[:, int(a):max(int(a) + 1, int(b))].mean(1) for a, b in zip(edges[:-1], edges[1:])], 1)
     loud = mag.sum(1) > np.median(mag.sum(1))               # the voiced frames
@@ -140,19 +162,35 @@ def centred(p: np.ndarray) -> np.ndarray:
     return v / (np.linalg.norm(v) + 1e-9)
 
 
+NEW_BELOW = 0.40     # 11-05: between this and SAME it is "probably them" (no new person, nothing learned); a new
+                     # person only when clearly unlike everyone - near-misses had turned Chalce into Person A
+LEARN = 0.55         # 11-05: only a sure match adds a sample, so noisy lines cannot drag a voice towards someone else
+ENROL_KEEP = 8       # 11-05 trial: 8 locked + 12 learned held Chalce at 95-97% over music; 20 locked fell to 6-44%
+ANCHORS = "_anchors" # voices.json key: how many of a voice's first samples were enrolled and are never pushed out
+
+
 def who(print_: np.ndarray, known: dict) -> str:
     """The voice whose best three samples are closest, if close enough; otherwise someone new. Each voice keeps
-    up to KEEP_PRINTS samples (one sample is too few: the same voice saying a different line can look like another)."""
+    up to KEEP_PRINTS samples (one sample is too few: the same voice saying a different line can look like another).
+    Enrolled samples stay for good; learned ones are added only on a sure match and roll over.
+    (11-05: before this, music-filled lines replaced all of Chalce's clean samples and he split into Persons A/B.)"""
     c = centred(print_)
+    anchors = known.setdefault(ANCHORS, {})
     best, name = -1.0, None
     for k, prints in known.items():
+        if k.startswith("_") or not prints:
+            continue
         s = float(np.mean(sorted(float(c @ centred(np.array(p))) for p in prints)[-3:]))
         if s > best:
             best, name = s, k
-    if name is None or best < SAME:
+    if name is None or best < NEW_BELOW:
         name = f"Person {chr(ord('A') + sum(k.startswith('Person ') for k in known))}"   # Coal names them; Chalce can rename
-        known[name] = []
-    known[name] = (known[name] + [list(print_)])[-KEEP_PRINTS:]
+        known[name] = [list(print_)]
+        return name
+    if best >= LEARN:
+        n = anchors.get(name, 0)
+        fixed, learned = known[name][:n], known[name][n:]
+        known[name] = fixed + (learned + [list(print_)])[-max(3, KEEP_PRINTS - n):]
     return name
 
 
@@ -224,6 +262,7 @@ def words(x: np.ndarray) -> str:
 def hear(x: np.ndarray, start: dt.datetime, log=print) -> list[dict]:
     """Listen to a stretch of sound that began at `start`. Records only when a cue says so."""
     known = voices()
+    before = set(known)                                     # voices met before this stretch
     speech = talking(x)
     recording, last_end, kept, buzzes = False, 0.0, [], []
     turns = []                                              # pieces of talk, joined while the same voice goes on
@@ -234,17 +273,21 @@ def hear(x: np.ndarray, start: dt.datetime, log=print) -> list[dict]:
             if b - a < win // 2 and turns and turns[-1][1] == a:   # a short tail joins the piece before it
                 turns[-1][1] = b
                 continue
-            v = who(voiceprint(x[a * FRAME:b * FRAME]), known)
+            v = who(voiceprint(x[a * FRAME:b * FRAME], background(x, speech, a)), known)
             if turns and turns[-1][2] == v and (a - turns[-1][1]) * FRAME / SR < 1.0:
                 turns[-1][1] = b
             else:
                 turns.append([a, b, v])
+    met = set()                                             # new voices already announced this stretch
     for a, b, voice in turns:
         t0, t1 = a * FRAME / SR, b * FRAME / SR
-        if t1 - t0 < 0.6 and voice.startswith("Person ") and len(known[voice]) == 1:
+        fresh = voice not in before
+        if t1 - t0 < 0.6 and fresh and len(known.get(voice, [])) == 1:
             del known[voice]                               # a cough or a click is not a new person
             continue
         clip = x[a * FRAME:b * FRAME]
+        announce = fresh and voice in known and voice not in met
+        met.add(voice)
         if recording and t0 - last_end > STOP_QUIET:
             recording = False
             buzzes.append(last_end + STOP_QUIET)
@@ -253,7 +296,7 @@ def hear(x: np.ndarray, start: dt.datetime, log=print) -> list[dict]:
         if not recording:
             if t0 - last_end > QUIET_START:
                 why = "talk after a long quiet"
-            elif voice.startswith("Person ") and len(known[voice]) == 1:
+            elif announce:
                 why = "a new voice"
             else:
                 head = words(clip[: 4 * SR])                    # only the first seconds are checked for "record"
@@ -333,6 +376,8 @@ def main() -> None:
         sp = np.repeat(talking(x), FRAME)[:len(x)]
         talk = x[:len(sp)][sp]
         v[sys.argv[2]] = [list(voiceprint(talk[i:i + 24000])) for i in range(0, max(1, len(talk) - 12000), 12000)][:KEEP_PRINTS]
+        v[sys.argv[2]] = v[sys.argv[2]][:ENROL_KEEP]
+        v.setdefault(ANCHORS, {})[sys.argv[2]] = len(v[sys.argv[2]])   # enrolled samples are kept for good, the rest learned
         save_voices(v)
         print(f"Coal knows {sys.argv[2]}'s voice.")
     elif cmd == "name":                                     # name "Person B" Registrar
