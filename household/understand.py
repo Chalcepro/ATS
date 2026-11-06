@@ -25,11 +25,16 @@ import torch.nn as nn
 
 ROLES = ["-", "me", "you", "name", "thing", "quality"]
 QUALS = ["colour", "size", "state"]
-KINDS = ["tell", "ask_colour", "ask_size", "ask_state", "ask_yesno", "ask_things", "ask_owner", "greet", "other"]
+from household.talk_lines import MINE, split as _split_lines
+
+LINES, LINES_HELD = _split_lines()                                     # Chalce's own lines, by what he means
+MEANS = [k for k in MINE if k != "greet"]                              # help, stop, go_on, note, yes, no, ...
+KINDS = ["tell", "ask_colour", "ask_size", "ask_state", "ask_yesno", "ask_things", "ask_owner", "greet", "other"] + MEANS
 
 
 def words(text: str) -> list[str]:
-    return re.findall(r"[a-z]+|'[a-z]+", text.lower().replace("’", "'"))
+    text = re.sub(r"([a-z])\1{2,}", r"\1", text.lower().replace("’", "'"))   # "waaaiiiit" -> "wait", "hellooo" -> "hello"
+    return re.findall(r"[a-z]+|'[a-z]+", text)
 
 
 # ---- lessons: many wordings; the exam keeps some wordings and some words back ----------------------------
@@ -119,12 +124,15 @@ def lesson(rng, held: bool, pool=None):
     if held:                                                           # the exam mixes held words into known wordings too
         w = {k: (HELD_W[k] if rng.random() < .7 else TRAIN_W[k]) for k in TRAIN_W}
     r = rng.random()
-    if r < .4:
+    if r < .3:
+        kind = rng.choice(MEANS + ["greet"])                          # what Chalce means, in his words
+        pat = rng.choice((LINES_HELD if held else LINES)[kind] + ([] if held or kind != "greet" else GREET))
+    elif r < .55:
         kind, pat = "tell", rng.choice(TELL_HELD if held and rng.random() < .6 else TELL)
-    elif r < .85:
+    elif r < .88:
         kind = rng.choice(list(ASK))
         pat = rng.choice(ASK_HELD[kind] if held and rng.random() < .6 else ASK[kind])
-    elif r < .93:
+    elif r < .94:
         kind, pat = "greet", rng.choice(GREET_HELD if held else GREET)
     else:
         kind, pat = "other", rng.choice(OTHER_HELD if held else OTHER)
@@ -135,7 +143,7 @@ def lesson(rng, held: bool, pool=None):
     t = rng.choice(pool) if pool and rng.random() < .5 else rng.choice(w["thing"])   # any word can be the thing:
     _, own = _owner(rng, w, pool)                                                  # it is known by its place
     toks = []
-    pieces = (rng.choice(LEAD) + pat).split()
+    pieces = ((rng.choice(LEAD) if kind not in MEANS or rng.random() < .3 else "") + pat).split()
     if rng.random() < .25:
         pieces.insert(rng.randrange(len(pieces) + 1), rng.choice(FILL))
     if rng.random() < .15:
@@ -235,8 +243,37 @@ def exam(reader, held=True, n=1000, seed=99) -> dict:
             "quality kind": ok_q.float().mean().item(), "whole sentence": (ok_k & ok_r & ok_q).float().mean().item()}
 
 
+@torch.no_grad()
+def exam_mine(reader) -> tuple[float, list]:
+    """Only Chalce's own held-back lines: does Coal get what he means?"""
+    got, wrong = 0, []
+    for k, lines in LINES_HELD.items():
+        for x in lines:
+            u = reader.read(x)
+            got += u["kind"] == k
+            if u["kind"] != k:
+                wrong.append((x, k, u["kind"]))
+    n = sum(map(len, LINES_HELD.values()))
+    return got / n, wrong
+
+
 # ---- the notebook: what Coal understood, and answers from it -------------------------------------
-SIDE = {"me": "your", "you": "my"}                                    # said back from Coal's side
+SIDE = {"me": "your", "you": "my"}
+SAY = {  # what he means -> what Coal says back for now (the doing comes later: files, timers, recall)
+    "help": ["sure, show me what it is.", "okay, what do you need?", "yeah, what's the problem?"],
+    "can_you": ["i'll try. show me.", "maybe, let me see it first."],
+    "stop": ["okay, waiting.", "stopped.", "alright, i'll wait."],
+    "go_on": ["okay, carrying on.", "going on."],
+    "note": ["okay, what should i note?", "noted. when for?"],
+    "yes": ["okay.", "good."], "no": ["okay, not that then.", "alright, no."],
+    "suggest": ["okay, show me how.", "that could work. go on."],
+    "recall": ["i can't look back far yet. tell me again?", "tell me what it was and i'll keep it."],
+    "strange": ["what looks off?", "hm, what's happening?"],
+    "repeat": ["i'll say it again when i can remember what i said.", "sorry, which part?"],
+    "wow": ["haha", "yeah!", "nice"],
+    "who_said": ["i don't know who yet.", "i didn't catch who."],
+    "where": ["i don't know where yet. where did you last have it?"],
+}                                    # said back from Coal's side
 
 
 class Notebook:
@@ -258,6 +295,8 @@ class Notebook:
     def answer(self, u: dict) -> str | None:
         kind = u["kind"]
         owner, thing, quals = self._parts(u)
+        if kind in SAY:
+            return self.rng.choice(SAY[kind])
         if kind == "greet":
             return self.rng.choice(["hi chalce", "hello", "hey, i'm here", "hi, what's up?"])
         if kind == "tell" and thing and quals:
@@ -316,11 +355,17 @@ def test():
     for held, name in ((False, "wordings and words it practised"), (True, "wordings AND words it never saw")):
         r = exam(reader, held)
         print(f"  {name:34s} " + " | ".join(f"{k} {v:.0%}" for k, v in r.items()))
+    mine, wrong = exam_mine(reader)
+    print(f"  your own lines it never saw: meaning right {mine:.0%}")
+    for x, want, got in wrong:
+        print(f"     miss: '{x}'  is {want}, read as {got}")
     nb = Notebook()
     talk = ["hi coal", "what is up coal", "I have a blue ball", "what colour is my ball?", "is my ball red?",
             "is my ball blue?", "guess what, I have this purple guitar", "what color's my guitar", "how big is my guitar",
             "my guitar is huge", "how big is my guitar", "Kemi's umbrella is shiny", "who has the umbrella?",
-            "what does Kemi have", "what do I have?", "you have a red hat", "what colour is your hat", "why is the sky blue"]
+            "what does Kemi have", "what do I have?", "you have a red hat", "what colour is your hat", "why is the sky blue",
+            "yooo coal", "btw can you fix this file", "WAIT WAIT", "aiit go on", "remember this for later",
+            "whoa that's weird", "say that again pls", "where is my phone"]
     print("\na chat (the reader + the notebook; '(writer)' = not understood, goes to the writer as before):")
     for t in talk:
         u = reader.read(t)
