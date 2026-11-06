@@ -26,11 +26,16 @@ import torch.nn as nn
 from household.understand import words
 
 TAGS = ["noun", "verb", "adjective", "adverb", "pronoun", "determiner", "preposition", "number", "conjunction",
-        "particle", "other"]
+        "particle", "other", "interjection"]
+UPOS = {"NOUN": "noun", "PROPN": "noun", "VERB": "verb", "AUX": "verb", "ADJ": "adjective", "ADV": "adverb",
+        "PRON": "pronoun", "DET": "determiner", "ADP": "preposition", "NUM": "number", "CCONJ": "conjunction",
+        "SCONJ": "conjunction", "PART": "particle", "INTJ": "interjection", "SYM": "other", "X": "other"}
 UNIVERSAL = {"NOUN": "noun", "VERB": "verb", "ADJ": "adjective", "ADV": "adverb", "PRON": "pronoun", "DET": "determiner",
              "ADP": "preposition", "NUM": "number", "CONJ": "conjunction", "PRT": "particle", "X": "other"}
 HERE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "grammar")
 SENTS = os.path.join(HERE, "brown.txt")                      # one sentence a line: word/tag word/tag ...
+UD = os.path.join(os.path.dirname(HERE), "ud")               # Universal Dependencies English-EWT (web, email, forum talk)
+UD_SENTS = os.path.join(HERE, "ud_{}.txt")                   # word/tag/head/relation ... (head -1 = the root)
 LEXICON = os.path.join(HERE, "lexicon.json")                 # word -> [count per tag]
 HELD_EVERY = 10                                              # every 10th sentence is exam only
 PRIOR = len(TAGS) + 1                                        # tag shares + "never seen in Brown"
@@ -55,8 +60,67 @@ def export():
             if toks:
                 f.write(" ".join(toks) + "\n")
                 n += 1
+    json.dump(counts, open(LEXICON.replace("lexicon", "lexicon_brown"), "w", encoding="utf-8"), separators=(",", ":"))
+    print(f"{n} sentences -> {SENTS}, {len(counts)} words (Brown)")
+    export_ud()
+
+
+def _ud_file(name):
+    """One UD .conllu file -> sentences of (piece, tag, head piece, relation); punctuation dropped."""
+    out, rows = [], []
+    for line in open(os.path.join(UD, f"en_ewt-ud-{name}.conllu"), encoding="utf-8"):
+        line = line.rstrip("\n")
+        if not line:
+            if rows:
+                out.append(rows)
+            rows = []
+        elif not line.startswith("#"):
+            f = line.split("\t")
+            if f[0].isdigit():
+                rows.append(f)
+    sents = []
+    for rows in out:
+        first, toks = {}, []                                   # token id -> index of its first piece
+        for f in rows:
+            if f[3] == "PUNCT":
+                continue
+            for k, piece in enumerate(words(f[1])):
+                if not k:
+                    first[f[0]] = len(toks)
+                toks.append([piece, TAGS.index(UPOS.get(f[3], "other")), f[6], f[7].split(":")[0] if not k else "piece"])
+        for t in toks:
+            t[2] = first.get(t[2], -1) if t[3] != "piece" else -2  # -1 root (or punctuation head), -2 = part of a word
+        if toks:
+            sents.append(toks)
+    return sents
+
+
+def export_ud():
+    counts = {}
+    for name in ("train", "dev", "test"):
+        sents = _ud_file(name)
+        with open(UD_SENTS.format(name), "w", encoding="utf-8") as f:
+            for toks in sents:
+                f.write(" ".join(f"{w}/{t}/{h}/{r}" for w, t, h, r in toks) + "\n")
+                if name == "train":
+                    for w, t, _, _ in toks:
+                        counts.setdefault(w, [0] * len(TAGS))[t] += 1
+        print(f"UD {name}: {len(sents)} sentences")
+    brown = json.load(open(LEXICON.replace("lexicon", "lexicon_brown"), encoding="utf-8")) if os.path.exists(
+        LEXICON.replace("lexicon", "lexicon_brown")) else {}
+    for w, c in brown.items():                                   # Brown only for words UD never had (its own
+        if w not in counts:                                      # habits differ: "my" is a determiner there)
+            counts[w] = c + [0] * (len(TAGS) - len(c))
     json.dump(counts, open(LEXICON, "w", encoding="utf-8"), separators=(",", ":"))
-    print(f"{n} sentences -> {SENTS}\n{len(counts)} words -> {LEXICON}")
+    print(f"{len(counts)} words -> {LEXICON}")
+
+
+def load_ud(name):
+    out = []
+    for line in open(UD_SENTS.format(name), encoding="utf-8"):
+        q = [p.split("/") for p in line.split()]
+        out.append(([a[0] for a in q], [int(a[1]) for a in q], [int(a[2]) for a in q], [a[3] for a in q]))
+    return out
 
 
 def load():
@@ -147,7 +211,8 @@ def test():
     wl = WordLayer.from_keep(brain.keep["mind"]["wordlayer"])
     for p in wl.parameters():
         p.requires_grad_(False)
-    taught, held = load()
+    taught = [(w, t) for w, t, _, _ in load_ud("train") + load_ud("dev")]   # chat-like web English, UD habits
+    held = [(w, t) for w, t, _, _ in load_ud("test")]
     tagger = Tagger(wl, json.load(open(LEXICON, encoding="utf-8")))
     print(f"teaching the tagger on {len(taught)} sentences (copy; Coal's brain is not touched)")
     teach(tagger, taught, steps=int(os.environ.get("STEPS", "3000")))
@@ -164,4 +229,4 @@ def test():
 
 if __name__ == "__main__":
     import sys
-    {"export": export, "test": test}.get(sys.argv[1] if sys.argv[1:] else "", lambda: print(__doc__))()
+    {"export": export, "export_ud": export_ud, "test": test}.get(sys.argv[1] if sys.argv[1:] else "", lambda: print(__doc__))()
