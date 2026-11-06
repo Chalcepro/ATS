@@ -51,26 +51,56 @@ HELD_W = {
 TELL = ["{S} {H} a {Q} {T}", "{S} got a {Q} {T}", "{S} 've got a {Q} {T}", "{P} {T} is {Q}", "{S} bought a {Q} {T}",
         "there is a {Q} {T} and it is {M}", "{S} own a {Q} {T}", "look at {P} {Q} {T}", "{P} {T} is really {Q}",
         "{S} just got a {T} and it is {Q}", "so {S} {H} a {Q} {T}", "the {Q} {T} is {M}", "{P} {T} is very {Q}",
-        "{S} {H} got a {Q} {T}", "{P} {T} looks {Q}"]
+        "{S} {H} got a {Q} {T}", "{P} {T} looks {Q}", "{P} {T} 's {Q}", "{P} {T} is kind of {Q}", "{P} {T} is so {Q}",
+        "{S} found a {Q} {T}", "{S} picked up a {Q} {T} today", "{P} new {T} is {Q}", "{S} {H} one {Q} {T}",
+        "{S} {H} this {Q} {T}", "{P} {T} turned {Q}", "{P} {T} became {Q}", "{P} {T} is a {Q} one",
+        "{S} {H} a {T} that is {Q}", "{S} {H} a {T} which is {Q}", "{S} {H} a {Q} {T} at home",
+        "that {Q} {T} is {M}", "this {Q} {T} is {M}", "the {T} is {M} and it is {Q}", "{P} {T} , it is {Q}",
+        "{P} {T} is {Q} now", "{P} {T} is pretty {Q}", "{S} got a {Q} {T} yesterday", "{S} {H} a really {Q} {T}",
+        "{S} {H} a {Q} {T} you know", "{P} {T} is {Q} by the way", "{S} {H} a {Q} {T} now", "{P} {T} was {Q}",
+        "{S} {H} a {T} , a {Q} one", "{P} {T} is {Q} lol", "my friend says {P} {T} is {Q}"]
 TELL_HELD = ["{P} {T} happens to be {Q}", "{S} recently picked up a {Q} {T}", "guess what {S} {H} this {Q} {T}"]
 ASK = {"ask_colour": ["what colour is {P} {T}", "what color is {P} {T}", "what colour 's {P} {T}", "which colour is {P} {T}",
-                      "do you know the colour of {P} {T}", "what is the colour of {P} {T}"],
-       "ask_size": ["how big is {P} {T}", "what size is {P} {T}", "is {P} {T} big or small"],
-       "ask_state": ["what is {P} {T} like", "how is {P} {T}", "what 's {P} {T} like"],
-       "ask_yesno": ["is {P} {T} {Q}", "{P} {T} is {Q} right", "is the {T} {Q}", "{D} {S} have a {Q} {T}"],
-       "ask_things": ["what {D} {S} have", "what {H} {S} got", "what things {D} {S} have", "what is {M}"],
-       "ask_owner": ["who has a {Q} {T}", "who has the {T}", "who owns a {Q} {T}", "whose {T} is {Q}"]}
+                      "do you know the colour of {P} {T}", "what is the colour of {P} {T}", "what colour was {P} {T}",
+                      "{P} {T} is what colour", "what colour did i say {P} {T} is", "remind me what colour {P} {T} is",
+                      "what color 's {P} {T} again", "colour of {P} {T}", "what colour is {P} {T} again",
+                      "can you tell me what colour {P} {T} is", "do you remember the colour of {P} {T}"],
+       "ask_size": ["how big is {P} {T}", "what size is {P} {T}", "is {P} {T} big or small", "how small is {P} {T}",
+                    "what size was {P} {T}", "{P} {T} is what size", "remind me how big {P} {T} is",
+                    "do you know how big {P} {T} is", "size of {P} {T}", "how big did i say {P} {T} is"],
+       "ask_state": ["what is {P} {T} like", "how is {P} {T}", "what 's {P} {T} like", "what condition is {P} {T} in",
+                     "how 's {P} {T} doing", "what state is {P} {T} in", "what was {P} {T} like",
+                     "tell me about {P} {T}", "what do you know about {P} {T}"],
+       "ask_yesno": ["is {P} {T} {Q}", "{P} {T} is {Q} right", "is the {T} {Q}", "{D} {S} have a {Q} {T}",
+                     "was {P} {T} {Q}", "{P} {T} is {Q} yes", "is {P} {T} {Q} or not", "{P} {T} , is it {Q}",
+                     "am i right that {P} {T} is {Q}", "{D} {S} own a {Q} {T}", "{P} {T} is {Q} isn't it",
+                     "is {P} {T} really {Q}", "would you say {P} {T} is {Q}"],
+       "ask_things": ["what {D} {S} have", "what {H} {S} got", "what things {D} {S} have", "what is {M}",
+                      "what do you know {S} {H}", "list what {S} {H}", "what stuff {D} {S} have",
+                      "what else {D} {S} have", "tell me what {S} {H}", "what {D} {S} own"],
+       "ask_owner": ["who has a {Q} {T}", "who has the {T}", "who owns a {Q} {T}", "whose {T} is {Q}",
+                     "who has got the {T}", "whose {T} is it", "who got a {Q} {T}", "who was it that has the {T}",
+                     "do you know who has the {T}", "which person has a {Q} {T}", "the {Q} {T} , whose is it"]}
 ASK_HELD = {"ask_colour": ["tell me the colour of {P} {T}"], "ask_size": ["how large is {P} {T}"],
             "ask_state": ["describe {P} {T}"], "ask_yesno": ["is it true that {P} {T} is {Q}"],
-            "ask_things": ["what {D} {S} own"], "ask_owner": ["whose is the {Q} {T}"]}
-GREET = ["hi", "hello", "hey", "good morning", "what is up", "what 's up", "how are you", "good evening", "hi there"]
+            "ask_things": ["name the things {S} {H}"], "ask_owner": ["whose is the {Q} {T}"]}
+GREET = ["hi", "hello", "hey", "good morning", "what is up", "what 's up", "how are you", "good evening", "hi there",
+         "hey there", "hello there", "good afternoon", "how are you doing", "how 's it going", "sup", "hiya",
+         "how have you been", "are you there", "hello again", "good night"]
 GREET_HELD = ["yo", "howdy", "morning"]
 OTHER = ["what is a guitar", "why is the sky blue", "two plus two", "tell me a story", "what does have mean",
          "i am tired", "thank you", "can you help me", "what time is it", "where do fish live", "i like music",
-         "open the file", "what is your name", "play a song", "the weather is nice today", "what is a noun"]
+         "open the file", "what is your name", "play a song", "the weather is nice today", "what is a noun",
+         "i am going to sleep", "let me stop recording", "where is the remote", "what day is it", "i am hungry",
+         "can you hear me", "turn up the volume", "i want to play a game", "what do you think of this",
+         "my head hurts", "i will be back", "who is the president", "what is a colour", "how old are you",
+         "is it going to rain", "i do not know", "nice", "okay", "yes", "no", "lol", "wait",
+         "what is the time", "do you like music", "i am bored", "save the file"]
 OTHER_HELD = ["how do birds fly", "close the window", "who made you"]
-FUNCTION = set("i you my your mine yours me he she it is are was the a an and or of to in on at what who whose which how why do does did have has got had this that there here so just really very look own bought colour color size big small coal hey btw okay".split())
-LEAD = ["", "", "", "coal ", "so ", "hey coal ", "btw ", "okay so "]
+FUNCTION = set("um uh like actually basically erm alright well listen oh i you my your mine yours me he she it is are was the a an and or of to in on at what who whose which how why do does did have has got had this that there here so just really very look own bought colour color size big small coal hey btw okay".split())
+LEAD = ["", "", "", "", "coal ", "so ", "hey coal ", "btw ", "okay so ", "um ", "alright ", "yo coal ", "well ",
+        "okay coal ", "listen ", "oh "]
+FILL = ["um", "uh", "like", "actually", "basically", "erm"]          # dropped into the middle sometimes, as he talks
 
 
 def _owner(rng, w, pool=None):
@@ -105,7 +135,12 @@ def lesson(rng, held: bool, pool=None):
     t = rng.choice(pool) if pool and rng.random() < .5 else rng.choice(w["thing"])   # any word can be the thing:
     _, own = _owner(rng, w, pool)                                                  # it is known by its place
     toks = []
-    for piece in (rng.choice(LEAD) + pat).split():
+    pieces = (rng.choice(LEAD) + pat).split()
+    if rng.random() < .25:
+        pieces.insert(rng.randrange(len(pieces) + 1), rng.choice(FILL))
+    if rng.random() < .15:
+        pieces = [x for x in pieces if x not in ("a", "the") or rng.random() < .5]     # dictation drops little words
+    for piece in pieces:
         m = re.fullmatch(r"\{(\w)\}", piece)
         if not m:
             toks += [(x, "-", None) for x in words(piece)]
@@ -277,7 +312,7 @@ def test():
         p.requires_grad_(False)
     reader = Reader(wl)
     print("teaching the reader (copy; Coal's brain is not touched)")
-    teach(reader)
+    teach(reader, steps=int(os.environ.get("STEPS", "8000")))
     for held, name in ((False, "wordings and words it practised"), (True, "wordings AND words it never saw")):
         r = exam(reader, held)
         print(f"  {name:34s} " + " | ".join(f"{k} {v:.0%}" for k, v in r.items()))
