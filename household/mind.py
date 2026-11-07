@@ -220,7 +220,8 @@ class Mind:
         if first in ("is", "are", "did", "does", "do", "was", "were") and asks not in ("what", "where", "who", "when", "why"):
             seen = {w for u_ in used for w in u_.lower().split()}
             places = [p["word"] for p in parsed if p["type"] == "noun"][1:]     # "is my charger in the study": on his chain?
-            if places and set(places) & seen:
+            subject = next((p["word"] for p in parsed if p["type"] == "noun"), None)
+            if places and set(places) & seen and subject and subject in used[0].lower().split():   # from the thing asked
                 return "yes, " + flip(" , and that's ".join(used)) + "."
             return "not that i know. " + flip(said) + "."
         src = next((k.get("site", "chat") for k in cands if k["text"] == used[-1]), "chat")

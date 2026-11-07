@@ -49,8 +49,12 @@ def bases(w: str) -> set[str]:
     return out
 
 
+AGREE = {("you", "was"): "were", ("you", "am"): "are", ("i", "were"): "was", ("i", "are"): "am"}
+
+
 def flip(text: str) -> str:
-    return " ".join(FLIP.get(w, w) for w in text.split())
+    out = [FLIP.get(w, w) for w in text.split()]
+    return " ".join(AGREE.get((out[i - 1], w), w) if i else w for i, w in enumerate(out))   # "you was" -> "you were"
 
 
 class Memory:
