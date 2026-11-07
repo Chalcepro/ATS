@@ -221,8 +221,28 @@ def _define_real(rng, vocab):
     return q, [good] + rng.sample(noise, rng.randint(3, 8)), [0], ans
 
 
+FIXES = []                                                    # what Chalce corrected in class: (question, facts, gold, answer)
+
+
+def _fix(rng, vocab):
+    q, facts, gold, ans = rng.choice(FIXES)
+    return q, list(facts), [gold], ans.split()
+
+
 def lesson(rng, vocab):
     r = rng.random()
+    if FIXES and rng.random() < .15:                          # the sleep round: his corrections among everything else
+        q, facts, gold, ans = _fix(rng, vocab)
+        if REAL:
+            facts = facts + [_real(rng, []) for _ in range(rng.randint(0, 4))]
+        order = list(range(len(facts)))
+        rng.shuffle(order)
+        facts = [facts[i] for i in order]
+        gold = [order.index(g) for g in gold]
+        last = words(facts[gold[-1]])
+        aw = [x for w in ans for x in words(w)]
+        s = next((i for i in range(len(last)) if last[i:i + len(aw)] == aw), None)
+        return None if s is None else (words(q), [words(f) for f in facts], gold, (s, s + len(aw) - 1))
     q, facts, gold, ans = (_story if r < .5 else _define if r < .58 else _has if r < .72 else   # v5 mix (v4 lost stories)
                            _define_real if DEFS else _define)(rng, vocab)
     if REAL:
@@ -243,7 +263,7 @@ def lesson(rng, vocab):
 def teach(ch, vocab, steps=6000, log=print, seed=0):
     rng = random.Random(seed)
     torch.manual_seed(seed)
-    opt = torch.optim.Adam([p for n, p in ch.named_parameters() if not n.startswith("wl.")], 1e-3)
+    opt = torch.optim.Adam([p for n, p in ch.named_parameters() if not n.startswith("wl.")], float(os.environ.get("LR", "1e-3")))
     ce = nn.functional.cross_entropy
     total = 0.0
     for step in range(steps):
@@ -321,7 +341,17 @@ def test():
     except Exception:
         pass
     print(f"{len(DEFS)} real definitions", flush=True)
+    import json as _j
+    fixes = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "lessons", "chooser_live.jsonl")
+    if os.path.exists(fixes):
+        FIXES.extend((x["asked"], x["cands"], x["gold"], x["remembered"]) for x in map(_j.loads, open(fixes, encoding="utf-8"))
+                     if "cands" in x)
+    print(f"{len(FIXES)} of his corrections as lessons", flush=True)
     ch = Chooser(wl)
+    start = os.environ.get("FROM")                            # continue a chooser (a sleep round) instead of a blank one
+    if start:
+        ch.load_state_dict(torch.load(os.path.join(os.path.dirname(SAVE), start)), strict=False)
+        print(f"continuing {start}", flush=True)
     print(f"teaching the chooser (copy; Coal's brain is not touched)", flush=True)
     teach(ch, practise, steps=int(os.environ.get("STEPS", "6000")))
     for name, v in (("practised words", practise), ("words it never saw", held)):

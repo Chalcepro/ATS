@@ -331,7 +331,8 @@ class Mind:
         m.fixes = getattr(m, "fixes", [])                        # remembered now: "for this, the answer is there"
         m.fixes.append({"q": set(q), "fact": texts[gold], "span": " ".join(fs[gold][a:b + 1])})
         with open(os.path.join(os.path.dirname(self.LESSONS), "chooser_live.jsonl"), "a", encoding="utf-8") as f:
-            f.write(json.dumps({"asked": question, "fix": fix, "picked": texts[gold], "remembered": m.fixes[-1]["span"]}) + "\n")
+            f.write(json.dumps({"asked": question, "fix": fix, "picked": texts[gold], "remembered": m.fixes[-1]["span"],
+                                "cands": texts, "gold": gold}) + "\n")
         if os.environ.get("COAL_LIVE_CHOOSER") != "1":           # weights change in a sleep round, not mid-chat (11-07:
             return                                               # live weight steps cost 3-step chaining 61% -> 29%)
         if not hasattr(self, "_ch_opt"):
