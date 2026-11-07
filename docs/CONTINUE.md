@@ -83,6 +83,19 @@ The parts, each trained on its own copy (they print a score at the end):
 
 Logs written by PowerShell's `*>` are UTF-16; open them in Notepad, they read fine.
 
+### The sleep round (after a class)
+
+Corrections are remembered right away (for the exact question), but they only carry over to *new*
+questions after a sleep round: the chooser practises your corrections among all its usual lessons.
+
+    $env:FROM = "chooser_test.pt"; $env:OUT = "chooser_sleep.pt"; $env:LR = "3e-4"; $env:STEPS = "1500"
+    py -3.12 -m household.chooser test *> logs\sleep.log
+
+If its exam in sleep.log is as good or better than before, back up `chooser_test.pt`, then copy
+`chooser_sleep.pt` over it. (First one, 11-07: new stories right first time went 10/20 -> 17/20.)
+Never let the chooser change its weights during a chat: tried 11-07, it forgot how to chain facts
+(3-step 61% -> 29%). It stays behind `COAL_LIVE_CHOOSER=1`, off.
+
 ## 6. Back up (do this after every training)
 
     Copy-Item checkpoints\household_brain_trend.pt checkpoints\household_brain_trend_before_<what>.pt
