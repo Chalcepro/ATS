@@ -203,7 +203,7 @@ class Mind:
         if self.chooser is None:
             return m.answer(f, parsed, asks, site=site)
         cands = [] if site else m.net(parsed, "chat")            # what he was told first, like a person
-        if not cands and not site and self.MINE & {p["word"] for p in parsed}:   # about us: only the chat can know
+        if not cands and not site and {"my", "mine", "our", "ours"} & {p["word"] for p in parsed}:   # ours: only the chat knows
             thing = next((p["word"] for p in reversed(parsed) if p["type"] == "noun"), "that")
             return f"you haven't told me about your {thing} yet."
         if not cands:                                            # reading: the rules still beat him there (11-07 test)
@@ -304,6 +304,17 @@ class Mind:
         with open(self.LESSONS, "a", encoding="utf-8") as f:
             f.write(json.dumps({"asked": last[0], "said": last[1], "told": text}, ensure_ascii=False) + "\n")
         fix = " ".join(text.replace(",", " ").split()[1:])
+        fw = fix.split()
+        if fw and fw[0].lower() in ("he", "she", "it", "they"):  # "no, he was ...": he = the one asked about
+            qp = self.memory.parser.parse(last[0])
+            thing = []
+            for p in qp:                                         # the asked thing: its run of nouns
+                if p["type"] == "noun":
+                    thing.append(p["word"])
+                elif thing:
+                    break
+            if thing:
+                fix = " ".join(thing + fw[1:])
         self._fixing = (last[0], fix)
         return fix
 
