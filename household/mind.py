@@ -68,6 +68,7 @@ class Mind:
         for k in u.get("facts", []) + u.get("read", []):
             self.memory.kept.append(dict(k, words=set(k["words"]), nouns=set(k.get("nouns", []))))
         self._u = u
+        self.memory.fixes = [dict(x, q=set(x["q"])) for x in u.get("fixes", [])]   # answers he was told he got wrong
         self.rng = random.Random()
         self.chooser = None                                  # he picks answers himself (chooser.py), if taught
         from household.train import SAVE
@@ -141,7 +142,8 @@ class Mind:
                 "writer": {"out": self.writer.out, "known": sorted(self.known),
                            "state": {k: v for k, v in self.writer.state_dict().items() if not k.startswith("wl.")}},
                 "record": self.record.events, "maths": self.cell.state_dict(),
-                **({"understand": dict(self._u, facts=[self._plain(k) for k in self.memory.kept if k.get("site") == "chat"],
+                **({"understand": dict(self._u, fixes=[dict(x, q=sorted(x["q"])) for x in getattr(self.memory, "fixes", [])],
+                                       facts=[self._plain(k) for k in self.memory.kept if k.get("site") == "chat"],
                                        read=self._u.get("read", []) + [self._plain(k) for k in self.memory.kept
                                                                        if k.get("looked")])}
                    if self.memory else {})}
@@ -192,6 +194,7 @@ class Mind:
         return out
 
     def pick(self, text, parsed, f, asks, site=None):
+        from household.comprehend import flip
         """What he was told: he picks the answer himself (the chooser). Reading/device: the rules, until he beats them."""
         m = self.memory
         if self.chooser is None:
@@ -202,11 +205,15 @@ class Mind:
             return f"you haven't told me about your {thing} yet."
         if not cands:                                            # reading: the rules still beat him there (11-07 test)
             return m.answer(f, parsed, asks, site=site)
+        from household.understand import words as _w
+        qw = set(_w(text))
+        for fx in reversed(getattr(m, "fixes", [])):             # told the answer to something like this before
+            if len(qw & fx["q"]) >= .8 * max(len(qw), len(fx["q"])) and any(k["text"] == fx["fact"] for k in cands):
+                return flip(fx["span"])
         said, used = self.chooser.answer(text, [k["text"] for k in cands])
         if not said:
             return None
         src = next((k.get("site", "chat") for k in cands if k["text"] == used[-1]), "chat")
-        from household.comprehend import flip
         return flip(said) if src == "chat" else f"{said}. (read in {SITE_NAMES.get(src, src)}: {used[-1]})"
 
     def reply(self, text: str) -> str:
@@ -219,7 +226,7 @@ class Mind:
             out = f"{a} {SAYS[op]} {b} is {work(self.cell, a, b, op)}"
         else:
             out = (self.understood(told or text) if self.memory else None)
-            if told and self.chooser is not None and getattr(self, "_fixing", None):
+            if told and self.chooser is not None and getattr(self, "_fixing", None):   # even a bare "no, yesterday"
                 self.chooser_learns(*self._fixing)              # the answer was wrong: he practises the right one
             out = ("okay, i've got it now." if told and out else out) or                 self.writer.write([text], self.known, self.record, [recent])[0] or "i don't know."
         self.record.add("heard", text)
@@ -280,7 +287,7 @@ class Mind:
             from household.understand import MEANS
             kind = fix["kind"] if fix["kind"] in MEANS + ["greet"] and fix["kind"] != lr[1] and fix["sure"] > .6 else None
             self.reader_learns(lr[0], kind, wrong=lr[1], why=f"told no after he read it as {lr[1]}")
-        if not last or not w or w[0] not in ("no", "nope", "wrong", "nah", "actually") or len(w) < 3:
+        if not last or not w or w[0] not in ("no", "nope", "wrong", "nah", "actually") or len(w) < 2:
             return None
         import json
         os.makedirs(os.path.dirname(self.LESSONS), exist_ok=True)
@@ -290,7 +297,7 @@ class Mind:
         self._fixing = (last[0], fix)
         return fix
 
-    def chooser_learns(self, question, fix, steps=60):
+    def chooser_learns(self, question, fix, steps=150):
         """Told the right answer: he finds where it is (a thing he was told that holds the fix, or the fix itself)
         and practises picking it and pointing at it, with old lessons replayed, until he answers it right."""
         import json
@@ -309,7 +316,7 @@ class Mind:
         q = words(question)
         def find(fs):                                            # the newest told thing holding the fix words in a row
             for i, f in enumerate(fs):
-                for n in range(len(fw), 1, -1):
+                for n in range(len(fw), 0, -1):
                     for a in range(len(fw) - n + 1):
                         run = fw[a:a + n]
                         for j in range(len(f) - n + 1):
@@ -321,10 +328,18 @@ class Mind:
         if not hit:
             return
         gold, a, b = hit
+        m.fixes = getattr(m, "fixes", [])                        # remembered now: "for this, the answer is there"
+        m.fixes.append({"q": set(q), "fact": texts[gold], "span": " ".join(fs[gold][a:b + 1])})
+        with open(os.path.join(os.path.dirname(self.LESSONS), "chooser_live.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps({"asked": question, "fix": fix, "picked": texts[gold], "remembered": m.fixes[-1]["span"]}) + "\n")
+        if os.environ.get("COAL_LIVE_CHOOSER") != "1":           # weights change in a sleep round, not mid-chat (11-07:
+            return                                               # live weight steps cost 3-step chaining 61% -> 29%)
         if not hasattr(self, "_ch_opt"):
-            self._ch_opt = torch.optim.Adam([p for n, p in ch.named_parameters() if not n.startswith("wl.")], 3e-4)
+            self._ch_opt = torch.optim.Adam([p for n, p in ch.named_parameters() if not n.startswith("wl.")], 1e-4)
             self._ch_rng = random.Random()
             self._ch_pool = [w for w in self.wl.words if w.isalpha() and 3 <= len(w) <= 9][:15000]
+            if not C.REAL:                                       # replay with real read sentences, as in training
+                C.REAL.extend(k["text"] for k in m.kept if k.get("site", "chat") != "chat" and 4 <= len(k["text"].split()) <= 30)
         ce = F.cross_entropy
         for step in range(steps):
             if step % 5 == 0:
@@ -333,10 +348,9 @@ class Mind:
                 if said == " ".join(fs[gold][a:b + 1]):
                     break
             ch.train()
-            out, _, st, en = ch(q, fs, picks=[gold, -1], steps=2)
-            loss = 3 * (ce(out[0][None], torch.tensor([gold])) + ce(out[1][None], torch.tensor([len(fs)]))
-                        + ce(st[None], torch.tensor([a])) + ce(en[None], torch.tensor([b])))
-            for _ in range(3):                                   # old lessons, so the new one doesn't wipe them
+            out, _, st, en = ch(q, fs, picks=[gold], steps=1)    # which one, and where in it - never "stop here"
+            loss = ce(out[0][None], torch.tensor([gold])) + ce(st[None], torch.tensor([a])) + ce(en[None], torch.tensor([b]))
+            for _ in range(6):                                   # old lessons, so the new one doesn't wipe them
                 L = None
                 while L is None:
                     L = C.lesson(self._ch_rng, self._ch_pool)
