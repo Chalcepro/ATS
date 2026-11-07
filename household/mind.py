@@ -219,6 +219,8 @@ class Mind:
             out = f"{a} {SAYS[op]} {b} is {work(self.cell, a, b, op)}"
         else:
             out = (self.understood(told or text) if self.memory else None)
+            if told and self.chooser is not None and getattr(self, "_fixing", None):
+                self.chooser_learns(*self._fixing)              # the answer was wrong: he practises the right one
             out = ("okay, i've got it now." if told and out else out) or                 self.writer.write([text], self.known, self.record, [recent])[0] or "i don't know."
         self.record.add("heard", text)
         self.record.add("said", out)
@@ -273,7 +275,7 @@ class Mind:
         last = getattr(self, "_last_q", None)
         w = text.lower().replace(",", " ").split()
         lr, self._last_read = getattr(self, "_last_read", None), None
-        if lr and w and w[0] in ("no", "nope", "wrong", "nah"):     # "no" right after he took a line one way: he misread it
+        if lr and not last and w and w[0] in ("no", "nope", "wrong", "nah"):   # "no" after he took a line one way: misread
             fix = self.reader.read(" ".join(w[1:]))              # "no, i said stop": the fix says what it was
             from household.understand import MEANS
             kind = fix["kind"] if fix["kind"] in MEANS + ["greet"] and fix["kind"] != lr[1] and fix["sure"] > .6 else None
@@ -284,7 +286,71 @@ class Mind:
         os.makedirs(os.path.dirname(self.LESSONS), exist_ok=True)
         with open(self.LESSONS, "a", encoding="utf-8") as f:
             f.write(json.dumps({"asked": last[0], "said": last[1], "told": text}, ensure_ascii=False) + "\n")
-        return " ".join(text.replace(",", " ").split()[1:])
+        fix = " ".join(text.replace(",", " ").split()[1:])
+        self._fixing = (last[0], fix)
+        return fix
+
+    def chooser_learns(self, question, fix, steps=60):
+        """Told the right answer: he finds where it is (a thing he was told that holds the fix, or the fix itself)
+        and practises picking it and pointing at it, with old lessons replayed, until he answers it right."""
+        import json
+        import random
+        import torch.nn.functional as F
+        from household import chooser as C
+        from household.understand import words
+        self._fixing = None
+        m, ch = self.memory, self.chooser
+        parsed = m.parser.parse(question)
+        cands = m.net(parsed, "chat")
+        if not cands:
+            return
+        texts = [k["text"] for k in cands]
+        fw = [x for x in words(fix) if x not in ("so", "it", "is", "now")]
+        q = words(question)
+        def find(fs):                                            # the newest told thing holding the fix words in a row
+            for i, f in enumerate(fs):
+                for n in range(len(fw), 1, -1):
+                    for a in range(len(fw) - n + 1):
+                        run = fw[a:a + n]
+                        for j in range(len(f) - n + 1):
+                            if f[j:j + n] == run and not set(run) <= set(q):
+                                return i, j, j + n - 1
+            return None
+        fs = [words(t) or ["-"] for t in texts]
+        hit = find(fs)
+        if not hit:
+            return
+        gold, a, b = hit
+        if not hasattr(self, "_ch_opt"):
+            self._ch_opt = torch.optim.Adam([p for n, p in ch.named_parameters() if not n.startswith("wl.")], 3e-4)
+            self._ch_rng = random.Random()
+            self._ch_pool = [w for w in self.wl.words if w.isalpha() and 3 <= len(w) <= 9][:15000]
+        ce = F.cross_entropy
+        for step in range(steps):
+            if step % 5 == 0:
+                ch.eval()
+                said, _ = ch.answer(question, texts)
+                if said == " ".join(fs[gold][a:b + 1]):
+                    break
+            ch.train()
+            out, _, st, en = ch(q, fs, picks=[gold, -1], steps=2)
+            loss = 3 * (ce(out[0][None], torch.tensor([gold])) + ce(out[1][None], torch.tensor([len(fs)]))
+                        + ce(st[None], torch.tensor([a])) + ce(en[None], torch.tensor([b])))
+            for _ in range(3):                                   # old lessons, so the new one doesn't wipe them
+                L = None
+                while L is None:
+                    L = C.lesson(self._ch_rng, self._ch_pool)
+                lq, lf, lg, (ls, le) = L
+                picks = lg + [-1]
+                o, _, s2, e2 = ch(lq, lf, picks=picks, steps=len(picks))
+                loss = loss + sum(ce(sc[None], torch.tensor([picks[t] if picks[t] >= 0 else len(lf)])) for t, sc in enumerate(o))
+                loss = loss + ce(s2[None], torch.tensor([ls])) + ce(e2[None], torch.tensor([le]))
+            self._ch_opt.zero_grad(); loss.backward(); self._ch_opt.step()
+        ch.eval()
+        self._ch_dirty = True
+        with open(os.path.join(os.path.dirname(self.LESSONS), "chooser_live.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps({"asked": question, "fix": fix, "picked": texts[gold],
+                                "now": ch.answer(question, texts)[0], "steps": step}) + "\n")
 
     def taught(self, question: str, answer: str) -> None:
         """A class lesson: into the record now, usable straight away by recall."""

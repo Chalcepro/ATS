@@ -27,6 +27,10 @@ mind = Mind(brain.keep["mind"])
 def keep():
     brain.keep["mind"] = mind.to_keep()
     save(brain, path, rounds)
+    if getattr(mind, "_ch_dirty", False):                  # what the chooser learned in class
+        import torch
+        cp = os.path.join(os.path.dirname(os.path.abspath(path)), os.environ.get("COAL_CHOOSER", "chooser_test.pt"))
+        torch.save({k: v for k, v in mind.chooser.state_dict().items() if not k.startswith("wl.")}, cp)
 
 
 n = 0
