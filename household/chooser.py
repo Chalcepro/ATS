@@ -223,7 +223,7 @@ def _define_real(rng, vocab):
 
 def lesson(rng, vocab):
     r = rng.random()
-    q, facts, gold, ans = (_story if r < .4 else _define if r < .55 else _has if r < .7 else
+    q, facts, gold, ans = (_story if r < .5 else _define if r < .58 else _has if r < .72 else   # v5 mix (v4 lost stories)
                            _define_real if DEFS else _define)(rng, vocab)
     if REAL:
         qw = [w for w in words(q) if len(w) > 3]
