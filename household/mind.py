@@ -65,6 +65,16 @@ class Mind:
             self.memory.kept.append(dict(k, words=set(k["words"]), nouns=set(k.get("nouns", []))))
         self._u = u
         self.rng = random.Random()
+        self.chooser = None                                  # he picks answers himself (chooser.py), if taught
+        from household.train import SAVE
+        cp = os.path.join(os.path.dirname(os.environ.get("COAL_BRAIN") or SAVE), "chooser_test.pt")
+        if os.environ.get("COAL_PICK", "chooser") == "chooser" and os.path.exists(cp):   # COAL_PICK=rules: the old way
+            import torch
+            from household.chooser import Chooser
+            st = torch.load(cp, map_location="cpu")
+            self.chooser = Chooser(self.wl, hidden=st["enc.weight_hh_l0"].shape[1])
+            self.chooser.load_state_dict(st, strict=False)
+            self.chooser.eval()
         self.look_around()
 
     def look_around(self) -> int:
@@ -108,7 +118,7 @@ class Mind:
             pick = next((s for s in sites if SITE_NAMES.get(s, s) in text.lower() or s in text.lower()), None)
             self.pending = None
             if pick:
-                return m.answer(f, parsed, asks, site=pick)
+                return self.pick(text, parsed, f, asks, site=pick)
         u = self.reader.read(text)
         parsed = m.parser.parse(text)
         f = frame(parsed) if parsed else {}
@@ -133,7 +143,22 @@ class Mind:
             self.pending = (f, parsed, asks, sites)
             names = [SITE_NAMES.get(s, s) for s in sites]
             return f"{thing} in {', in '.join(names[:-1])} or in {names[-1]}?"
-        return m.answer(f, parsed, asks)
+        return self.pick(text, parsed, f, asks)
+
+    def pick(self, text, parsed, f, asks, site=None):
+        """He reads what he knows about it and picks the answer himself (the chooser); the rules only if untaught."""
+        m = self.memory
+        if self.chooser is None:
+            return m.answer(f, parsed, asks, site=site)
+        cands = [] if site else m.net(parsed, "chat")            # what he was told first, like a person; then elsewhere
+        cands = cands or m.net(parsed, site)
+        if not cands:
+            return None
+        said, used = self.chooser.answer(text, [k["text"] for k in cands])
+        if not said:
+            return None
+        src = next((k.get("site", "chat") for k in cands if k["text"] == used[-1]), "chat")
+        return said if src == "chat" else f"{said}. (read in {SITE_NAMES.get(src, src)}: {used[-1]})"
 
     def reply(self, text: str) -> str:
         """Hear a line, answer it, and keep both in the record."""

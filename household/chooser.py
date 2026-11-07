@@ -131,7 +131,13 @@ def _story(rng, vocab):
         facts.append(tell)
         gold.append(len(facts) - 1)
     kind = rng.choice(list(ASK)) if facts[0].count(" ") > 6 else "where"
-    q = rng.choice(ASK[kind]).format(t=t, w=w)
+    if kind == "where" and hops > 1 and rng.random() < .5:  # "is the keys in the kitchen" -> keys -> drawer -> kitchen
+        q = rng.choice(["is the {t} in the {p}", "is the {t} somewhere in the {p}", "did {w} leave the {t} in the {p}"]
+                       ).format(t=t, w=w, p=chain[-1])
+    else:
+        q = rng.choice(ASK[kind]).format(t=t, w=w)
+        if kind == "where":                                   # plain where: the nearest place, as a person says it
+            chain, gold = chain[:2], gold[:1]
     if kind == "where":
         ans = rng.choice(PLACES).format(p=chain[-1]).split()   # the last place, as told
         last = facts[gold[-1]].split()
@@ -159,8 +165,46 @@ def _define(rng, vocab):
     return q, facts, [0], ans
 
 
+COLOURS = "red blue green black white old new big small broken".split()
+
+
+def _has(rng, vocab):
+    """who has / what opens: the one doing it is the answer, among others doing something like it."""
+    w, t, k, d1, d2, d3 = rng.sample(vocab, 6)
+    if rng.random() < .5:
+        a, b = rng.sample(COLOURS, 2)
+        good = rng.choice([f"my {w} has a {a} {t}", f"{w} has a {a} {t}", f"{w} owns a {a} {t}", f"my {w} bought a {a} {t}"])
+        noise = [f"my {d1} has a {b} {t}", f"{d2} has a {a} {d3}", f"the {a} {t} is nice", f"my {d1} wants a {t}"]
+        q = rng.choice([f"who has a {a} {t}", f"who owns the {a} {t}", f"who bought a {a} {t}"])
+    else:
+        good = rng.choice([f"{w} opens {k} files", f"{w} {t} opens {k} files", f"{w} can open {k} files"])
+        noise = [f"{d1} opens {d2} files", f"{w} is an app on this device", f"the {k} folder has {rng.randint(2, 90)} {k} files",
+                 f"{d3} is an app on this device", f"{k} files are big"]
+        q = rng.choice([f"what opens {k} files", f"what can open {k} files", f"which app opens {k} files"])
+    ans = good.split()[good.split().index(w) - (1 if good.startswith("my ") else 0):good.split().index(w) + 1]
+    if "opens" in good and f"{w} {t}" in good:
+        ans = [w, t]
+    return q, [good] + rng.sample(noise, rng.randint(2, len(noise))), [0], ans
+
+
+REAL = []                                                     # sentences he really read / found (wrong options)
+
+
+def _real(rng, swap):
+    """A real read sentence, sometimes with one of the lesson's words put in, so it 'mentions' it."""
+    x = rng.choice(REAL).split()[:30]
+    if swap and rng.random() < .6:
+        i = rng.randrange(len(x))
+        x[i] = rng.choice(swap)
+    return " ".join(x)
+
+
 def lesson(rng, vocab):
-    q, facts, gold, ans = (_story if rng.random() < .65 else _define)(rng, vocab)
+    r = rng.random()
+    q, facts, gold, ans = (_story if r < .5 else _define if r < .75 else _has)(rng, vocab)
+    if REAL:
+        qw = [w for w in words(q) if len(w) > 3]
+        facts = facts + [_real(rng, qw) for _ in range(rng.randint(2, 12))]
     order = list(range(len(facts)))
     rng.shuffle(order)
     facts = [facts[i] for i in order]
@@ -234,6 +278,16 @@ def test():
     rng = random.Random(1)
     rng.shuffle(every)
     practise, held = every[:15000], every[15000:20000]       # the exam uses words it never practised with
+    import json
+    know = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "reading", "knowledge.jsonl")
+    if os.path.exists(know):
+        REAL.extend(t for t in (json.loads(x)["text"] for x in open(know, encoding="utf-8")) if 4 <= len(t.split()) <= 30)
+    try:
+        from household import device
+        REAL.extend(device.meanings())
+    except Exception:
+        pass
+    print(f"{len(REAL)} real sentences as wrong options", flush=True)
     ch = Chooser(wl)
     print(f"teaching the chooser (copy; Coal's brain is not touched)", flush=True)
     teach(ch, practise, steps=int(os.environ.get("STEPS", "6000")))
@@ -249,7 +303,7 @@ def test():
         a, used = ch.answer(q, facts)
         print(f"  {q} -> {a}   (thought: {' -> '.join(used)})", flush=True)
     torch.save({k: v for k, v in ch.state_dict().items() if not k.startswith("wl.")},
-               os.path.join(os.path.dirname(SAVE), "chooser_test.pt"))
+               os.path.join(os.path.dirname(SAVE), os.environ.get("OUT", "chooser_test.pt")))
 
 
 if __name__ == "__main__":

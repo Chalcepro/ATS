@@ -150,6 +150,28 @@ class Memory:
         self._idx, self._idx_n = idx, len(self.kept)
         return idx
 
+    def net(self, parsed, site=None, size=24):
+        """The wide net for the chooser: kept things sharing most words with the question, plus the things
+        that share a noun with those (so a second step - keys -> drawer -> kitchen - is in reach). No picking here."""
+        want = self._keywords(None, parsed)
+        idx = self._index()
+        def ok(i):
+            return site is None or self.kept[i].get("site", "chat") == site
+        hits = {}
+        for w in want:
+            for i in set().union(*[idx.get(b, set()) for b in bases(w)]):
+                if ok(i):
+                    hits[i] = hits.get(i, 0) + 1
+        first = sorted(hits, key=lambda i: (-hits[i], -i))[:size * 2 // 3]
+        more = {}
+        for i in first:
+            for w in self.kept[i].get("nouns", ()):
+                for j in set().union(*[idx.get(b, set()) for b in bases(w)]):
+                    if j not in hits and ok(j) and self.kept[j].get("site", "chat") == self.kept[i].get("site", "chat"):
+                        more[j] = more.get(j, 0) + 1
+        second = sorted(more, key=lambda j: (-more[j], -j))[:size - len(first)]
+        return [self.kept[i] for i in first + second]
+
     def _find(self, parsed, site=None):
         want = self._keywords(None, parsed)
         nouns = {p["word"] for p in parsed if p["type"] == "noun"} & want
