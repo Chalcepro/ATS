@@ -116,6 +116,10 @@ def frame(parsed: list[dict]) -> dict:
         got = kids(root["i"], *links)
         if got:
             f[k] = [phrase(p) for p in got]
+    if "who" not in f and root["type"] == "verb" and root["i"] > 0:     # no subject marked: the words before the verb
+        before = [p for p in parsed[:root["i"]] if p["link"] not in ("aux", "discourse", "advmod", "mark", "cc")]
+        if before:
+            f["who"] = [" ".join(p["word"] for p in before)]
     if root["type"] in ("noun", "adjective", "pronoun") and kids(root["i"], "cop"):
         case = kids(root["i"], "case")
         f["is"] = " ".join([case[0]["word"]] if case else []) + (" " if case else "") + phrase(root)                                         # "my phone is red": the "does" is "is"

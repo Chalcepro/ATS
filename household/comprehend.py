@@ -213,6 +213,13 @@ class Memory:
             return f"{say(why[0])}." if why else "you didn't tell me why."
         if asks in ("who", "whose"):
             return flip(" and ".join(k["who"])) + "." if "who" in k else "i don't know who."
+        qword = next((p for p in parsed if p["word"] == asks), None)
+        other_subject = any(p["link"] in ("nsubj", "csubj") and p is not qword and p["type"] != "pronoun"
+                            or p["link"] == "nsubj" and p["word"] in FLIP for p in parsed)
+        if asks in ("what", "which", "who") and qword and qword["link"] in ("nsubj", "csubj") and not other_subject                 and f.get("does") not in ("is", "are"):
+            doers = list(dict.fromkeys(flip(" and ".join(x["who"])) for x in found if x.get("who")))
+            if doers:                                               # the question word does it: whoever does it
+                return (", ".join(doers[:-1]) + " and " + doers[-1] if len(doers) > 1 else doers[0]) + "."               # the question word does it: answer whoever does it
         if asks in ("what", "which"):
             what = [x for x in k.get("what", []) if not any(self.time(w) for w in x.split())]
             if what:

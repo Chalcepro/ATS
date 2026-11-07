@@ -27,7 +27,7 @@ from household.writer import Writer
 
 SAYS = {"add": "plus", "subtract": "minus", "times": "times"}
 GREET = ["hi chalce", "hey, i'm here", "yo", "hi, what's up?"]
-SITE_NAMES = {"chat": "what you told me", "mdn-js": "javascript", "react": "react", "simple-wikipedia": "plain english",
+SITE_NAMES = {"chat": "what you told me", "device": "this device", "mdn-js": "javascript", "react": "react", "simple-wikipedia": "plain english",
               "en-wikipedia": "general knowledge", "w3schools-js": "javascript", "w3schools-html": "html"}
 
 
@@ -65,6 +65,25 @@ class Mind:
             self.memory.kept.append(dict(k, words=set(k["words"]), nouns=set(k.get("nouns", []))))
         self._u = u
         self.rng = random.Random()
+        self.look_around()
+
+    def look_around(self) -> int:
+        """What device is he on? He looks (device.py) and keeps it as meanings, like anything he reads.
+        Done fresh each start: the device may be a different one, or have new apps."""
+        from household import device
+        from household.relations import frame
+        m = self.memory
+        m.kept = [k for k in m.kept if k.get("site") != "device"]
+        try:
+            lines = device.meanings()
+        except Exception:                                    # a device that shows nothing: he goes on without it
+            return 0
+        for i in range(0, len(lines), 64):
+            for parsed in m.parser.parse_many(lines[i:i + 64]):
+                if len(parsed) >= 3:
+                    m.keep(frame(parsed), parsed)
+                    m.kept[-1]["site"] = "device"
+        return len(lines)
 
     @staticmethod
     def _plain(k):
