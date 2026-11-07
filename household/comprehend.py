@@ -116,8 +116,9 @@ class Memory:
             if not nouns or nouns[-1] in seen:
                 break
             seen.add(nouns[-1])
-            k = next((x for x in reversed(self.kept) if self._subject(x) and self._same(self._subject(x), nouns[-1])
-                      and self._place(x)), None)
+            site = k.get("site", "chat")
+            k = next((x for x in reversed(self.kept) if x.get("site", "chat") == site and self._subject(x)
+                      and self._same(self._subject(x), nouns[-1]) and self._place(x)), None)
             hops -= 1
         return out
 
@@ -137,26 +138,62 @@ class Memory:
         self.kept.append(f)
         return said
 
-    def _find(self, parsed):
+    def _index(self):
+        """base word -> positions in kept (built once, grown as he keeps more)."""
+        idx = getattr(self, "_idx", None)
+        if idx is None or self._idx_n > len(self.kept):
+            idx, self._idx_n = {}, 0
+        for i in range(self._idx_n, len(self.kept)):
+            for w in self.kept[i]["words"]:
+                for b in bases(w):
+                    idx.setdefault(b, set()).add(i)
+        self._idx, self._idx_n = idx, len(self.kept)
+        return idx
+
+    def _find(self, parsed, site=None):
         want = self._keywords(None, parsed)
         nouns = {p["word"] for p in parsed if p["type"] == "noun"} & want
-        def score(k):
-            hit = {w for w in want if any(self._same(w, x) for x in k["words"])}
-            return len(hit) if not nouns or hit & nouns or not k.get("nouns") else 0   # a noun asked must match
-        scored = sorted(((score(k), i) for i, k in enumerate(self.kept)), reverse=True)
-        return [self.kept[i] for s, i in scored if s and s == scored[0][0]]
+        idx = self._index()
+        hits = {}
+        for w in want:
+            for i in set().union(*[idx.get(b, set()) for b in bases(w)]):
+                hits.setdefault(i, set()).add(w)
+        if site:
+            hits = {i: h for i, h in hits.items() if self.kept[i].get("site", "chat") == site}
+        hits = {i: h for i, h in hits.items() if not nouns or h & nouns or not self.kept[i].get("nouns")}  # a noun asked must match
+        if not hits:
+            return []
+        best = max(len(h) for h in hits.values())
+        return [self.kept[i] for i in sorted(hits, reverse=True) if len(hits[i]) == best]   # newest first
+
+    def defines(self, k, thing):
+        """Does this kept frame say what `thing` IS ("a closure is the combination of ...")?"""
+        subj = self._subject(k)
+        return bool(subj and self._same(subj, thing) and ("is" in k or k.get("does") in ("is", "are", "means", "refers")))
 
     def senses(self, parsed):
-        """Where a thing asked about was learned: the chat, or each site read. More than one -> ask which."""
+        """Where a thing asked about is DEFINED: the chat, or each site read. More than one -> ask which."""
         found = self._find(parsed)
-        return sorted({k.get("site", "chat") for k in found}), found
+        thing = next((p["word"] for p in reversed(parsed) if p["type"] == "noun"), None)
+        defs = [k for k in found if thing and self.defines(k, thing)] if thing else []
+        return sorted({k.get("site", "chat") for k in defs}), defs or found
 
     def answer(self, f, parsed, asks, site=None):
-        found = [k for k in self._find(parsed) if not k.get("before")] or self._find(parsed)
-        if site:
-            found = [k for k in found if k.get("site") == site] or found
+        found = [k for k in self._find(parsed, site) if not k.get("before")] or self._find(parsed, site)
         if not found:
             return None
+        noun = next((p["word"] for p in reversed(parsed) if p["type"] == "noun"), None)
+        if asks in ("what", "which") and noun and f.get("does") in ("is", "are", "what", "mean", "means"):
+            defs = [k for k in found if self.defines(k, noun) and k.get("site", "chat") != "chat"]
+            if defs and not any(self.defines(k, noun) for k in found if k.get("site", "chat") == "chat"):
+                def good(k):                                                    # what makes a definition a definition
+                    is_ = k.get("is", "").split()
+                    return ((is_[:1] in (["a"], ["an"], ["the"])) * 2               # "is THE combination", "is A function"
+                            + any(self._same(noun, w) for w in k.get("from", "").lower().replace("_", "/").split("/")) * 2
+                            + (k.get("who", [""])[0].split()[:1] in (["a"], ["an"])) # "A closure is ..."
+                            - len(k["text"].split()) / 60)                           # plain beats long
+                k = max(defs, key=good)
+                return f"{k['text']}. (read in {k.get('site')})"
         thing = self._subject(dict(f, nouns={p["word"] for p in parsed if p["type"] == "noun"}))
         if thing:                                                       # the fact ABOUT the thing asked, first
             found = sorted(found, key=lambda k: not (self._subject(k) and self._same(self._subject(k), thing)))
