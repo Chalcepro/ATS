@@ -173,6 +173,9 @@ class Mind:
             return self.rng.choice(GREET)
         elif u["kind"] in MEANS and asks and any(p["type"] == "noun" for p in parsed):
             self.reader_learns(text, "other", why=f"grammar sees a question about a thing, reader said {u['kind']}")
+        elif (u["kind"] in MEANS and not asks and len(u["words"]) >= 3 and f.get("who") and f.get("does")
+              and (f.get("what") or f.get("is") or f.get("where") or f.get("to"))):
+            self.reader_learns(text, "tell", why=f"grammar sees someone doing something, reader said {u['kind']}")
         elif u["kind"] in MEANS and u["sure"] > .4 and len(u["words"]) <= 6:
             return self.rng.choice(SAY[u["kind"]])
         if len(parsed) < 2:
@@ -213,6 +216,13 @@ class Mind:
         said, used = self.chooser.answer(text, [k["text"] for k in cands])
         if not said:
             return None
+        first = text.lower().split()[0]
+        if first in ("is", "are", "did", "does", "do", "was", "were") and asks not in ("what", "where", "who", "when", "why"):
+            seen = {w for u_ in used for w in u_.lower().split()}
+            places = [p["word"] for p in parsed if p["type"] == "noun"][1:]     # "is my charger in the study": on his chain?
+            if places and set(places) & seen:
+                return "yes, " + flip(" , and that's ".join(used)) + "."
+            return "not that i know. " + flip(said) + "."
         src = next((k.get("site", "chat") for k in cands if k["text"] == used[-1]), "chat")
         return flip(said) if src == "chat" else f"{said}. (read in {SITE_NAMES.get(src, src)}: {used[-1]})"
 
