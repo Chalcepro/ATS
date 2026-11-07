@@ -56,7 +56,13 @@ def flip(text: str) -> str:
 class Memory:
     def __init__(self, parser):
         self.parser, self.kept, self.rng = parser, [], random.Random()
-        self.time = lambda w: "time" in [t for t, _ in parser.wl.tags(w, 0.35).get("group", [])][:3]   # one of its top kinds
+        self._times = {}
+
+    def time(self, w):
+        """Is it a time word? (one of its top WordNet kinds in the word layer is "time"); remembered per word."""
+        if w not in self._times:
+            self._times[w] = "time" in [t for t, _ in self.parser.wl.tags(w, 0.35).get("group", [])][:3]
+        return self._times[w]
 
     def _keywords(self, f, parsed):
         """The words that say what it is about: nouns, verbs, adjectives (not i/my/you - everyone is those)."""

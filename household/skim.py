@@ -21,12 +21,14 @@ import urllib.parse
 import urllib.request
 import urllib.robotparser
 
-ALLOW = {                                      # site -> first page; add more here (Chalce's list)
-    "simple.wikipedia.org": "https://simple.wikipedia.org/wiki/Main_Page",
-    "www.w3schools.com": "https://www.w3schools.com/html/default.asp",
-    "react.dev": "https://react.dev/learn",
-    "en.wikipedia.org": "https://en.wikipedia.org/wiki/Main_Page",
-    "www.gutenberg.org": "https://www.gutenberg.org/ebooks/search/?sort_order=downloads",
+ALLOW = {                                      # name -> (site, first page, paths it may wander into); Chalce's list
+    "mdn-js": ("developer.mozilla.org", "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide",
+               ("/en-US/docs/Web/JavaScript/",)),
+    "w3schools-js": ("www.w3schools.com", "https://www.w3schools.com/js/default.asp", ("/js/",)),
+    "react": ("react.dev", "https://react.dev/learn", ("/learn", "/reference")),
+    "simple-wikipedia": ("simple.wikipedia.org", "https://simple.wikipedia.org/wiki/Main_Page", ("/wiki/",)),
+    "w3schools-html": ("www.w3schools.com", "https://www.w3schools.com/html/default.asp", ("/html/",)),
+    "en-wikipedia": ("en.wikipedia.org", "https://en.wikipedia.org/wiki/Main_Page", ("/wiki/",)),
 }
 AGENT = "CoalReader/0.1 (personal learning, read-only; https://github.com/Chalcepro/ATS)"
 WAIT = 3.0                                     # seconds between pages
@@ -81,10 +83,11 @@ def _slug(url: str) -> str:
 
 
 def fetch(sites=None, pages=20, log=print):
-    for site in sites or ALLOW:
-        if site not in ALLOW:
-            log(f"{site}: not on the allowlist, skipped")
+    for name in sites or ALLOW:
+        if name not in ALLOW:
+            log(f"{name}: not on the allowlist ({', '.join(ALLOW)}), skipped")
             continue
+        site, start, paths = ALLOW[name]
         robots = urllib.robotparser.RobotFileParser()
         try:                                                             # read robots.txt as ourselves (some sites
             req = urllib.request.Request(f"https://{site}/robots.txt", headers={"User-Agent": AGENT})  # refuse Python's name)
@@ -93,12 +96,14 @@ def fetch(sites=None, pages=20, log=print):
         except Exception as e:                                           # no robots.txt read -> do not read the site
             log(f"{site}: robots.txt unreadable ({e}), skipped")
             continue
-        folder = os.path.join(HERE, site)
+        folder = os.path.join(HERE, name)
         os.makedirs(folder, exist_ok=True)
-        queue, seen, got = [ALLOW[site]], set(), 0
+        seen = {open(os.path.join(folder, f), encoding="utf-8").readlines()[1][2:].strip()
+                for f in os.listdir(folder) if f.endswith(".txt")}          # pages read before are not read again
+        queue, got = [start], 0
         while queue and got < pages:
             url = queue.pop(0).split("#")[0]
-            if url in seen or not robots.can_fetch(AGENT, url):
+            if url in seen and url != start or not robots.can_fetch(AGENT, url):
                 continue
             seen.add(url)
             try:
@@ -113,15 +118,17 @@ def fetch(sites=None, pages=20, log=print):
             p = _Text()
             p.feed(page)
             sents = sentences("".join(p.parts))
-            if sents:
-                with open(os.path.join(folder, _slug(url) + ".txt"), "w", encoding="utf-8") as f:
+            out = os.path.join(folder, _slug(url) + ".txt")
+            if sents and not os.path.exists(out):
+                with open(out, "w", encoding="utf-8") as f:
                     f.write(f"# {p.title.strip()}\n# {url}\n" + "\n".join(sents) + "\n")
                 got += 1
-                log(f"  {site}: {p.title.strip()[:60]} ({len(sents)} sentences)")
+                log(f"  {name} {got}/{pages}: {p.title.strip()[:60]} ({len(sents)} sentences)", flush=True)
             for h in p.links:
-                u = urllib.parse.urljoin(url, h)
+                u = urllib.parse.urljoin(url, h).split("#")[0]
                 q = urllib.parse.urlparse(u)
-                if q.netloc == site and u not in seen and ":" not in q.path:   # no Special:/Talk:/Help: pages
+                if (q.netloc == site and u not in seen and ":" not in q.path and q.path.startswith(paths)
+                        and not q.query):                                     # stay in its section
                     queue.append(u)
             time.sleep(WAIT)
 

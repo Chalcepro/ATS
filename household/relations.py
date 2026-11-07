@@ -65,6 +65,21 @@ class Parser(nn.Module):
         return self.tag(h), arc, self.rel(torch.cat([h, hh], -1))
 
     @torch.no_grad()
+    def parse_many(self, texts: list[str]) -> list[list[dict]]:
+        """Many sentences in one go (much faster than one by one)."""
+        ss = [words(t) for t in texts]
+        keep = [i for i, s in enumerate(ss) if s]
+        out = [[] for _ in texts]
+        if not keep:
+            return out
+        t, a, r = self([ss[i] for i in keep])
+        heads, tags, rels = a.argmax(-1).tolist(), t.argmax(-1).tolist(), r.argmax(-1).tolist()
+        for b, i in enumerate(keep):
+            out[i] = [{"i": j, "word": w, "type": TAGS[tags[b][j]], "head": heads[b][j] - 1, "link": RELS[rels[b][j]]}
+                      for j, w in enumerate(ss[i])]
+        return out
+
+    @torch.no_grad()
     def parse(self, text: str) -> list[dict]:
         s = words(text)
         if not s:
@@ -179,8 +194,9 @@ def load_test():
     from household.wordlayer import WordLayer
     brain, _ = load_brain(SAVE)
     wl = WordLayer.from_keep(brain.keep["mind"]["wordlayer"])
-    parser = Parser(wl, json.load(open(LEXICON, encoding="utf-8")))
-    parser.load_state_dict(torch.load(os.path.join(os.path.dirname(SAVE), "relations_test.pt")), strict=False)
+    sd = torch.load(os.path.join(os.path.dirname(SAVE), os.environ.get("OUT", "relations_test.pt")))
+    parser = Parser(wl, json.load(open(LEXICON, encoding="utf-8")), hidden=sd["tag.weight"].shape[1] // 2)
+    parser.load_state_dict(sd, strict=False)
     return parser.eval()
 
 
@@ -198,7 +214,7 @@ def test():
     wl = WordLayer.from_keep(brain.keep["mind"]["wordlayer"])
     for p in wl.parameters():
         p.requires_grad_(False)
-    parser = Parser(wl, json.load(open(LEXICON, encoding="utf-8")))
+    parser = Parser(wl, json.load(open(LEXICON, encoding="utf-8")), hidden=int(os.environ.get("HIDDEN", "128")))
     rows = load_ud("train") + load_ud("dev")
     print(f"teaching layers 1+2 on {len(rows)} sentences (copy; Coal's brain is not touched)")
     teach(parser, rows, steps=int(os.environ.get("STEPS", "4000")))
@@ -208,7 +224,7 @@ def test():
         print(f"\n  {line}\n    " + "  ".join(f"{x['word']}/{x['type'][:4]}>{p[x['head']]['word'] if x['head'] >= 0 else 'ROOT'}:{x['link']}" for x in p))
         print(f"    frame: {frame(p)}")
     torch.save({k: v for k, v in parser.state_dict().items() if not k.startswith("wl.")},
-               os.path.join(os.path.dirname(SAVE), "relations_test.pt"))
+               os.path.join(os.path.dirname(SAVE), os.environ.get("OUT", "relations_test.pt")))
 
 
 if __name__ == "__main__":
