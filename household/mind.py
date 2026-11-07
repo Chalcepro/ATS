@@ -15,6 +15,7 @@ A lesson taught in class goes into the record at once, so Coal can use it before
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import sys
 
@@ -29,6 +30,9 @@ SAYS = {"add": "plus", "subtract": "minus", "times": "times"}
 GREET = ["hi chalce", "hey, i'm here", "yo", "hi, what's up?"]
 SITE_NAMES = {"chat": "what you told me", "device": "this device", "mdn-js": "javascript", "react": "react", "simple-wikipedia": "plain english",
               "en-wikipedia": "general knowledge", "w3schools-js": "javascript", "w3schools-html": "html"}
+
+
+QUESTIONS = ("what", "where", "when", "who", "why", "which", "how", "is", "are", "did", "does", "do", "can")
 
 
 class Mind:
@@ -88,12 +92,41 @@ class Mind:
             lines = device.meanings()
         except Exception:                                    # a device that shows nothing: he goes on without it
             return 0
+        return self._take(lines, "device")
+
+    def _take(self, lines, site, src=None) -> int:
+        """Read lines and keep their meanings, marked with where they came from."""
+        from household.relations import frame
+        m, n = self.memory, 0
         for i in range(0, len(lines), 64):
             for parsed in m.parser.parse_many(lines[i:i + 64]):
                 if len(parsed) >= 3:
                     m.keep(frame(parsed), parsed)
-                    m.kept[-1]["site"] = "device"
-        return len(lines)
+                    m.kept[-1]["site"] = site
+                    if src:
+                        m.kept[-1]["from"], m.kept[-1]["looked"] = src, True   # looked up in a chat: kept in the brain
+                    n += 1
+        return n
+
+    FAILED = ("you didn't tell me", "i'm not sure", "no, not that i know")
+    MINE = {"i", "my", "me", "mine", "we", "our", "us"}
+
+    def after_fail(self, text, parsed, f, asks):
+        """He didn't know. Something not about us -> he goes and looks it up, reads it, keeps it, tries again."""
+        from household import browse, device
+        thing = " ".join(p["word"] for p in parsed if p["type"] in ("noun", "adjective") and p["word"] not in ("thing", "kind"))
+        if not thing or self.MINE & {p["word"] for p in parsed} or not device.online():
+            return None
+        got = browse.look(thing) or (browse.look(thing.split()[-1]) if " " in thing else None)
+        if not got:
+            return None
+        site, url, sents = got
+        sents = [re.sub(r"\[\d+\]", "", x) for x in sents if len(x.split()) <= 40][:150]
+        self._take(sents, site, url)
+        out = self.pick(text, parsed, f, asks, site=site)
+        if out and not out.startswith(self.FAILED):
+            return f"i didn't know, so i looked it up. {out}"
+        return None
 
     @staticmethod
     def _plain(k):
@@ -104,7 +137,9 @@ class Mind:
                 "writer": {"out": self.writer.out, "known": sorted(self.known),
                            "state": {k: v for k, v in self.writer.state_dict().items() if not k.startswith("wl.")}},
                 "record": self.record.events, "maths": self.cell.state_dict(),
-                **({"understand": dict(self._u, facts=[self._plain(k) for k in self.memory.kept if k.get("site") == "chat"])}
+                **({"understand": dict(self._u, facts=[self._plain(k) for k in self.memory.kept if k.get("site") == "chat"],
+                                       read=self._u.get("read", []) + [self._plain(k) for k in self.memory.kept
+                                                                       if k.get("looked")])}
                    if self.memory else {})}
 
     def understood(self, text: str) -> str | None:
@@ -143,7 +178,11 @@ class Mind:
             self.pending = (f, parsed, asks, sites)
             names = [SITE_NAMES.get(s, s) for s in sites]
             return f"{thing} in {', in '.join(names[:-1])} or in {names[-1]}?"
-        return self.pick(text, parsed, f, asks)
+        asks_what_it_is = asks in ("what", "who") and f.get("does") in ("is", "are") and not sites
+        out = None if asks_what_it_is else self.pick(text, parsed, f, asks)   # nothing he holds says what it is
+        if not out or out.startswith(self.FAILED):              # what he does after failing is the point
+            out = self.after_fail(text, parsed, f, asks) or out
+        return out
 
     def pick(self, text, parsed, f, asks, site=None):
         """He reads what he knows about it and picks the answer himself (the chooser); the rules only if untaught."""
@@ -164,15 +203,33 @@ class Mind:
         """Hear a line, answer it, and keep both in the record."""
         recent = self.record.recent(3)
         s = read_sum(text)
+        told = self._corrected(text)                         # "no, it's in the car": the fix is kept like any telling
         if s:
             a, op, b = s
             out = f"{a} {SAYS[op]} {b} is {work(self.cell, a, b, op)}"
         else:
-            out = self.understood(text) if self.memory else None
-            out = out or self.writer.write([text], self.known, self.record, [recent])[0] or "i don't know."
+            out = (self.understood(told or text) if self.memory else None)
+            out = ("okay, i've got it now." if told and out else out) or                 self.writer.write([text], self.known, self.record, [recent])[0] or "i don't know."
         self.record.add("heard", text)
         self.record.add("said", out)
+        first = text.lower().split()[:1]
+        self._last_q = (text, out) if first and first[0] in QUESTIONS else None
         return out
+
+    LESSONS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "lessons", "corrections.jsonl")
+
+    def _corrected(self, text):
+        """Told he was wrong right after answering -> the question, his answer and the fix are saved as a lesson
+        for his next training (that is how failing teaches him). Returns the fix without its "no"."""
+        last = getattr(self, "_last_q", None)
+        w = text.lower().replace(",", " ").split()
+        if not last or not w or w[0] not in ("no", "nope", "wrong", "nah", "actually") or len(w) < 3:
+            return None
+        import json
+        os.makedirs(os.path.dirname(self.LESSONS), exist_ok=True)
+        with open(self.LESSONS, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"asked": last[0], "said": last[1], "told": text}, ensure_ascii=False) + "\n")
+        return " ".join(text.replace(",", " ").split()[1:])
 
     def taught(self, question: str, answer: str) -> None:
         """A class lesson: into the record now, usable straight away by recall."""
