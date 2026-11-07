@@ -30,6 +30,8 @@ def _pages():
 
 
 def run(log=print):
+    import torch
+    torch.set_num_threads(int(os.environ.get("THREADS", "2")))       # leave the other cores to training
     from household.relations import load_test
     m = Memory(load_test())
     done = set()

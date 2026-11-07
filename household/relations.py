@@ -102,9 +102,12 @@ def frame(parsed: list[dict]) -> dict:
         near = [q for q in parsed if q["head"] == p["i"] and q["link"] in ("amod", "compound", "nummod", "det", "poss")]
         return " ".join(q["word"] for q in sorted(near + [p], key=lambda q: q["i"]))
     def subtree(j):
-        out, todo = [], [j]
+        out, todo, seen = [], [j], set()
         while todo:
             k = todo.pop()
+            if k in seen:                                           # a guessed tree can loop: never go round twice
+                continue
+            seen.add(k)
             out.append(parsed[k])
             todo += [q["i"] for q in parsed if q["head"] == k]
         return sorted(out, key=lambda q: q["i"])
