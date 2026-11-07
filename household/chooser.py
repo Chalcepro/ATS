@@ -62,10 +62,11 @@ class Chooser(nn.Module):
         Returns per-step scores (facts + enough), the picked facts, and start/end scores over the last pick."""
         q = set(question)
         hq, pq, _ = self._enc([question], set())
-        hf, pf, mf = self._enc(facts, q)
         state, out, chosen = pq[0], [], []
+        mind = set(q)                                         # the words he is thinking about: the question + what he picked
         for t in range(steps):
-            overlap = torch.tensor([[len(q & set(f)) / max(1, len(q))] for f in facts])
+            hf, pf, mf = self._enc(facts, mind)               # each look lights up what is on his mind now
+            overlap = torch.tensor([[len(mind & set(f)) / max(1, len(mind))] for f in facts])
             s = self.score(torch.cat([state.expand(len(facts), -1), pf, state * pf, (state - pf).abs(), overlap], 1))[:, 0]
             s_enough = (state * self.enough).sum()[None] if t else torch.tensor([-1e4])   # never "enough" before a pick
             scores = torch.cat([s, s_enough])
@@ -74,11 +75,15 @@ class Chooser(nn.Module):
             if k == -1:
                 break
             chosen.append(k)
+            mind |= set(facts[k])
             state = self.think(pf[k][None], state[None])[0]
+            last_h, last_m = hf, mf
         last = chosen[-1] if chosen else 0
-        tok = torch.cat([hf[last], state.expand(hf.shape[1], -1)], 1)
-        st = self.start(tok)[:, 0].masked_fill(~mf[last], -1e4)
-        en = self.end(tok)[:, 0].masked_fill(~mf[last], -1e4)
+        if not chosen:
+            last_h, last_m = hf, mf
+        tok = torch.cat([last_h[last], state.expand(last_h.shape[1], -1)], 1)
+        st = self.start(tok)[:, 0].masked_fill(~last_m[last], -1e4)
+        en = self.end(tok)[:, 0].masked_fill(~last_m[last], -1e4)
         return out, chosen, st, en
 
     @torch.no_grad()
