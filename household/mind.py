@@ -169,13 +169,13 @@ class Mind:
         asks = f.get("asks") or (lead["word"] if lead and lead["type"] == "verb" and lead["word"] in ASK_VERBS else None)
         if asks and m._find(parsed):                         # a question about something he knows: answer that first
             pass
-        elif u["kind"] == "greet" and u["sure"] > .5:
-            return self.rng.choice(GREET)
         elif u["kind"] in MEANS and asks and any(p["type"] == "noun" for p in parsed):
             self.reader_learns(text, "other", why=f"grammar sees a question about a thing, reader said {u['kind']}")
-        elif (u["kind"] in MEANS and not asks and len(u["words"]) >= 3 and f.get("who") and f.get("does")
+        elif (u["kind"] in MEANS + ["greet"] and not asks and len(u["words"]) >= 3 and f.get("who") and f.get("does")
               and (f.get("what") or f.get("is") or f.get("where") or f.get("to"))):
             self.reader_learns(text, "tell", why=f"grammar sees someone doing something, reader said {u['kind']}")
+        elif u["kind"] == "greet" and u["sure"] > .5:
+            return self.rng.choice(GREET)
         elif u["kind"] in MEANS and u["sure"] > .4 and len(u["words"]) <= 6:
             return self.rng.choice(SAY[u["kind"]])
         if len(parsed) < 2:
