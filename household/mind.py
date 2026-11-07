@@ -153,12 +153,13 @@ class Mind:
         from household.understand import MEANS, SAY
         m = self.memory
         if self.pending:                                     # "closure in javascript or in english?" -> "javascript"
-            f, parsed, asks, sites = self.pending
+            f, parsed, asks, sites, asked = self.pending
             pick = next((s for s in sites if SITE_NAMES.get(s, s) in text.lower() or s in text.lower()), None)
             self.pending = None
             if pick:
-                return self.pick(text, parsed, f, asks, site=pick)
+                return self.pick(asked, parsed, f, asks, site=pick)
         u = self.reader.read(text)
+        self._last_read = (text, u["kind"]) if len(u["words"]) <= 6 else None   # a "no" next can fix this reading
         parsed = m.parser.parse(text)
         f = frame(parsed) if parsed else {}
         lead = next((p for p in parsed if p["type"] != "interjection" and p["word"] not in ("btw", "so", "coal", "okay")),
@@ -171,7 +172,6 @@ class Mind:
         elif u["kind"] in MEANS and asks and any(p["type"] == "noun" for p in parsed):
             self.reader_learns(text, "other", why=f"grammar sees a question about a thing, reader said {u['kind']}")
         elif u["kind"] in MEANS and u["sure"] > .4 and len(u["words"]) <= 6:
-            self._last_read = (text, u["kind"])
             return self.rng.choice(SAY[u["kind"]])
         if len(parsed) < 2:
             return None
@@ -180,9 +180,9 @@ class Mind:
                 return None
             return m.keep(f, parsed)
         sites, found = m.senses(parsed)
-        if len(sites) > 1 and asks in ("what", "which", "how"):         # the word means different things in different places
+        if len(sites) > 1 and asks in ("what", "which", "how") and not self.MINE & {p["word"] for p in parsed}:         # the word means different things in different places
             thing = next((p["word"] for p in parsed if p["type"] == "noun"), "that")
-            self.pending = (f, parsed, asks, sites)
+            self.pending = (f, parsed, asks, sites, text)
             names = [SITE_NAMES.get(s, s) for s in sites]
             return f"{thing} in {', in '.join(names[:-1])} or in {names[-1]}?"
         asks_what_it_is = asks in ("what", "who") and f.get("does") in ("is", "are") and not sites
@@ -226,7 +226,7 @@ class Mind:
         self._last_q = (text, out) if first and first[0] in QUESTIONS else None
         return out
 
-    def reader_learns(self, text, kind, why="", steps=40):
+    def reader_learns(self, text, kind=None, why="", steps=40, wrong=None):
         """The reader learns from this one line, now (a few small steps), while re-practising lessons he
         already knows so the new one doesn't wipe the old. Logged; the reader is saved with the brain."""
         import json
@@ -238,19 +238,26 @@ class Mind:
             self._rd_opt = torch.optim.Adam([p for n, p in rd.named_parameters() if not n.startswith("wl.")], 5e-4)
             self._rd_rng = random.Random()
             self._rd_pool = [w for w in self.wl.words if w.isalpha() and 3 <= len(w) <= 9][:20000]
-        line, want = words(text), KINDS.index(kind)
+        line = words(text)
+        want = KINDS.index(kind) if kind else None
+        bad = KINDS.index(wrong) if wrong else None
         rd.train()
         for step in range(steps):                                # until he reads it right (at most `steps`)
             if step % 5 == 0 and step:
                 rd.eval()
-                if rd.read(text)["kind"] == kind:
+                now = rd.read(text)["kind"]
+                if (kind and now == kind) or (not kind and now != wrong):
                     break
                 rd.train()
             s, r, q, k = batch(self._rd_rng, 31, False, self._rd_pool)
             pr, pq, pk = rd(s + [line])
             loss = (F.cross_entropy(pr[:-1].flatten(0, 1), r.flatten(), ignore_index=-100)
                     + F.cross_entropy(pq[:-1].flatten(0, 1), q.flatten(), ignore_index=-100)
-                    + F.cross_entropy(pk[:-1], k) + 3 * F.cross_entropy(pk[-1:], torch.tensor([want])))
+                    + F.cross_entropy(pk[:-1], k))
+            if want is not None:
+                loss = loss + 3 * F.cross_entropy(pk[-1:], torch.tensor([want]))
+            else:                                                # not that: less sure of the wrong one, nothing forced
+                loss = loss - 3 * torch.log1p(-pk[-1].softmax(-1)[bad].clamp(max=.999))
             self._rd_opt.zero_grad(); loss.backward(); self._rd_opt.step()
         rd.eval()
         self._u["reader"] = {k: v for k, v in rd.state_dict().items() if not k.startswith("wl.")}
@@ -267,7 +274,10 @@ class Mind:
         w = text.lower().replace(",", " ").split()
         lr, self._last_read = getattr(self, "_last_read", None), None
         if lr and w and w[0] in ("no", "nope", "wrong", "nah"):     # "no" right after he took a line one way: he misread it
-            self.reader_learns(lr[0], "other", why=f"told no after he read it as {lr[1]}")
+            fix = self.reader.read(" ".join(w[1:]))              # "no, i said stop": the fix says what it was
+            from household.understand import MEANS
+            kind = fix["kind"] if fix["kind"] in MEANS + ["greet"] and fix["kind"] != lr[1] and fix["sure"] > .6 else None
+            self.reader_learns(lr[0], kind, wrong=lr[1], why=f"told no after he read it as {lr[1]}")
         if not last or not w or w[0] not in ("no", "nope", "wrong", "nah", "actually") or len(w) < 3:
             return None
         import json
