@@ -71,7 +71,7 @@ class Mind:
         self.rng = random.Random()
         self.chooser = None                                  # he picks answers himself (chooser.py), if taught
         from household.train import SAVE
-        cp = os.path.join(os.path.dirname(os.environ.get("COAL_BRAIN") or SAVE), "chooser_test.pt")
+        cp = os.path.join(os.path.dirname(os.environ.get("COAL_BRAIN") or SAVE), os.environ.get("COAL_CHOOSER", "chooser_test.pt"))
         if os.environ.get("COAL_PICK", "chooser") == "chooser" and os.path.exists(cp):   # COAL_PICK=rules: the old way
             import torch
             from household.chooser import Chooser
@@ -164,7 +164,10 @@ class Mind:
             pass
         elif u["kind"] == "greet" and u["sure"] > .5:
             return self.rng.choice(GREET)
+        elif u["kind"] in MEANS and asks and any(p["type"] == "noun" for p in parsed):
+            self.reader_learns(text, "other", why=f"grammar sees a question about a thing, reader said {u['kind']}")
         elif u["kind"] in MEANS and u["sure"] > .4 and len(u["words"]) <= 6:
+            self._last_read = (text, u["kind"])
             return self.rng.choice(SAY[u["kind"]])
         if len(parsed) < 2:
             return None
@@ -185,14 +188,13 @@ class Mind:
         return out
 
     def pick(self, text, parsed, f, asks, site=None):
-        """He reads what he knows about it and picks the answer himself (the chooser); the rules only if untaught."""
+        """What he was told: he picks the answer himself (the chooser). Reading/device: the rules, until he beats them."""
         m = self.memory
         if self.chooser is None:
             return m.answer(f, parsed, asks, site=site)
-        cands = [] if site else m.net(parsed, "chat")            # what he was told first, like a person; then elsewhere
-        cands = cands or m.net(parsed, site)
-        if not cands:
-            return None
+        cands = [] if site else m.net(parsed, "chat")            # what he was told first, like a person
+        if not cands:                                            # reading: the rules still beat him there (11-07 test)
+            return m.answer(f, parsed, asks, site=site)
         said, used = self.chooser.answer(text, [k["text"] for k in cands])
         if not said:
             return None
@@ -216,6 +218,38 @@ class Mind:
         self._last_q = (text, out) if first and first[0] in QUESTIONS else None
         return out
 
+    def reader_learns(self, text, kind, why="", steps=40):
+        """The reader learns from this one line, now (a few small steps), while re-practising lessons he
+        already knows so the new one doesn't wipe the old. Logged; the reader is saved with the brain."""
+        import json
+        import random
+        import torch.nn.functional as F
+        from household.understand import KINDS, batch, words
+        rd = self.reader
+        if not hasattr(self, "_rd_opt"):
+            self._rd_opt = torch.optim.Adam([p for n, p in rd.named_parameters() if not n.startswith("wl.")], 5e-4)
+            self._rd_rng = random.Random()
+            self._rd_pool = [w for w in self.wl.words if w.isalpha() and 3 <= len(w) <= 9][:20000]
+        line, want = words(text), KINDS.index(kind)
+        rd.train()
+        for step in range(steps):                                # until he reads it right (at most `steps`)
+            if step % 5 == 0 and step:
+                rd.eval()
+                if rd.read(text)["kind"] == kind:
+                    break
+                rd.train()
+            s, r, q, k = batch(self._rd_rng, 31, False, self._rd_pool)
+            pr, pq, pk = rd(s + [line])
+            loss = (F.cross_entropy(pr[:-1].flatten(0, 1), r.flatten(), ignore_index=-100)
+                    + F.cross_entropy(pq[:-1].flatten(0, 1), q.flatten(), ignore_index=-100)
+                    + F.cross_entropy(pk[:-1], k) + 3 * F.cross_entropy(pk[-1:], torch.tensor([want])))
+            self._rd_opt.zero_grad(); loss.backward(); self._rd_opt.step()
+        rd.eval()
+        self._u["reader"] = {k: v for k, v in rd.state_dict().items() if not k.startswith("wl.")}
+        os.makedirs(os.path.dirname(self.LESSONS), exist_ok=True)
+        with open(os.path.join(os.path.dirname(self.LESSONS), "reader_live.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps({"line": text, "kind": kind, "now": rd.read(text)["kind"], "why": why}) + "\n")
+
     LESSONS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "lessons", "corrections.jsonl")
 
     def _corrected(self, text):
@@ -223,6 +257,9 @@ class Mind:
         for his next training (that is how failing teaches him). Returns the fix without its "no"."""
         last = getattr(self, "_last_q", None)
         w = text.lower().replace(",", " ").split()
+        lr, self._last_read = getattr(self, "_last_read", None), None
+        if lr and w and w[0] in ("no", "nope", "wrong", "nah"):     # "no" right after he took a line one way: he misread it
+            self.reader_learns(lr[0], "other", why=f"told no after he read it as {lr[1]}")
         if not last or not w or w[0] not in ("no", "nope", "wrong", "nah", "actually") or len(w) < 3:
             return None
         import json
