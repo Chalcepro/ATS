@@ -38,8 +38,9 @@ FRESH = os.environ.get("HOUSEHOLD_FRESH", "0") == "1"   # only to start a new br
 COND_WEIGHTS = os.environ.get("HOUSEHOLD_COND_WEIGHTS", "0") == "1"   # weighted rare labels: better reading, worse teachings (r6)
 
 TRAINED = [h for h in HAZARDS if h not in HELD_BACK]
-SAVE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "checkpoints",
-                    "household_brain.pt" if MEMORY == "off" else f"household_brain_{MEMORY}.pt")
+SAVE = os.environ.get("HOUSEHOLD_SAVE") or os.path.join(   # HOUSEHOLD_SAVE: train/exam a copy, never the real Coal
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "checkpoints",
+    "household_brain.pt" if MEMORY == "off" else f"household_brain_{MEMORY}.pt")
 
 
 def _world(seed: int) -> Household:
