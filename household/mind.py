@@ -123,7 +123,11 @@ class Mind:
         site, url, sents = got
         sents = [re.sub(r"\[\d+\]", "", x) for x in sents if len(x.split()) <= 40][:150]
         self._take(sents, site, url)
-        out = self.pick(text, parsed, f, asks, site=site)
+        if self.chooser is not None:                             # he reads the top of the page and picks himself
+            said, used = self.chooser.answer(text, sents[:12])
+            out = f"{said}. (read in {SITE_NAMES.get(site, site)}: {used[-1]})" if said else None
+        else:
+            out = self.pick(text, parsed, f, asks, site=site)
         if out and not out.startswith(self.FAILED):
             return f"i didn't know, so i looked it up. {out}"
         return None
@@ -193,13 +197,17 @@ class Mind:
         if self.chooser is None:
             return m.answer(f, parsed, asks, site=site)
         cands = [] if site else m.net(parsed, "chat")            # what he was told first, like a person
+        if not cands and not site and self.MINE & {p["word"] for p in parsed}:   # about us: only the chat can know
+            thing = next((p["word"] for p in reversed(parsed) if p["type"] == "noun"), "that")
+            return f"you haven't told me about your {thing} yet."
         if not cands:                                            # reading: the rules still beat him there (11-07 test)
             return m.answer(f, parsed, asks, site=site)
         said, used = self.chooser.answer(text, [k["text"] for k in cands])
         if not said:
             return None
         src = next((k.get("site", "chat") for k in cands if k["text"] == used[-1]), "chat")
-        return said if src == "chat" else f"{said}. (read in {SITE_NAMES.get(src, src)}: {used[-1]})"
+        from household.comprehend import flip
+        return flip(said) if src == "chat" else f"{said}. (read in {SITE_NAMES.get(src, src)}: {used[-1]})"
 
     def reply(self, text: str) -> str:
         """Hear a line, answer it, and keep both in the record."""
