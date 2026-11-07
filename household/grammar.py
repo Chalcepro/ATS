@@ -65,6 +65,10 @@ def export():
     export_ud()
 
 
+def _rel(r):
+    return "poss" if r == "nmod:poss" else r.split(":")[0]       # "my phone": keep whose-ness, drop the rest
+
+
 def _ud_file(name):
     """One UD .conllu file -> sentences of (piece, tag, head piece, relation); punctuation dropped."""
     out, rows = [], []
@@ -87,7 +91,7 @@ def _ud_file(name):
             for k, piece in enumerate(words(f[1])):
                 if not k:
                     first[f[0]] = len(toks)
-                toks.append([piece, TAGS.index(UPOS.get(f[3], "other")), f[6], f[7].split(":")[0] if not k else "piece"])
+                toks.append([piece, TAGS.index(UPOS.get(f[3], "other")), f[6], _rel(f[7]) if not k else "piece"])
         for t in toks:
             t[2] = first.get(t[2], -1) if t[3] != "piece" else -2  # -1 root (or punctuation head), -2 = part of a word
         if toks:
@@ -111,6 +115,11 @@ def export_ud():
     for w, c in brown.items():                                   # Brown only for words UD never had (its own
         if w not in counts:                                      # habits differ: "my" is a determiner there)
             counts[w] = c + [0] * (len(TAGS) - len(c))
+    chat = json.load(open(os.path.join(HERE, "chat_words.json"), encoding="utf-8"))
+    for w, t in chat.items():                                    # chat words: a strong first guess
+        if w != "_":
+            counts[w] = [0] * len(TAGS)
+            counts[w][TAGS.index(t)] = 20
     json.dump(counts, open(LEXICON, "w", encoding="utf-8"), separators=(",", ":"))
     print(f"{len(counts)} words -> {LEXICON}")
 

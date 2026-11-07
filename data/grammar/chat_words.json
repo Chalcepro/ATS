@@ -1,0 +1,14 @@
+{
+  "_": "Chat words Chalce uses that Brown and UD barely have: word -> its usual type. Read like dictionary entries (a starting guess); the sentence can still overrule them.",
+  "yo": "interjection", "yooo": "interjection", "aiit": "interjection", "aight": "interjection", "ait": "interjection",
+  "woah": "interjection", "whoa": "interjection", "whoah": "interjection", "wow": "interjection", "ooh": "interjection",
+  "heyo": "interjection", "heylo": "interjection", "hey": "interjection", "hi": "interjection", "hello": "interjection",
+  "helo": "interjection", "heloo": "interjection", "sup": "interjection", "wassup": "interjection", "ayy": "interjection",
+  "yeah": "interjection", "yep": "interjection", "yup": "interjection", "ye": "interjection", "nah": "interjection",
+  "nope": "interjection", "ok": "interjection", "okay": "interjection", "mhm": "interjection", "hmm": "interjection",
+  "err": "interjection", "erm": "interjection", "um": "interjection", "uh": "interjection", "huh": "interjection",
+  "lol": "interjection", "omg": "interjection", "damn": "interjection", "awesome": "adjective", "pls": "interjection",
+  "plz": "interjection", "btw": "adverb", "tbh": "adverb", "idk": "verb", "gud": "adjective", "u": "pronoun",
+  "ur": "pronoun", "im": "pronoun", "dont": "verb", "cant": "verb", "wanna": "verb", "gonna": "verb",
+  "gotta": "verb", "kinda": "adverb", "sorta": "adverb", "coal": "noun", "chalce": "noun"
+}
