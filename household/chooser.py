@@ -199,9 +199,32 @@ def _real(rng, swap):
     return " ".join(x)
 
 
+DEFS = []                                                     # (word, its real definition) from WordNet
+
+
+def _define_real(rng, vocab):
+    """A real definition among sentences that only say something ABOUT the thing (is not.., is very.., uses of it)."""
+    x, g = rng.choice(DEFS)
+    other = [d for _, d in rng.sample(DEFS, 3)]
+    art = ("an " if x[0] in "aeiou" else "a ")
+    good = rng.choice([f"{art}{x} is {g}", f"{x} is {g}", f"the {x} is {g}", f"{x} refers to {g}",
+                       f"{x} , or {rng.choice(vocab)} , is {g}", f"in science {x} is {g}"])
+    ans = g.split()
+    noise = [f"{x} is not {rng.choice(other)}", f"{x} is not an accident", f"{x} is very {rng.choice(vocab)}",
+             f"{x} is important", f"when {x} is {rng.choice(vocab)} it can {rng.choice(vocab)}",
+             f"some people think {x} is caused by {rng.choice(vocab)}", f"{art}{rng.choice(vocab)} is {other[0]}",
+             f"{x} happens because of {other[1]}", f"there are many kinds of {x}", f"{x} was named by {rng.choice(vocab)}"]
+    if REAL:
+        noise += [_real(rng, [x]) for _ in range(3)]
+    q = rng.choice([f"what is {art}{x}", f"what is {x}", f"what does {x} mean", f"define {x}", f"tell me what {x} is",
+                    f"what is meant by {x}"])
+    return q, [good] + rng.sample(noise, rng.randint(3, 8)), [0], ans
+
+
 def lesson(rng, vocab):
     r = rng.random()
-    q, facts, gold, ans = (_story if r < .5 else _define if r < .75 else _has)(rng, vocab)
+    q, facts, gold, ans = (_story if r < .4 else _define if r < .55 else _has if r < .7 else
+                           _define_real if DEFS else _define)(rng, vocab)
     if REAL:
         qw = [w for w in words(q) if len(w) > 3]
         facts = facts + [_real(rng, qw) for _ in range(rng.randint(2, 12))]
@@ -288,6 +311,16 @@ def test():
     except Exception:
         pass
     print(f"{len(REAL)} real sentences as wrong options", flush=True)
+    try:
+        from household.dictionary import meaning, synsets
+        for (pos, _), v in synsets().items():
+            w = v["words"][0].lower()
+            g = meaning(v["gloss"]).lower().replace("(", "").replace(")", "")
+            if pos == "n" and w.isalpha() and 3 <= len(g.split()) <= 25:
+                DEFS.append((w, g))
+    except Exception:
+        pass
+    print(f"{len(DEFS)} real definitions", flush=True)
     ch = Chooser(wl)
     print(f"teaching the chooser (copy; Coal's brain is not touched)", flush=True)
     teach(ch, practise, steps=int(os.environ.get("STEPS", "6000")))

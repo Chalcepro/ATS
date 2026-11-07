@@ -20,6 +20,35 @@ import urllib.robotparser
 
 from household.skim import AGENT, ALLOW, HERE, WAIT, _Text, _slug, sentences
 
+class _Prose(_Text):
+    """Only what is written as paragraphs: an article's text, not its menus, captions, tables or notes."""
+    def __init__(self):
+        super().__init__()
+        self.depth, self.away = 0, 0
+
+    def handle_starttag(self, tag, attrs):
+        super().handle_starttag(tag, attrs)
+        if tag == "p":
+            self.depth += 1
+        if tag in ("table", "figure", "figcaption", "sup", "style"):
+            self.away += 1
+
+    def handle_endtag(self, tag):
+        super().handle_endtag(tag)
+        if tag == "p" and self.depth:
+            self.depth -= 1
+            self.parts.append("\n")
+        if tag in ("table", "figure", "figcaption", "sup", "style") and self.away:
+            self.away -= 1
+
+    def handle_data(self, data):
+        if self._in_title:
+            self.title += data
+        elif self.depth and not self.away and not self.skip:
+            self.parts.append(data)
+
+
+
 LOOK_IN = ("simple-wikipedia", "en-wikipedia")             # plain words first, then the bigger one
 _robots, _last = {}, [0.0]
 
@@ -53,7 +82,7 @@ def open_page(url: str):
             url = r.geturl()
     except Exception:
         return None
-    p = _Text()
+    p = _Prose()
     p.feed(page)
     sents = sentences("".join(p.parts))
     if not sents or "may refer to" in " ".join(sents[:3]).lower():      # a list of other pages, not the thing
