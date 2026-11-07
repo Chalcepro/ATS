@@ -80,14 +80,62 @@ class Memory:
         f = frame(parsed)
         lead = next((p for p in parsed if p["type"] not in ("interjection",) and p["word"] not in ("btw", "so", "coal", "okay")), parsed[0])
         asks = f.get("asks") or (lead["word"] if lead["type"] == "verb" and lead["word"] in ASK_VERBS else None)
-        return self.answer(f, parsed, asks) if asks else self.keep(f, parsed)
+        if asks:
+            return self.answer(f, parsed, asks) or "i don't know. you haven't told me about that. tell me?"
+        return self.keep(f, parsed)
+
+    PREP = ("on", "in", "under", "at", "behind", "near", "inside", "by", "beside", "above", "below", "outside", "into")
+
+    def _place(self, k):
+        """Where a kept frame puts its thing: "is on the table", or a by-phrase that is not a time or a reason."""
+        if "is" in k and k["is"].split()[0] in self.PREP:
+            return {"by": "", "it": k["is"]}
+        for b in k.get("with", []):
+            if b["by"] and b["by"] not in ("because", "since", "so", "for") and not any(self.time(w) for w in b["it"].split()):
+                return b
+        return None
+
+    def _subject(self, k):
+        """The thing a frame is about (its last noun in who, else in what)."""
+        for part in ("who", "what", "is"):
+            for x in ([k[part]] if isinstance(k.get(part), str) else k.get(part, [])):
+                ns = [w for w in x.split() if w in k.get("nouns", ())]
+                if ns:
+                    return ns[-1]
+        return None
+
+    def _where_chain(self, k, hops=3):
+        """Reasoning by joining facts: the keys are in the drawer, the drawer is in the kitchen -> both."""
+        out, seen = [], set()
+        while k and hops:
+            pl = self._place(k)
+            if not pl:
+                break
+            out.append(pl)
+            nouns = [w for w in pl["it"].split() if w not in LITTLE and w not in FLIP]
+            if not nouns or nouns[-1] in seen:
+                break
+            seen.add(nouns[-1])
+            k = next((x for x in reversed(self.kept) if self._subject(x) and self._same(self._subject(x), nouns[-1])
+                      and self._place(x)), None)
+            hops -= 1
+        return out
 
     def keep(self, f, parsed):
         f = dict(f, words=self._keywords(f, parsed), text=" ".join(p["word"] for p in parsed),
                  nouns={p["word"] for p in parsed if p["type"] == "noun"},
                  times=[p["word"] for p in parsed if p["type"] in ("noun", "adverb") and self.time(p["word"])])
+        f.setdefault("site", "chat")
+        said = self.rng.choice(["okay.", "got it.", "noted.", "okay, i'll remember that."])
+        thing, pl = self._subject(f), self._place(f)
+        if thing and pl:                                                # reasoning: does it clash with what i knew?
+            old = next((x for x in reversed(self.kept) if x.get("site") == "chat" and self._subject(x)
+                        and self._same(self._subject(x), thing) and self._place(x)), None)
+            if old and self._place(old)["it"] != pl["it"]:
+                old["before"] = True                                     # kept, but no longer where it is
+                said = f"okay, so it's not {flip((self._place(old)['by'] + ' ' + self._place(old)['it']).strip())} anymore."
         self.kept.append(f)
-        return self.rng.choice(["okay.", "got it.", "noted.", "okay, i'll remember that."])
+        return said
 
     def _find(self, parsed):
         want = self._keywords(None, parsed)
@@ -98,20 +146,28 @@ class Memory:
         scored = sorted(((score(k), i) for i, k in enumerate(self.kept)), reverse=True)
         return [self.kept[i] for s, i in scored if s and s == scored[0][0]]
 
-    def answer(self, f, parsed, asks):
+    def senses(self, parsed):
+        """Where a thing asked about was learned: the chat, or each site read. More than one -> ask which."""
         found = self._find(parsed)
+        return sorted({k.get("site", "chat") for k in found}), found
+
+    def answer(self, f, parsed, asks, site=None):
+        found = [k for k in self._find(parsed) if not k.get("before")] or self._find(parsed)
+        if site:
+            found = [k for k in found if k.get("site") == site] or found
         if not found:
-            return "i don't know. you haven't told me about that. tell me?"
+            return None
+        thing = self._subject(dict(f, nouns={p["word"] for p in parsed if p["type"] == "noun"}))
+        if thing:                                                       # the fact ABOUT the thing asked, first
+            found = sorted(found, key=lambda k: not (self._subject(k) and self._same(self._subject(k), thing)))
         k = found[0]                                                    # the most matching kept frame
         bys = k.get("with", [])
         times = [b for b in bys if any(self.time(w) for w in b["it"].split())]
-        places = [b for b in bys if b not in times and b["by"] and b["by"] not in ("because", "since", "so")]
         why = [b for b in bys if b["by"] in ("because", "since")]
-        if "is" in k and k["is"].split()[0] in ("on", "in", "under", "at", "behind", "near", "inside", "by"):
-            places = [{"by": "", "it": k["is"]}] + places
         say = lambda b: flip((b["by"] + " " + b["it"]).strip())
         if asks == "where":
-            return f"{say(places[0])}." if places else "you didn't tell me where."
+            chain = self._where_chain(k)
+            return ", and that's ".join(say(b) for b in chain) + "." if chain else "you didn't tell me where."
         if asks == "when":
             if times:
                 return f"{say(times[0])}."
@@ -124,15 +180,20 @@ class Memory:
             what = [x for x in k.get("what", []) if not any(self.time(w) for w in x.split())]
             if what:
                 return f"{flip(' and '.join(what))}."
-            if "is" in k and k["is"].split()[0] not in ("on", "in", "under", "at", "behind", "near", "inside", "by"):
+            if "is" in k and k["is"].split()[0] not in self.PREP:
                 return f"{flip(k['is'])}."
             if "who" in k:                                              # "what is under my bed" -> the cat
                 return f"{flip(' and '.join(k['who']))}."
             return "i'm not sure what."
-        # yes / no: does what was kept say the same thing?
+        # yes / no: does what was kept say the same thing - directly, or by joining facts?
         said = self._keywords(f, parsed)
         missing = {w for w in said if not any(self._same(w, x) for x in k["words"])}
-        return "yes." if not missing else f"no, not that i know. you told me: {flip(k['text'])}."
+        if not missing:
+            return "yes."
+        chain_words = {w for b in self._where_chain(k) for w in b["it"].split()}
+        if missing and all(any(self._same(w, x) for x in chain_words) for w in missing):
+            return "yes, " + ", and that's ".join(say(b) for b in self._where_chain(k)) + "."
+        return f"no, not that i know. you told me: {flip(k['text'])}."
 
 
 def chat():
